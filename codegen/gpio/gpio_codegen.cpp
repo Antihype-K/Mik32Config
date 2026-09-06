@@ -1,4 +1,5 @@
 #include "gpio_codegen.h"
+#include "user_code_markers.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -109,10 +110,17 @@ ParseResult<GeneratedGpioFirmware> generateGpioFirmware(
     // работы с пинами (WritePin/TogglePin/ReadPin) поверх сгенерированной
     // инициализации, и без этого include GPIO_TypeDef/GPIO_PIN_*/HAL_GPIO_*
     // там не объявлены — сборка падает на первой же строчке с этими именами.
+    // Маркеры /* USER CODE BEGIN <ID> */.../* USER CODE END <ID> */ — §3.1.7.3
+    // официального ТЗ: содержимое между ними сохраняется при повторной
+    // генерации (см. codegen/user_code_markers.h, применяется в
+    // writeGeneratedGpioProject, а не здесь — здесь только дефолт).
     firmware.main_c =
         "#include \"mik32_hal_pcc.h\"\n"
         "#include \"mik32_hal_gpio.h\"\n"
         "#include \"mik32_init.h\"\n"
+        "\n"
+        "/* USER CODE BEGIN Includes */\n"
+        "/* USER CODE END Includes */\n"
         "\n"
         "void SystemClock_Config(void);\n"
         "\n"
@@ -122,8 +130,13 @@ ParseResult<GeneratedGpioFirmware> generateGpioFirmware(
         "\n"
         "    GPIO_Init();\n"
         "\n"
+        "    /* USER CODE BEGIN Init */\n"
+        "    /* USER CODE END Init */\n"
+        "\n"
         "    while (1)\n"
         "    {\n"
+        "        /* USER CODE BEGIN Loop */\n"
+        "        /* USER CODE END Loop */\n"
         "    }\n"
         "}\n"
         "\n"
@@ -185,10 +198,25 @@ CodegenWriteResult writeGeneratedGpioProject(
         return CodegenWriteResult{false, "Не удалось создать каталог src/: " + fs_error.message()};
     }
 
+    // main.c проходит через mergeUserCodeSections (§3.1.7.3 ТЗ) — если файл
+    // уже существует, его /* USER CODE BEGIN <ID> */ секции переносятся в
+    // свежесгенерированный текст вместо дефолтного содержимого генератора.
+    // mik32_init.{h,c} маркеров не имеют — ТЗ требует их только для main.c,
+    // это чисто сгенерированные файлы, целиком перезаписываемые каждый раз.
+    std::string main_c_to_write = firmware.main_c;
+    const fs::path main_c_path = src_dir / "main.c";
+    if (fs::exists(main_c_path))
+    {
+        std::ifstream existing(main_c_path);
+        std::ostringstream existing_buffer;
+        existing_buffer << existing.rdbuf();
+        main_c_to_write = mergeUserCodeSections(firmware.main_c, existing_buffer.str());
+    }
+
     const std::pair<const char*, const std::string*> files_to_write[] = {
         {"mik32_init.h", &firmware.mik32_init_h},
         {"mik32_init.c", &firmware.mik32_init_c},
-        {"main.c", &firmware.main_c},
+        {"main.c", &main_c_to_write},
     };
 
     for (const auto& [file_name, content] : files_to_write)

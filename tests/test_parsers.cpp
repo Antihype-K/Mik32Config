@@ -9,6 +9,7 @@
 #include <usart_parser.h>
 #include <uart_knowledge.h>
 #include <uart_codegen.h>
+#include <user_code_markers.h>
 
 #include "parse_result.h"
 
@@ -163,4 +164,53 @@ TEST(UartCodegen, MatchesGoldenFileForAsyncNoFlowControl)
     const std::string expected = readFileToString("fixtures/expected_uart_init.c");
 
     EXPECT_EQ(firmware_result.config->mik32_init_c, expected);
+}
+
+
+// §3.1.7.3 ТЗ: содержимое между /* USER CODE BEGIN <ID> */ и
+// /* USER CODE END <ID> */ должно сохраняться при повторной генерации.
+TEST(UserCodeMarkers, PreservesExistingSectionAndUsesDefaultForNewOne)
+{
+    const std::string existing =
+        "#include \"foo.h\"\n"
+        "/* USER CODE BEGIN Includes */\n"
+        "#include \"my_sensor.h\"\n"
+        "/* USER CODE END Includes */\n"
+        "int main() {\n"
+        "    /* USER CODE BEGIN Loop */\n"
+        "    my_sensor_poll();\n"
+        "    /* USER CODE END Loop */\n"
+        "}\n";
+
+    const std::string freshly_generated =
+        "#include \"foo.h\"\n"
+        "#include \"bar.h\"\n"
+        "/* USER CODE BEGIN Includes */\n"
+        "/* USER CODE END Includes */\n"
+        "int main() {\n"
+        "    /* USER CODE BEGIN Loop */\n"
+        "    /* USER CODE END Loop */\n"
+        "}\n";
+
+    const std::string merged = mergeUserCodeSections(freshly_generated, existing);
+
+    // Новый #include "bar.h" из генератора остаётся (это не пользовательский код).
+    EXPECT_NE(merged.find("#include \"bar.h\""), std::string::npos);
+    // Пользовательский include и вызов сохранились, несмотря на то что в
+    // свежесгенерированном тексте эти секции были пустыми.
+    EXPECT_NE(merged.find("#include \"my_sensor.h\""), std::string::npos);
+    EXPECT_NE(merged.find("my_sensor_poll();"), std::string::npos);
+}
+
+TEST(UserCodeMarkers, NoExistingFileMeansNoMerge)
+{
+    const std::string freshly_generated =
+        "/* USER CODE BEGIN Loop */\n"
+        "/* USER CODE END Loop */\n";
+
+    // Пустая существующая строка = "файла ещё не было" — merge не должен падать
+    // и должен просто вернуть свежесгенерированный текст как есть.
+    const std::string merged = mergeUserCodeSections(freshly_generated, "");
+
+    EXPECT_EQ(merged, freshly_generated);
 }

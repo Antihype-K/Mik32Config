@@ -1,4 +1,5 @@
 #include "uart_codegen.h"
+#include "user_code_markers.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -120,10 +121,18 @@ ParseResult<GeneratedUartFirmware> generateUartFirmware(
     // в отличие от пустого GPIO while(1){}, периодически вызывает
     // HAL_USART_Print — иначе на линии TX никогда не появится сигнал,
     // который можно было бы увидеть логическим анализатором или в терминале.
+    // Маркеры /* USER CODE BEGIN <ID> */.../* USER CODE END <ID> */ — §3.1.7.3
+    // ТЗ. Тело цикла (HAL_USART_Print + задержка) — дефолт генератора внутри
+    // маркера "Loop", а не жёстко зашитый код: пользователь может заменить
+    // его своей логикой, и она переживёт повторную генерацию (см.
+    // codegen/user_code_markers.h, применяется в writeGeneratedUartProject).
     firmware.main_c =
         "#include \"mik32_hal_pcc.h\"\n"
         "#include \"mik32_hal_usart.h\"\n"
         "#include \"mik32_init.h\"\n"
+        "\n"
+        "/* USER CODE BEGIN Includes */\n"
+        "/* USER CODE END Includes */\n"
         "\n"
         "extern USART_HandleTypeDef husart;\n"
         "\n"
@@ -135,10 +144,15 @@ ParseResult<GeneratedUartFirmware> generateUartFirmware(
         "\n"
         "    UART_Init();\n"
         "\n"
+        "    /* USER CODE BEGIN Init */\n"
+        "    /* USER CODE END Init */\n"
+        "\n"
         "    while (1)\n"
         "    {\n"
+        "        /* USER CODE BEGIN Loop */\n"
         "        HAL_USART_Print(&husart, \"MIK32-Configurator UART test\\n\", USART_TIMEOUT_DEFAULT);\n"
         "        HAL_DelayMs(1000);\n"
+        "        /* USER CODE END Loop */\n"
         "    }\n"
         "}\n"
         "\n"
@@ -194,10 +208,22 @@ CodegenWriteResult writeGeneratedUartProject(
         return CodegenWriteResult{false, "Не удалось создать каталог src/: " + fs_error.message()};
     }
 
+    // main.c проходит через mergeUserCodeSections (§3.1.7.3 ТЗ) — см.
+    // идентичную логику и обоснование в codegen/gpio/gpio_codegen.cpp.
+    std::string main_c_to_write = firmware.main_c;
+    const fs::path main_c_path = src_dir / "main.c";
+    if (fs::exists(main_c_path))
+    {
+        std::ifstream existing(main_c_path);
+        std::ostringstream existing_buffer;
+        existing_buffer << existing.rdbuf();
+        main_c_to_write = mergeUserCodeSections(firmware.main_c, existing_buffer.str());
+    }
+
     const std::pair<const char*, const std::string*> files_to_write[] = {
         {"mik32_init.h", &firmware.mik32_init_h},
         {"mik32_init.c", &firmware.mik32_init_c},
-        {"main.c", &firmware.main_c},
+        {"main.c", &main_c_to_write},
     };
 
     for (const auto& [file_name, content] : files_to_write)
