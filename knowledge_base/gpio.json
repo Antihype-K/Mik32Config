@@ -1,0 +1,59 @@
+{
+  "_comment_scope": "Минимальный knowledge_base под HAL-уровень кодогенерации (см. docs/implementations/gpio.md). Полный регистровый мап по §7.1 архитектурного документа (адреса/офсеты каждого регистра) сюда сознательно не включён: HAL-based кодоген вызывает готовые функции mik32-hal (HAL_GPIO_Init, __HAL_PCC_GPIO_x_CLK_ENABLE) и не пишет в регистры напрямую, поэтому адреса ему не нужны. Раздел будет дополнен при переходе на register-level кодоген.",
+
+  "peripheral": "gpio",
+
+  "max_instances": 3,
+  "_comment_max_instances": "Датащит МИК32 v2.2.3, Таблица 2 (с.11-12): в карте памяти APB_P перечислены ровно три блока — GPIO_0 (+0x3000), GPIO_1 (+0x3400), GPIO_2 (+0x3800). Четвёртого блока GPIO в адресном пространстве нет.",
+
+  "pins_per_instance": 16,
+  "_comment_pins_per_instance": "Датащит, раздел «Модуль порта ввода/вывода общего назначения (GPIO)», с.180: «Каждый модуль ввода/вывода (GPIO) имеет интерфейс APB и управляет 16 или 8 внешними выводами». ВНИМАНИЕ (открытый вопрос, не решён в этой сессии): датащит явно допускает, что не все три инстанса симметричны — как минимум один блок может иметь только 8 пинов, а не 16. Текущая schemas/gpio.json (написана пользователем) задаёт единый диапазон pins 0-15 для любого instance — это значение здесь просто отражает то, что уже используется в schemas/gpio.json и HAL (HAL_PinsTypeDef перечисляет GPIO_PIN_0..GPIO_PIN_15 без разделения по инстансам), а не является независимо подтверждённым по датащиту фактом для каждого instance. Требует отдельной проверки по таблице выводов (пинаут), которая не поддалась текстовому извлечению из PDF.",
+
+  "instance_clock_enable_macro": {
+    "0": "__HAL_PCC_GPIO_0_CLK_ENABLE",
+    "1": "__HAL_PCC_GPIO_1_CLK_ENABLE",
+    "2": "__HAL_PCC_GPIO_2_CLK_ENABLE"
+  },
+  "_comment_instance_clock_enable_macro": "docs/examples/mik32-hal/peripherals/Include/mik32_hal_pcc.h, строки 184-191: три отдельных макроса __HAL_PCC_GPIO_0/1/2_CLK_ENABLE(), каждый пишет свой бит в PM->CLK_APB_P_SET. Обоснование необходимости вызова — mik32_hal_gpio.c, doxygen-комментарий к HAL_GPIO_Init (строка 13): «функция не включает тактирование выбранного модуля GPIO» — вызов макроса обязателен до HAL_GPIO_Init, иначе запись в PAD_CONFIG/GPIO для этого порта не будет иметь эффекта (шина не тактируется).",
+
+  "instance_gpio_handle": {
+    "0": "GPIO_0",
+    "1": "GPIO_1",
+    "2": "GPIO_2"
+  },
+  "_comment_instance_gpio_handle": "docs/examples/mik32-hal/peripherals/Source/mik32_hal_gpio.c, строки 24-40: switch по указателю GPIO_x сравнивает его именно с GPIO_0/GPIO_1/GPIO_2 — это единственные три валидных значения первого параметра HAL_GPIO_Init.",
+
+  "mode_encoding": {
+    "input": { "hal_enum": "HAL_GPIO_MODE_GPIO_INPUT", "bits": "0b100" },
+    "output": { "hal_enum": "HAL_GPIO_MODE_GPIO_OUTPUT", "bits": "0b000" },
+    "serial": { "hal_enum": "HAL_GPIO_MODE_SERIAL", "bits": "0b01" },
+    "timer_serial": { "hal_enum": "HAL_GPIO_MODE_TIMER_SERIAL", "bits": "0b10" },
+    "analog": { "hal_enum": "HAL_GPIO_MODE_ANALOG", "bits": "0b11" }
+  },
+  "_comment_mode_encoding": "Датащит, Таблица 98 «Поля регистров PADх_CFG управления функцией выводов», с.182-183: 2 бита на пин кодируют функцию — 0b00 первая функция (порт общего назначения), 0b01 вторая функция (последовательный интерфейс), 0b10 третья функция (последовательный интерфейс или таймер), 0b11 четвёртая функция (аналоговый сигнал). Значения bits здесь взяты из mik32_hal_gpio.h строки 67-81 (перечисление HAL_GPIO_ModeTypeDef, ветка #else // MIK32V2, т.к. плата 1T Rex — MIK32V2), где GPIO_INPUT/GPIO_OUTPUT дополнительно кодируют направление третьим битом (0b1xx / 0b0xx) поверх тех же 2 битов 0b00 из датащита — само значение функции 'GPIO' в PAD_CONFIG для input и output одинаково (0b00), различие направления вход/выход задаётся уже не PAD_CONFIG, а регистром DIRECTION_IN/DIRECTION_OUT модуля GPIO (Таблица 96, с.180-181).",
+
+  "pull_encoding": {
+    "none": { "hal_enum": "HAL_GPIO_PULL_NONE", "bits": "0b00" },
+    "pull_up": { "hal_enum": "HAL_GPIO_PULL_UP", "bits": "0b01" },
+    "pull_down": { "hal_enum": "HAL_GPIO_PULL_DOWN", "bits": "0b10" }
+  },
+  "_comment_pull_encoding": "Датащит, Таблица 100 «Поля регистров PADх_PUPD управления подтягивающими резисторами», с.184-185: 0b00 подтяжки не подключены, 0b01 подтяжка 50 кОм к питанию, 0b10 подтяжка 50 кОм к земле, 0b11 зарезервировано (поэтому в schemas/gpio.json и в HAL_GPIO_PullTypeDef, mik32_hal_gpio.h строки 86-91, значение 0b11 просто отсутствует как валидная опция).",
+
+  "drive_strength_encoding": {
+    "2mA": { "hal_enum": "HAL_GPIO_DS_2MA", "bits": "0b00" },
+    "4mA": { "hal_enum": "HAL_GPIO_DS_4MA", "bits": "0b01" },
+    "8mA": { "hal_enum": "HAL_GPIO_DS_8MA", "bits": "0b10" }
+  },
+  "_comment_drive_strength_encoding": "Датащит, Таблица 99 «Поля регистров PADх_DS управления нагрузочной способностью выводов», с.183-184: 0b00 = 2мА, 0b01 = 4мА, 0b10 ИЛИ 0b11 = 8мА (обе комбинации дают одинаковый режим). HAL (mik32_hal_gpio.h, строки 96-101) выбирает 0b10 как канонический код для 8мА, поэтому здесь используется он же, а не 0b11.",
+
+  "call_shape": {
+    "clock_enable_before_init": true,
+    "single_call_covers_gpio_and_pad_config": true,
+    "pins_with_identical_settings_share_one_call": true
+  },
+  "_comment_call_shape": "docs/examples/mik32-hal/peripherals/Source/mik32_hal_gpio.c, строки 15-75: одна функция HAL_GPIO_Init одновременно пишет DIRECTION_IN/DIRECTION_OUT модуля GPIO и три регистра PAD_CONFIG (CFG/DS/PUPD) для всех пинов, установленных в маске Pin. Поэтому один блок конфигурации gpio.json (один instance + одна маска pins с общими mode/pull/drive_strength) транслируется ровно в один вызов HAL_GPIO_Init — отдельной функции инициализации PAD_CONFIG (как заявлено в §9.5 архитектурного документа) в реальном HAL нет; см. обоснование выбора реального HAL как источника истины в docs/implementations/gpio.md.",
+
+  "not_covered_by_this_codegen": {
+    "line_mux_errata": "Errata MIK32V2 v1.0.1, раздел 3.1 «Чтение регистра LINE_MUX», с.7: регистр LINE_MUX модуля GPIO_IRQ при чтении возвращает только младший байт. Эта errata относится к настройке линий внешних прерываний GPIO (HAL_GPIO_InitInterruptLine), а не к базовой инициализации направления/подтяжки/тока, которую генерирует этот модуль в текущей сессии — поэтому shadow-переменная из §9.5 архитектурного документа здесь не реализуется."
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "peripheral_type": "gpio",
+  "max_instances": 3,
+  "required_fields": ["type", "instance", "mode", "pull", "drive_strength", "pins"],
+  "fields": {
+    "instance": {
+      "type": "integer",
+      "min": 0,
+      "max": 2
+    },
+    "mode": {
+      "type": "enum",
+      "values": ["input", "output", "serial", "timer_serial", "analog"]
+    },
+    "pull": {
+      "type": "enum",
+      "values": ["none", "pull_up", "pull_down"]
+    },
+    "drive_strength": {
+      "type": "enum",
+      "values": ["2mA", "4mA", "8mA"]
+    },
+    "pins": {
+      "type": "array",
+      "item_type": "integer",
+      "item_min": 0,
+      "item_max": 15,
+      "min_length": 1,
+      "allow_duplicates": false
+    }
+  }
+}

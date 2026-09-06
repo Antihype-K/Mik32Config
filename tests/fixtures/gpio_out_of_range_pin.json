@@ -1,0 +1,14 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "gpio",
+      "instance": 0,
+      "mode": "output",
+      "pull": "none",
+      "drive_strength": "2mA",
+      "pins": [0,16]
+    }
+  ]
+}

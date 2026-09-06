@@ -10,32 +10,53 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ==============================================================================
-# 4. СБОРКА ОСНОВНОГО ИСПОЛНЯЕМОГО ФАЙЛА
+# 4. ОБЩИЕ ИСХОДНЫЕ ФАЙЛЫ (чтобы не дублировать)
 # ==============================================================================
-
-# Создаем исполняемый файл и явно собираем все исходники логики парсеров
-add_executable(MIK32-Configurator
-        src/main.cpp
-
-        # Модули парсера периферии
-        parser/gpio/gpio_parser.cpp      # Добавь реальные имя_файла.cpp, если они есть
+set(PARSER_SOURCES
+        parser/gpio/gpio_parser.cpp
         parser/i2c/i2c_parser.cpp
         parser/spi/spi_parser.cpp
         parser/timing/timing_parser.cpp
         parser/USART/usart_parser.cpp
-        parser/gpio/gpio_parser.h
-        parser/gpio/gpio_parser.h
+)
+
+set(PARSER_HEADERS
+        include/parse_result.h
+)
+
+set(GPIO_CODEGEN_SOURCES
+        knowledge_base/gpio_knowledge.cpp
+        codegen/gpio/gpio_codegen.cpp
+)
+
+set(GPIO_CODEGEN_HEADERS
+        knowledge_base/gpio_knowledge.h
+        codegen/gpio/gpio_codegen.h
+)
+
+# ==============================================================================
+# 5. СБОРКА ОСНОВНОГО ИСПОЛНЯЕМОГО ФАЙЛА
+# ==============================================================================
+add_executable(MIK32-Configurator
+        src/main.cpp
+        ${PARSER_SOURCES}
+        ${PARSER_HEADERS}
+        ${GPIO_CODEGEN_SOURCES}
+        ${GPIO_CODEGEN_HEADERS}
 )
 
 # Подключаем папки с заголовочными файлами
 target_include_directories(MIK32-Configurator
         PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include        # Для json.hpp и публичных заголовков
-        ${CMAKE_CURRENT_SOURCE_DIR}/parser         # Чтобы удобнее включать headers парсеров
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/gpio
+        ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gpio
 )
 
 # ==============================================================================
-# 5. (ОПЦИОНАЛЬНО) ПОДКТЮЧЕНИЕ GOOGLETEST ДЛЯ ЮНИТ-ТЕСТОВ
+# 6. ПОДКЛЮЧЕНИЕ GOOGLETEST ДЛЯ ЮНИТ-ТЕСТОВ
 # ==============================================================================
 option(BUILD_TESTING "Build unit tests" OFF)
 
@@ -44,11 +65,11 @@ if(BUILD_TESTING)
 
     FetchContent_Declare(
             googletest
-            URL https://github.com/google/googletest/archive/03597a01ee50ed33e9dfd640b249b4be3799d395.zip
-            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG release-1.12.1
     )
 
-    # Фикс совместимости MSVC для Windows
+    # Для Windows
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
     FetchContent_MakeAvailable(googletest)
@@ -58,44 +79,31 @@ if(BUILD_TESTING)
     # Создаем отдельные тесты под парсеры
     add_executable(MIK32-Parser-Tests
             tests/test_parsers.cpp
-            # Файлы парсеров без src/main.cpp
-            parser/gpio/gpio_parser.cpp
-            parser/i2c/i2c_parser.cpp
-            parser/spi/spi_parser.cpp
-            parser/timing/timing_parser.cpp
-            parser/USART/usart_parser.cpp
-            parser/gpio/gpio_parser.h
-            parser/gpio/gpio_parser.h
+            ${PARSER_SOURCES}
+            ${PARSER_HEADERS}
+            ${GPIO_CODEGEN_SOURCES}
+            ${GPIO_CODEGEN_HEADERS}
     )
 
     target_include_directories(MIK32-Parser-Tests
             PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${CMAKE_CURRENT_SOURCE_DIR}/parser
+            ${CMAKE_CURRENT_SOURCE_DIR}/parser/gpio
+            ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base
+            ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gpio
     )
 
     target_link_libraries(MIK32-Parser-Tests
             PRIVATE
-            GTest::gtest_main
+            gtest_main
     )
 
     include(GoogleTest)
-    gtest_discover_tests(MIK32-Parser-Tests)
+    # WORKING_DIRECTORY = tests/, чтобы относительные пути фикстур в тестах
+    # ("fixtures/gpio_valid.json" и т.п., см. tests/test_parsers.cpp) резолвились
+    # от каталога с самими фикстурами (tests/fixtures/), а не от каталога сборки.
+    gtest_discover_tests(MIK32-Parser-Tests
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
 endif()
-
-
-#Инструкция по сборке
-#Обычная сборка приложения:
-
-#Bash
-#cmake -S . -B build
-#cmake --build build
-#Результат: Бинарник MIK32-Configurator скомпилирован в папке build/.
-
-
-#Сборка вместе с юнит-тестами:
-
-#Bash
-#cmake -S . -B build -DBUILD_TESTING=ON
-#cmake --build build
-#cd build && ctest --output-on-failure

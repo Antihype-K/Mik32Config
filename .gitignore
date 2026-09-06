@@ -1,3 +1,11 @@
 *.zip
 build/
 *.o
+generated_projects/
+docs/
+CLAUDE.md
+MENTOR_MODE.md
+/МИК32 конфигуратор - Архитектура.md
+.agents/
+.claude/
+skills-lock.json
