@@ -25,6 +25,10 @@
       "item_type": "integer",
       "item_min": 0,
       "item_max": 15,
+      "item_max_by_instance": {
+        "_comment": "Датащит МИК32 v2.2.3, Таблица 193 «Назначение выводов», с.320: в корпусе разведены сигналы GPIO0_0..GPIO0_15 и GPIO1_0..GPIO1_15 (по 16 пинов), но только GPIO2_0..GPIO2_7 (8 пинов) — четвёртого GPIO2_8..GPIO2_15 на кристалле физически нет. item_max выше (15) остаётся дефолтом для instance 0 и 1; для instance 2 действует более узкая граница ниже.",
+        "2": 7
+      },
       "min_length": 1,
       "allow_duplicates": false
     }

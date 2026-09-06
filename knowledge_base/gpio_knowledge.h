@@ -19,7 +19,11 @@
 struct GpioKnowledge
 {
     int max_instances;
-    int pins_per_instance;
+
+    // instance (0/1/2) -> число физически распаянных пинов на этом
+    // instance. Не одинаково для всех instance — GPIO_2 имеет только 8,
+    // а не 16 (см. _comment_pins_per_instance в knowledge_base/gpio.json).
+    std::map<int, int> pins_per_instance;
 
     // instance (0/1/2) -> имя макроса включения тактирования, например
     // "__HAL_PCC_GPIO_0_CLK_ENABLE".

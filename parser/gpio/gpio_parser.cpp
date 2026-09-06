@@ -43,11 +43,20 @@ namespace
     constexpr int kMinInstance = 0;
     constexpr int kMaxInstance = 2;
 
-    // schemas/gpio.json: "item_min": 0, "item_max": 15 — см. открытый вопрос
-    // в knowledge_base/gpio.json об асимметрии портов по числу пинов,
-    // сюда просто перенесена граница, уже зафиксированная в схеме.
+    // schemas/gpio.json: "item_min": 0, "item_max": 15 — общая граница для
+    // instance 0 и 1 (см. kMaxPinByInstance ниже для instance 2, у которого
+    // граница уже).
     constexpr int kMinPin = 0;
     constexpr int kMaxPin = 15;
+
+    // schemas/gpio.json, "pins.item_max_by_instance": Датащит, Таблица 193
+    // «Назначение выводов», с.320 — в корпусе разведено только GPIO2_0..
+    // GPIO2_7 (8 пинов), у GPIO0/GPIO1 распаяны все 16 (GPIOx_0..GPIOx_15).
+    // Подтверждённый факт, не гипотеза — см. docs/implementations/gpio.md.
+    int maxPinForInstance(int instance)
+    {
+        return instance == 2 ? 7 : kMaxPin;
+    }
 
     ParseResult<GpioConfig> makeError(const std::string& message)
     {
@@ -152,6 +161,8 @@ ParseResult<GpioConfig> parseGpioConfig(const std::string& file_name_path)
         return makeError("Поле \"pins\" не может быть пустым");
     }
 
+    const int max_pin = maxPinForInstance(instance);
+
     std::vector<uint8_t> pins;
     std::set<int> seen_pins;
     for (const auto& pin_value : gpio["pins"])
@@ -161,9 +172,10 @@ ParseResult<GpioConfig> parseGpioConfig(const std::string& file_name_path)
             return makeError("Элемент массива \"pins\" должен быть целым числом");
         }
         const int pin = pin_value.get<int>();
-        if (pin < kMinPin || pin > kMaxPin)
+        if (pin < kMinPin || pin > max_pin)
         {
-            return makeError("Номер пина вне диапазона 0-15");
+            return makeError("Номер пина вне диапазона 0-" + std::to_string(max_pin)
+                + " для instance " + std::to_string(instance));
         }
         // schemas/gpio.json: "allow_duplicates": false — один и тот же пин
         // не может быть настроен дважды с потенциально разными атрибутами

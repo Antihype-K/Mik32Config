@@ -42,7 +42,12 @@ ParseResult<GpioKnowledge> loadGpioKnowledge(const std::string& file_path)
     try
     {
         knowledge.max_instances = root.at("max_instances").get<int>();
-        knowledge.pins_per_instance = root.at("pins_per_instance").get<int>();
+
+        for (auto it = root.at("pins_per_instance").begin();
+             it != root.at("pins_per_instance").end(); ++it)
+        {
+            knowledge.pins_per_instance[std::stoi(it.key())] = it.value().get<int>();
+        }
 
         // Ключи JSON-объектов всегда строки — instance хранится в файле как
         // "0"/"1"/"2", здесь переводим обратно в int, которым оперирует

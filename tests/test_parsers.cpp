@@ -63,6 +63,16 @@ TEST(GpioParse, RejectsWrongInstance)
     EXPECT_FALSE(result.success);
 }
 
+// GPIO_2 физически имеет только 8 пинов (0-7), в отличие от GPIO_0/GPIO_1
+// (по 16) — датащит, Таблица 193 «Назначение выводов», с.320. Пин 8 valid
+// для instance 0/1, но не для instance 2.
+TEST(GpioParse, RejectsPinOutOfRangeForInstanceTwo)
+{
+    ParseResult<GpioConfig> result = parseGpioConfig("fixtures/gpio_out_of_range_pin_for_instance2.json");
+
+    EXPECT_FALSE(result.success);
+}
+
 namespace
 {
     std::string readFileToString(const std::string& path)
