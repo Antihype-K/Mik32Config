@@ -55,6 +55,25 @@ ParseResult<UartKnowledge> loadUartKnowledge(const std::string& file_path)
             setting.parity_bit_inversion = it.value().at("parity_bit_inversion").get<std::string>();
             knowledge.parity_hal_setting[it.key()] = setting;
         }
+
+        knowledge.hsi_hz = root.at("hsi_hz").get<long>();
+
+        auto readFixedPin = [](const nlohmann::json& node) {
+            UartKnowledge::FixedPin pin;
+            pin.gpio_instance = node.at("gpio_instance").get<int>();
+            pin.pin = node.at("pin").get<int>();
+            return pin;
+        };
+        for (auto it = root.at("instance_fixed_pins").begin();
+             it != root.at("instance_fixed_pins").end(); ++it)
+        {
+            UartKnowledge::InstanceFixedPins pins;
+            pins.tx = readFixedPin(it.value().at("tx"));
+            pins.rx = readFixedPin(it.value().at("rx"));
+            pins.rts = readFixedPin(it.value().at("rts"));
+            pins.cts = readFixedPin(it.value().at("cts"));
+            knowledge.instance_fixed_pins[std::stoi(it.key())] = pins;
+        }
     }
     catch (const nlohmann::json::exception& structure_error)
     {

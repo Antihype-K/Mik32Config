@@ -5,7 +5,9 @@ USART_HandleTypeDef husart;
 
 /*
  * Сгенерировано MIK32-Configurator.
- * UART_0: baud_rate=38400, data_bits=8, stop_bits=1, parity=none, flow_control=false.
+ * UART_0: baud_rate=38400, data_bits=8, stop_bits=1, parity=none, flow_control=false, direction=duplex.
+ * Фактическая скорость при HSI=32000000Гц: DIVIDER=833 -> 38415.366 бод, погрешность 0.040%
+   (ТЗ §3.1.3.2 / §3.1.8; см. knowledge_base/uart.json, hsi_hz).
  * Только Asynchronous_Mode — синхронный режим вне скоупа этой сессии
  * (Errata MIK32V2 v1.0.1, §10.1, см. knowledge_base/uart.json).
  */

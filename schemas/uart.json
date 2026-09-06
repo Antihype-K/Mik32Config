@@ -2,7 +2,7 @@
   "peripheral_type": "uart",
   "max_instances": 2,
   "_comment_max_instances": "Датащит МИК32 v2.2.3, Таблица 2 (с.11-12): карта памяти APB_P перечисляет ровно два блока — USART_0 (+0x0400) и USART_1 (+0x0800). Третьего UART на кристалле нет (в отличие от GPIO, которых три).",
-  "required_fields": ["type", "instance", "baud_rate", "data_bits", "stop_bits", "parity", "flow_control"],
+  "required_fields": ["type", "instance", "baud_rate", "data_bits", "stop_bits", "parity", "flow_control", "direction"],
   "fields": {
     "instance": {
       "type": "integer",
@@ -10,19 +10,19 @@
       "max": 1
     },
     "baud_rate": {
-      "type": "integer",
-      "min": 1,
-      "_comment": "Верхняя граница не фиксируется числом: максимум зависит от текущей частоты APB_P (HAL делит Freq_APB_P на baud_rate для регистра DIVIDER, mik32_hal_usart.c:131-133 — 'Baudrate: максимальное значение - частота APB_P / 16'). Конкретное число тактовой частоты конфигуратору пока не известно (PCC — отдельный будущий модуль), поэтому верхняя граница здесь не проверяется."
+      "type": "enum_int",
+      "values": [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600],
+      "_comment": "ТЗ (docs/Приложение_А_Техническое_задание_МИК32.docx, §3.1.3.2): скорость выбирается из этого фиксированного ряда, а не произвольным целым — с отображением фактической погрешности при HSI=32МГц. Погрешность считается кодогеном (см. knowledge_base/uart.json, HSI_HZ) и попадает в комментарий генерируемого кода, т.к. графического отображения (GUI) пока нет."
     },
     "data_bits": {
       "type": "enum_int",
-      "values": [7, 8],
-      "_comment": "Датащит, Таблица 18 «Регистр управления 1 CONTROL1», с.39-40, биты M1:M0: 0b00 = 8 бит, 0b01 = 9 бит, 0b10 = 7 бит. 9-битный кадр в схему не включён — это редкий режим (мультипроцессорная связь), не входящий в контрактный минимум MVP (архитектурный документ, §9.3)."
+      "values": [7, 8, 9],
+      "_comment": "Датащит, Таблица 18 «Регистр управления 1 CONTROL1», с.39-40, биты M1:M0: 0b00 = 8 бит, 0b01 = 9 бит, 0b10 = 7 бит. 9 бит добавлен по требованию ТЗ §3.1.3.2 — реально поддерживается железом (Frame_9bit в HAL), исключение в предыдущей сессии было решением по MVP-скоупу, а не аппаратным ограничением."
     },
     "stop_bits": {
       "type": "enum_int",
       "values": [1, 2],
-      "_comment": "mik32_hal_usart.h: HAL_USART_StopBit_enum — только StopBit_1/StopBit_2, третьего значения в HAL нет."
+      "_comment": "ТЗ §3.1.3.2 требует 0.5/1/1.5/2, но датащит (раздел USART, регистр CONTROL1, бит STOP_1, разряд 13) прямо говорит: «0 – 1 стоп бит; 1 – 2 стоп бита» — один бит, только два значения. Дробных стоп-битов на этом контроллере не существует; это несоответствие ТЗ реальному железу (см. docs/implementations/uart.md) — оставлено 1/2 по решению пользователя, ТЗ в этой части не выполнимо буквально."
     },
     "parity": {
       "type": "enum",
@@ -31,7 +31,12 @@
     },
     "flow_control": {
       "type": "boolean",
-      "_comment": "Включает аппаратные RTS/CTS (mik32_hal_usart.c: Modem.rts/Modem.cts) на пинах, фиксированных для того же instance, что и TX/RX — см. knowledge_base/uart.json, instance_pins."
+      "_comment": "Включает аппаратные RTS/CTS (mik32_hal_usart.c: Modem.rts/Modem.cts) на пинах, фиксированных для того же instance, что и TX/RX — см. knowledge_base/uart.json, instance_fixed_pins."
+    },
+    "direction": {
+      "type": "enum",
+      "values": ["tx", "rx", "duplex"],
+      "_comment": "ТЗ §3.1.3.2: направление (передача/приём/дуплекс) должно быть настраиваемым. tx -> transmitting=Enable,receiving=Disable; rx -> наоборот; duplex -> оба Enable (mik32_hal_usart.h, USART_HandleTypeDef.transmitting/receiving)."
     }
   }
 }

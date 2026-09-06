@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
 
 namespace fs = std::filesystem;
 
@@ -57,7 +58,25 @@ ParseResult<GeneratedUartFirmware> generateUartFirmware(
     // синхронный режим) зафиксированы в безопасные дефолты по образцу
     // docs/examples/mik32-examples/HAL_USART/src/main.c.
     const std::string flow = config.flow_control ? "Enable" : "Disable";
+
+    // ТЗ §3.1.3.2: направление настраивается пользователем, а не жёстко
+    // Enable/Enable — mik32_hal_usart.h, USART_HandleTypeDef.transmitting/
+    // receiving управляют этим по отдельности.
+    const std::string transmitting = (config.direction == "tx" || config.direction == "duplex") ? "Enable" : "Disable";
+    const std::string receiving = (config.direction == "rx" || config.direction == "duplex") ? "Enable" : "Disable";
+
+    // ТЗ §3.1.3.2: отображать фактическую погрешность Baud Rate при
+    // HSI=32МГц. HAL вычисляет DIVIDER целочисленным делением
+    // (mik32_hal_usart.c:131-133) — здесь тот же расчёт на этапе
+    // кодогенерации (частота фиксирована и известна заранее, §3.1.8),
+    // результат кладётся в комментарий, т.к. GUI с графическим
+    // отображением погрешности ещё не реализован.
+    const long divider = knowledge.hsi_hz / config.baud_rate;
+    const double actual_baud_rate = static_cast<double>(knowledge.hsi_hz) / static_cast<double>(divider);
+    const double baud_error_percent = (actual_baud_rate - config.baud_rate) / config.baud_rate * 100.0;
+
     std::ostringstream init_c;
+    init_c << std::fixed << std::setprecision(3);
     init_c << "#include \"mik32_init.h\"\n"
               "#include \"mik32_hal_usart.h\"\n"
               "\n"
@@ -67,15 +86,19 @@ ParseResult<GeneratedUartFirmware> generateUartFirmware(
               " * Сгенерировано MIK32-Configurator.\n"
               " * " << *uart_handle << ": baud_rate=" << config.baud_rate
            << ", data_bits=" << config.data_bits << ", stop_bits=" << config.stop_bits
-           << ", parity=" << config.parity << ", flow_control=" << (config.flow_control ? "true" : "false") << ".\n"
+           << ", parity=" << config.parity << ", flow_control=" << (config.flow_control ? "true" : "false")
+           << ", direction=" << config.direction << ".\n"
+              " * Фактическая скорость при HSI=" << knowledge.hsi_hz << "Гц: DIVIDER=" << divider
+           << " -> " << actual_baud_rate << " бод, погрешность " << baud_error_percent << "%\n"
+              "   (ТЗ §3.1.3.2 / §3.1.8; см. knowledge_base/uart.json, hsi_hz).\n"
               " * Только Asynchronous_Mode — синхронный режим вне скоупа этой сессии\n"
               " * (Errata MIK32V2 v1.0.1, §10.1, см. knowledge_base/uart.json).\n"
               " */\n"
               "void UART_Init(void)\n"
               "{\n"
               "    husart.Instance = " << *uart_handle << ";\n"
-              "    husart.transmitting = Enable;\n"
-              "    husart.receiving = Enable;\n"
+              "    husart.transmitting = " << transmitting << ";\n"
+              "    husart.receiving = " << receiving << ";\n"
               "    husart.frame = " << *frame_enum << ";\n"
               "    husart.parity_bit = " << parity_setting->parity_bit << ";\n"
               "    husart.parity_bit_inversion = " << parity_setting->parity_bit_inversion << ";\n"

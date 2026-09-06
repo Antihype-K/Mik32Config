@@ -13,10 +13,20 @@
   "_comment_instance_handle": "docs/examples/mik32-examples/HAL_USART/src/main.c, строка 74: husart0.Instance = UART_0 — имя макроса-хендла, аналог GPIO_0/1/2 для GPIO.",
 
   "instance_fixed_pins": {
-    "0": { "tx": "PORT0_6 (GPIO0 pin 6)", "rx": "PORT0_5 (GPIO0 pin 5)", "rts": "PORT0_8 (GPIO0 pin 8)", "cts": "PORT0_7 (GPIO0 pin 7)" },
-    "1": { "tx": "PORT1_9 (GPIO1 pin 9)", "rx": "PORT1_8 (GPIO1 pin 8)", "rts": "PORT1_11 (GPIO1 pin 11)", "cts": "PORT1_10 (GPIO1 pin 10)" }
+    "0": {
+      "tx": { "gpio_instance": 0, "pin": 6 },
+      "rx": { "gpio_instance": 0, "pin": 5 },
+      "rts": { "gpio_instance": 0, "pin": 8 },
+      "cts": { "gpio_instance": 0, "pin": 7 }
+    },
+    "1": {
+      "tx": { "gpio_instance": 1, "pin": 9 },
+      "rx": { "gpio_instance": 1, "pin": 8 },
+      "rts": { "gpio_instance": 1, "pin": 11 },
+      "cts": { "gpio_instance": 1, "pin": 10 }
+    }
   },
-  "_comment_instance_fixed_pins": "Датащит, Таблица 193 «Назначение выводов», с.320: UART0_txd/rxd/nrts/ncts закреплены за PORT0_6/5/8/7, UART1_txd/rxd/nrts/ncts — за PORT1_9/8/11/10. Не настраиваемо пользователем (см. решение в docs/implementations/uart.md убрать tx_pin/rx_pin из схемы). Указано здесь только для справки/документации — кодоген эти значения не читает, т.к. HAL_USART_Init сам вычисляет нужные GPIO_PIN_x по числу пинов TX=6/RX=5 и т.п., зашитому в самом HAL (mik32_hal_usart.c), а не по этому файлу. ВАЖНО: реальная прошивка робота (docs/examples/mik32/controlFirmware/src/main.cpp, USART0_Init) по умолчанию (без макроса USE_UART_1, которого нет в её platformio.ini) использует UART_0, а не UART_1 — несмотря на то что шелкография 1T Rex Board помечает TXD/RXD рядом с P1.09/P1.08 (что соответствует UART1). См. docs/implementations/uart.md, раздел 7, для итогового решения по HW-цели.",
+  "_comment_instance_fixed_pins": "Датащит, Таблица 193 «Назначение выводов», с.320: UART0_txd/rxd/nrts/ncts закреплены за PORT0_6/5/8/7 (gpio_instance=0), UART1_txd/rxd/nrts/ncts — за PORT1_9/8/11/10 (gpio_instance=1). Не настраиваемо пользователем (см. решение в docs/implementations/uart.md убрать tx_pin/rx_pin из схемы). Кодоген (uart_codegen.cpp) эти значения не читает — HAL_USART_Init сам вычисляет нужные GPIO_PIN_x, зашитые в самом HAL (mik32_hal_usart.c). Структурированный вид (gpio_instance+pin как числа, а не строка) введён по требованию ТЗ §3.1.6.2 — кросс-модульный валидатор (validation/cross_module_validator.cpp) читает эти поля программно, чтобы находить конфликт пина между GPIO-блоком и UART-инстансом, которому этот пин нужен фиксированно. ВАЖНО: реальная прошивка робота (docs/examples/mik32/controlFirmware/src/main.cpp, USART0_Init) по умолчанию (без макроса USE_UART_1, которого нет в её platformio.ini) использует UART_0, а не UART_1 — несмотря на то что шелкография 1T Rex Board помечает TXD/RXD рядом с P1.09/P1.08 (что соответствует UART1). См. docs/implementations/uart.md, раздел 7, для итогового решения по HW-цели.",
 
   "clock_enable_macro": {
     "0": "__HAL_PCC_UART_0_CLK_ENABLE",
@@ -26,9 +36,13 @@
 
   "data_bits_encoding": {
     "7": { "hal_enum": "Frame_7bit", "bits": "0b10" },
-    "8": { "hal_enum": "Frame_8bit", "bits": "0b00" }
+    "8": { "hal_enum": "Frame_8bit", "bits": "0b00" },
+    "9": { "hal_enum": "Frame_9bit", "bits": "0b01" }
   },
-  "_comment_data_bits_encoding": "Датащит, Таблица 18 «Регистр управления 1 CONTROL1», с.39-40, биты M1:M0. HAL (mik32_hal_usart.h) также определяет Frame_9bit=0b01, но 9-битный кадр не входит в MVP-схему.",
+  "_comment_data_bits_encoding": "Датащит, Таблица 18 «Регистр управления 1 CONTROL1», с.39-40, биты M1:M0. 9 бит добавлен по требованию ТЗ §3.1.3.2.",
+
+  "hsi_hz": 32000000,
+  "_comment_hsi_hz": "ТЗ §3.1.8: HSI 32МГц — единственный источник тактирования, используется как константа при расчёте всех временных параметров (в т.ч. погрешности Baud Rate). Совпадает с APB_P freq при APBPDivider=0 в SystemClock_Config (см. codegen/gpio, codegen/uart — делители AHB/APB_M/APB_P всегда 0 в сгенерированном коде).",
 
   "stop_bits_encoding": {
     "1": { "hal_enum": "StopBit_1" },

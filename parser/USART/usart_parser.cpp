@@ -17,17 +17,27 @@ namespace
     constexpr int kMinInstance = 0;
     constexpr int kMaxInstance = 1;
 
-    // schemas/uart.json: "data_bits" enum_int [7, 8] — датащит, Таблица 18
-    // (CONTROL1, биты M1:M0), с.39-40: 0b00=8, 0b01=9, 0b10=7. 9 бит нет в
-    // схеме (редкий мультипроцессорный режим, вне MVP §9.3).
-    const std::set<int> kValidDataBits = {7, 8};
+    // schemas/uart.json: "baud_rate" enum_int — ТЗ §3.1.3.2 фиксирует ряд
+    // стандартных скоростей, а не произвольное целое.
+    const std::set<int> kValidBaudRates = {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600};
+
+    // schemas/uart.json: "data_bits" enum_int [7, 8, 9] — датащит, Таблица 18
+    // (CONTROL1, биты M1:M0), с.39-40: 0b00=8, 0b01=9, 0b10=7. 9 бит добавлен
+    // по ТЗ §3.1.3.2 (реально поддерживается железом).
+    const std::set<int> kValidDataBits = {7, 8, 9};
 
     // schemas/uart.json: "stop_bits" enum_int [1, 2] — mik32_hal_usart.h,
-    // HAL_USART_StopBit_enum содержит только StopBit_1/StopBit_2.
+    // HAL_USART_StopBit_enum содержит только StopBit_1/StopBit_2. ТЗ §3.1.3.2
+    // требует ещё 0.5/1.5, но датащит (регистр CONTROL1, бит STOP_1) прямо
+    // говорит: один бит, только "1 стоп бит"/"2 стоп бита" — дробных
+    // стоп-битов на этом железе не существует, ТЗ здесь ошибочно.
     const std::set<int> kValidStopBits = {1, 2};
 
     // schemas/uart.json: "parity" — Таблица 18, биты PCE (10)/PS (9), с.40.
     const std::set<std::string> kValidParity = {"none", "even", "odd"};
+
+    // schemas/uart.json: "direction" — ТЗ §3.1.3.2.
+    const std::set<std::string> kValidDirection = {"tx", "rx", "duplex"};
 
     ParseResult<UartConfig> makeError(const std::string& message)
     {
@@ -76,11 +86,11 @@ ParseResult<UartConfig> parseUsartConfig(const std::string& file_name_path)
 
     const nlohmann::json& uart = *uart_node;
 
-    // schemas/uart.json: "required_fields" — все шесть полей обязательны
+    // schemas/uart.json: "required_fields" — все семь полей обязательны
     // (tx_pin/rx_pin из черновика архитектуры §5.3 сюда сознательно не
     // включены: они жёстко фиксированы датащитом по instance, а не
     // настраиваемы пользователем — см. docs/implementations/uart.md).
-    for (const char* field : {"instance", "baud_rate", "data_bits", "stop_bits", "parity", "flow_control"})
+    for (const char* field : {"instance", "baud_rate", "data_bits", "stop_bits", "parity", "flow_control", "direction"})
     {
         if (!uart.contains(field))
         {
@@ -98,15 +108,16 @@ ParseResult<UartConfig> parseUsartConfig(const std::string& file_name_path)
         return makeError("Поле \"instance\" вне диапазона 0-1 (в МИК32 два блока USART)");
     }
 
-    if (!uart["baud_rate"].is_number_integer() || uart["baud_rate"].get<int>() < 1)
+    if (!uart["baud_rate"].is_number_integer()
+        || !kValidBaudRates.count(uart["baud_rate"].get<int>()))
     {
-        return makeError("Поле \"baud_rate\" должно быть положительным целым числом");
+        return makeError("Поле \"baud_rate\" содержит недопустимое значение (см. ТЗ §3.1.3.2 — фиксированный ряд стандартных скоростей)");
     }
 
     if (!uart["data_bits"].is_number_integer()
         || !kValidDataBits.count(uart["data_bits"].get<int>()))
     {
-        return makeError("Поле \"data_bits\" содержит недопустимое значение (разрешено 7 или 8)");
+        return makeError("Поле \"data_bits\" содержит недопустимое значение (разрешено 7, 8 или 9)");
     }
 
     if (!uart["stop_bits"].is_number_integer()
@@ -125,6 +136,11 @@ ParseResult<UartConfig> parseUsartConfig(const std::string& file_name_path)
         return makeError("Поле \"flow_control\" должно быть булевым значением");
     }
 
+    if (!uart["direction"].is_string() || !kValidDirection.count(uart["direction"].get<std::string>()))
+    {
+        return makeError("Поле \"direction\" содержит недопустимое значение (разрешено tx, rx или duplex)");
+    }
+
     UartConfig config;
     config.type = "uart";
     config.instance = instance;
@@ -133,6 +149,7 @@ ParseResult<UartConfig> parseUsartConfig(const std::string& file_name_path)
     config.stop_bits = uart["stop_bits"].get<int>();
     config.parity = uart["parity"].get<std::string>();
     config.flow_control = uart["flow_control"].get<bool>();
+    config.direction = uart["direction"].get<std::string>();
 
     return ParseResult<UartConfig>{true, "", config};
 }

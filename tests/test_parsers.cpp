@@ -10,6 +10,7 @@
 #include <uart_knowledge.h>
 #include <uart_codegen.h>
 #include <user_code_markers.h>
+#include <cross_module_validator.h>
 
 #include "parse_result.h"
 
@@ -213,4 +214,36 @@ TEST(UserCodeMarkers, NoExistingFileMeansNoMerge)
     const std::string merged = mergeUserCodeSections(freshly_generated, "");
 
     EXPECT_EQ(merged, freshly_generated);
+}
+
+
+// ТЗ §3.1.6.2: конфликт назначений выводов между GPIO и UART. UART0 TX
+// фиксирован на GPIO_0 pin 6 (knowledge_base/uart.json,
+// instance_fixed_pins) — конфликтует с явным gpio-блоком, тоже
+// заявляющим GPIO_0 pin 6.
+TEST(CrossModuleValidator, DetectsGpioUartPinConflict)
+{
+    ParseResult<UartKnowledge> knowledge_result = loadUartKnowledge("../knowledge_base/uart.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    CrossModuleValidationResult result = validatePinConflicts(
+        "fixtures/cross_gpio_uart_conflict.json", *knowledge_result.config);
+
+    ASSERT_TRUE(result.success) << result.error;
+    ASSERT_EQ(result.conflicts.size(), 1u);
+    EXPECT_EQ(result.conflicts[0].gpio_instance, 0);
+    EXPECT_EQ(result.conflicts[0].pin, 6);
+    EXPECT_EQ(result.conflicts[0].conflicting_owners.size(), 2u);
+}
+
+TEST(CrossModuleValidator, NoConflictWhenPinsDontOverlap)
+{
+    ParseResult<UartKnowledge> knowledge_result = loadUartKnowledge("../knowledge_base/uart.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    CrossModuleValidationResult result = validatePinConflicts(
+        "fixtures/cross_gpio_uart_no_conflict.json", *knowledge_result.config);
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.conflicts.empty());
 }

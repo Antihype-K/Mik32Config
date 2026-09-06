@@ -15,6 +15,7 @@ struct UartConfig
     int stop_bits;
     std::string parity;
     bool flow_control;
+    std::string direction;
 };
 
 ParseResult<UartConfig> parseUsartConfig(const std::string& file_name_path);

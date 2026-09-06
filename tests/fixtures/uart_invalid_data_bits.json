@@ -6,10 +6,11 @@
       "type": "uart",
       "instance": 1,
       "baud_rate": 115200,
-      "data_bits": 9,
+      "data_bits": 10,
       "stop_bits": 1,
       "parity": "none",
-      "flow_control": false
+      "flow_control": false,
+      "direction": "duplex"
     }
   ]
 }
