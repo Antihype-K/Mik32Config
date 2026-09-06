@@ -6,6 +6,9 @@
 #include <gpio/gpio_parser.h>
 #include <gpio_knowledge.h>
 #include <gpio_codegen.h>
+#include <usart_parser.h>
+#include <uart_knowledge.h>
+#include <uart_codegen.h>
 
 #include "parse_result.h"
 
@@ -103,6 +106,61 @@ TEST(GpioCodegen, MatchesGoldenFileForSinglePinOutput)
     ASSERT_TRUE(firmware_result.success) << firmware_result.error;
 
     const std::string expected = readFileToString("fixtures/expected_gpio_init.c");
+
+    EXPECT_EQ(firmware_result.config->mik32_init_c, expected);
+}
+
+
+TEST(UartParse, ParsesValidConfig)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_valid.json");
+
+    EXPECT_TRUE(result.success);
+}
+
+TEST(UartParse, RejectsInvalidDataBits)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_invalid_data_bits.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(UartParse, RejectsInvalidParity)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_invalid_parity.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(UartParse, RejectsWrongInstance)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_wrong_instance.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(UartParse, RejectsInvalidBaudRate)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_invalid_baud_rate.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+// Golden-file тест кодогенератора UART: instance 1 совпадает с TXD/RXD,
+// промаркированными на 1T Rex Board (см. docs/implementations/uart.md).
+TEST(UartCodegen, MatchesGoldenFileForAsyncNoFlowControl)
+{
+    ParseResult<UartConfig> parse_result = parseUsartConfig("fixtures/uart_codegen_output.json");
+    ASSERT_TRUE(parse_result.success);
+
+    ParseResult<UartKnowledge> knowledge_result = loadUartKnowledge("../knowledge_base/uart.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<GeneratedUartFirmware> firmware_result =
+        generateUartFirmware(*parse_result.config, *knowledge_result.config);
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string expected = readFileToString("fixtures/expected_uart_init.c");
 
     EXPECT_EQ(firmware_result.config->mik32_init_c, expected);
 }

@@ -1,0 +1,37 @@
+{
+  "peripheral_type": "uart",
+  "max_instances": 2,
+  "_comment_max_instances": "Датащит МИК32 v2.2.3, Таблица 2 (с.11-12): карта памяти APB_P перечисляет ровно два блока — USART_0 (+0x0400) и USART_1 (+0x0800). Третьего UART на кристалле нет (в отличие от GPIO, которых три).",
+  "required_fields": ["type", "instance", "baud_rate", "data_bits", "stop_bits", "parity", "flow_control"],
+  "fields": {
+    "instance": {
+      "type": "integer",
+      "min": 0,
+      "max": 1
+    },
+    "baud_rate": {
+      "type": "integer",
+      "min": 1,
+      "_comment": "Верхняя граница не фиксируется числом: максимум зависит от текущей частоты APB_P (HAL делит Freq_APB_P на baud_rate для регистра DIVIDER, mik32_hal_usart.c:131-133 — 'Baudrate: максимальное значение - частота APB_P / 16'). Конкретное число тактовой частоты конфигуратору пока не известно (PCC — отдельный будущий модуль), поэтому верхняя граница здесь не проверяется."
+    },
+    "data_bits": {
+      "type": "enum_int",
+      "values": [7, 8],
+      "_comment": "Датащит, Таблица 18 «Регистр управления 1 CONTROL1», с.39-40, биты M1:M0: 0b00 = 8 бит, 0b01 = 9 бит, 0b10 = 7 бит. 9-битный кадр в схему не включён — это редкий режим (мультипроцессорная связь), не входящий в контрактный минимум MVP (архитектурный документ, §9.3)."
+    },
+    "stop_bits": {
+      "type": "enum_int",
+      "values": [1, 2],
+      "_comment": "mik32_hal_usart.h: HAL_USART_StopBit_enum — только StopBit_1/StopBit_2, третьего значения в HAL нет."
+    },
+    "parity": {
+      "type": "enum",
+      "values": ["none", "even", "odd"],
+      "_comment": "Датащит, Таблица 18 «Регистр управления 1 CONTROL1», с.40: бит PCE (разряд 10) включает контроль чётности, бит PS (разряд 9) выбирает 0=чётность/1=нечётность. none -> PCE=0, even -> PCE=1,PS=0, odd -> PCE=1,PS=1."
+    },
+    "flow_control": {
+      "type": "boolean",
+      "_comment": "Включает аппаратные RTS/CTS (mik32_hal_usart.c: Modem.rts/Modem.cts) на пинах, фиксированных для того же instance, что и TX/RX — см. knowledge_base/uart.json, instance_pins."
+    }
+  }
+}

@@ -34,6 +34,17 @@ set(GPIO_CODEGEN_HEADERS
         codegen/gpio/gpio_codegen.h
 )
 
+set(UART_CODEGEN_SOURCES
+        knowledge_base/uart_knowledge.cpp
+        codegen/uart/uart_codegen.cpp
+)
+
+set(UART_CODEGEN_HEADERS
+        knowledge_base/uart_knowledge.h
+        codegen/uart/uart_codegen.h
+        include/codegen_result.h
+)
+
 # ==============================================================================
 # 5. СБОРКА ОСНОВНОГО ИСПОЛНЯЕМОГО ФАЙЛА
 # ==============================================================================
@@ -43,6 +54,8 @@ add_executable(MIK32-Configurator
         ${PARSER_HEADERS}
         ${GPIO_CODEGEN_SOURCES}
         ${GPIO_CODEGEN_HEADERS}
+        ${UART_CODEGEN_SOURCES}
+        ${UART_CODEGEN_HEADERS}
 )
 
 # Подключаем папки с заголовочными файлами
@@ -51,8 +64,10 @@ target_include_directories(MIK32-Configurator
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/parser
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/gpio
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/USART
         ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gpio
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/uart
 )
 
 # ==============================================================================
@@ -83,6 +98,8 @@ if(BUILD_TESTING)
             ${PARSER_HEADERS}
             ${GPIO_CODEGEN_SOURCES}
             ${GPIO_CODEGEN_HEADERS}
+            ${UART_CODEGEN_SOURCES}
+            ${UART_CODEGEN_HEADERS}
     )
 
     target_include_directories(MIK32-Parser-Tests
@@ -90,8 +107,10 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${CMAKE_CURRENT_SOURCE_DIR}/parser
             ${CMAKE_CURRENT_SOURCE_DIR}/parser/gpio
+            ${CMAKE_CURRENT_SOURCE_DIR}/parser/USART
             ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base
             ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gpio
+            ${CMAKE_CURRENT_SOURCE_DIR}/codegen/uart
     )
 
     target_link_libraries(MIK32-Parser-Tests

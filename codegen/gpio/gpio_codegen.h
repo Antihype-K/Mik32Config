@@ -18,6 +18,7 @@
 #include "gpio_parser.h"
 #include "gpio_knowledge.h"
 #include "parse_result.h"
+#include "codegen_result.h"
 
 struct GeneratedGpioFirmware
 {
@@ -34,12 +35,6 @@ struct GeneratedGpioFirmware
 ParseResult<GeneratedGpioFirmware> generateGpioFirmware(
     const GpioConfig& config,
     const GpioKnowledge& knowledge);
-
-struct CodegenWriteResult
-{
-    bool success;
-    std::string error;
-};
 
 // Копирует templates/pio_skeleton в output_project_dir (если там ещё нет
 // project-файлов) и перезаписывает в нём только каталог src/ содержимым

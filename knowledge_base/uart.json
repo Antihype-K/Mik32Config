@@ -1,0 +1,55 @@
+{
+  "_comment_scope": "Минимальный knowledge_base под HAL-уровень кодогенерации UART (см. docs/implementations/uart.md), по образцу knowledge_base/gpio.json. Полный регистровый мап (CONTROL1/2/3, DIVIDER, офсеты) сюда не включён — HAL-based кодоген вызывает HAL_USART_Init, который сам собирает регистры из полей USART_HandleTypeDef.",
+
+  "peripheral": "uart",
+
+  "max_instances": 2,
+  "_comment_max_instances": "Датащит МИК32 v2.2.3, Таблица 2 (с.11-12): карта памяти APB_P — ровно два блока USART_0 (+0x0400), USART_1 (+0x0800). Третьего нет (в отличие от трёх GPIO).",
+
+  "instance_handle": {
+    "0": "UART_0",
+    "1": "UART_1"
+  },
+  "_comment_instance_handle": "docs/examples/mik32-examples/HAL_USART/src/main.c, строка 74: husart0.Instance = UART_0 — имя макроса-хендла, аналог GPIO_0/1/2 для GPIO.",
+
+  "instance_fixed_pins": {
+    "0": { "tx": "PORT0_6 (GPIO0 pin 6)", "rx": "PORT0_5 (GPIO0 pin 5)", "rts": "PORT0_8 (GPIO0 pin 8)", "cts": "PORT0_7 (GPIO0 pin 7)" },
+    "1": { "tx": "PORT1_9 (GPIO1 pin 9)", "rx": "PORT1_8 (GPIO1 pin 8)", "rts": "PORT1_11 (GPIO1 pin 11)", "cts": "PORT1_10 (GPIO1 pin 10)" }
+  },
+  "_comment_instance_fixed_pins": "Датащит, Таблица 193 «Назначение выводов», с.320: UART0_txd/rxd/nrts/ncts закреплены за PORT0_6/5/8/7, UART1_txd/rxd/nrts/ncts — за PORT1_9/8/11/10. Не настраиваемо пользователем (см. решение в docs/implementations/uart.md убрать tx_pin/rx_pin из схемы). Указано здесь только для справки/документации — кодоген эти значения не читает, т.к. HAL_USART_Init сам вычисляет нужные GPIO_PIN_x по числу пинов TX=6/RX=5 и т.п., зашитому в самом HAL (mik32_hal_usart.c), а не по этому файлу. 1T Rex Board (фото платы) промаркировала физический разъём TXD/RXD рядом с P1.09/P1.08 — совпадает с instance 1.",
+
+  "clock_enable_macro": {
+    "0": "__HAL_PCC_UART_0_CLK_ENABLE",
+    "1": "__HAL_PCC_UART_1_CLK_ENABLE"
+  },
+  "_comment_clock_enable_macro": "docs/examples/mik32-hal/peripherals/Include/mik32_hal_pcc.h, строки 151-155. В отличие от GPIO, этот макрос кодогену вызывать не нужно вручную — HAL_USART_Init сам его вызывает внутри себя (mik32_hal_usart.c:14/46) вместе с настройкой TX/RX/RTS/CTS пинов в serial-режим. Указано здесь для полноты картины и на случай будущего register-level кодогена.",
+
+  "data_bits_encoding": {
+    "7": { "hal_enum": "Frame_7bit", "bits": "0b10" },
+    "8": { "hal_enum": "Frame_8bit", "bits": "0b00" }
+  },
+  "_comment_data_bits_encoding": "Датащит, Таблица 18 «Регистр управления 1 CONTROL1», с.39-40, биты M1:M0. HAL (mik32_hal_usart.h) также определяет Frame_9bit=0b01, но 9-битный кадр не входит в MVP-схему.",
+
+  "stop_bits_encoding": {
+    "1": { "hal_enum": "StopBit_1" },
+    "2": { "hal_enum": "StopBit_2" }
+  },
+  "_comment_stop_bits_encoding": "mik32_hal_usart.h, HAL_USART_StopBit_enum: StopBit_1=0, StopBit_2=1.",
+
+  "parity_encoding": {
+    "none": { "parity_bit": "Disable", "parity_bit_inversion": "Disable" },
+    "even": { "parity_bit": "Enable", "parity_bit_inversion": "Disable" },
+    "odd": { "parity_bit": "Enable", "parity_bit_inversion": "Enable" }
+  },
+  "_comment_parity_encoding": "Датащит, Таблица 18, с.40: бит PCE (разряд 10) — контроль чётности вкл/выкл; бит PS (разряд 9) — 0=бит чётности, 1=бит нечётности. mik32_hal_usart.c, строки 91-92: control1 |= PCE_M если setting->parity_bit, control1 |= PS_M если setting->parity_bit_inversion — соответствие полей HAL этим двум битам подтверждено по исходнику.",
+
+  "call_shape": {
+    "single_call_covers_clock_and_pin_mux": true,
+    "async_only_in_this_mvp": true
+  },
+  "_comment_call_shape": "docs/examples/mik32-hal/peripherals/Source/mik32_hal_usart.c, строки 10-57: HAL_USART_Init сам включает тактирование нужного instance и сам настраивает TX/RX (и RTS/CTS, если включены) пины в HAL_GPIO_MODE_SERIAL — по аналогии с тем, как HAL_GPIO_Init сам объединяет GPIO+PAD_CONFIG (см. knowledge_base/gpio.json, call_shape). Кодоген строит один USART_HandleTypeDef и делает один вызов HAL_USART_Init, ничего не настраивая вручную через HAL_GPIO_*.",
+
+  "not_covered_by_this_codegen": {
+    "synchronous_mode_errata": "Errata MIK32V2 v1.0.1, раздел 10.1 «Сигнал CK в USART1», с.23: при синхронном режиме (CONTROL2.CLKEN=1), выключенном контроле чётности и PORT2_6 в режиме UART1_ck вырабатывается непрекращающийся сигнал CK без возможности обхода. PORT2_6 — тот же физический пин, где на 1T Rex Board распаян встроенный светодиод (см. docs/implementations/gpio.md, раздел 7) — включение синхронного режима UART1 сломало бы индикацию платы. Эта сессия генерирует только Asynchronous_Mode, поэтому errata не активируется, но это должно быть учтено при добавлении синхронного режима в будущем."
+  }
+}
