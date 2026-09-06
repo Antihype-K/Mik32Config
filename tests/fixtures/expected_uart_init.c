@@ -5,13 +5,13 @@ USART_HandleTypeDef husart;
 
 /*
  * Сгенерировано MIK32-Configurator.
- * UART_1: baud_rate=115200, data_bits=8, stop_bits=1, parity=none, flow_control=false.
+ * UART_0: baud_rate=38400, data_bits=8, stop_bits=1, parity=none, flow_control=false.
  * Только Asynchronous_Mode — синхронный режим вне скоупа этой сессии
  * (Errata MIK32V2 v1.0.1, §10.1, см. knowledge_base/uart.json).
  */
 void UART_Init(void)
 {
-    husart.Instance = UART_1;
+    husart.Instance = UART_0;
     husart.transmitting = Enable;
     husart.receiving = Enable;
     husart.frame = Frame_8bit;
@@ -48,7 +48,7 @@ void UART_Init(void)
     husart.Modem.dsr = Disable;
     husart.Modem.ri = Disable;
     husart.Modem.ddis = Disable;
-    husart.baudrate = 115200;
+    husart.baudrate = 38400;
 
     HAL_USART_Init(&husart);
 }

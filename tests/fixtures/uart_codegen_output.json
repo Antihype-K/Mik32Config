@@ -4,8 +4,8 @@
   "peripherals": [
     {
       "type": "uart",
-      "instance": 1,
-      "baud_rate": 115200,
+      "instance": 0,
+      "baud_rate": 38400,
       "data_bits": 8,
       "stop_bits": 1,
       "parity": "none",
