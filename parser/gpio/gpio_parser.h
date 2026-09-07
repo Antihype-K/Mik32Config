@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include "parse_result.h"
+#include "json.hpp"
 #include <cstdint>
 
 
@@ -22,6 +23,14 @@ struct GpioConfig
 };
 
 ParseResult<GpioConfig> parseGpioConfig(const std::string& file_name_path);
+
+// Блочная точка входа: валидирует ОДИН элемент массива "peripherals",
+// уже извлечённый вызывающим кодом. Нужна мультипериферийному пайплайну
+// (codegen/project/project_config.cpp), которому требуется разобрать ВСЕ
+// блоки type="gpio" в файле, а не только первый. parseGpioConfig выше —
+// тонкая обёртка: открыть файл, найти первый gpio-блок, вызвать эту функцию.
+// Вся валидация схемы живёт здесь в единственном экземпляре.
+ParseResult<GpioConfig> parseGpioBlock(const nlohmann::json& gpio);
 
 
 

@@ -1,0 +1,40 @@
+//
+// Вклад UART в общий сгенерированный проект (см. концепцию в
+// codegen/project/peripheral_contribution.h).
+//
+// Отличия от удалённого codegen/uart/:
+//  - на выходе кусочки, а не три файла;
+//  - хендл называется husart_<instance>, а не husart: при двух блоках uart
+//    в одном проекте два глобальных "USART_HandleTypeDef husart" дали бы
+//    переопределение символа на этапе линковки;
+//  - появился флаг is_console (см. ниже).
+//
+// Поддерживается только Asynchronous_Mode — синхронный режим и связанная с ним errata по CK
+// (Errata MIK32V2 v1.0.1, §10.1) вне скоупа, см. docs/implementations/uart.md.
+//
+#ifndef MIK32_CONFIGURATOR_UART_CONTRIBUTION_H
+#define MIK32_CONFIGURATOR_UART_CONTRIBUTION_H
+
+#include "usart_parser.h"
+#include "uart_knowledge.h"
+#include "parse_result.h"
+#include "peripheral_contribution.h"
+
+// is_console — этот UART назначен приёмником вывода xprintf. Ровно один UART
+// в проекте может им быть, и назначает его сборщик (первый блок uart в
+// конфиге). Причина: xprintf (framework-mik32v2-sdk/shared/libs/xprintf.c)
+// печатает через xputc, а штатная слабая реализация xputc
+// (mik32_hal_usart.c:435) жёстко привязана к UART_0 и не знает ни про
+// выбранный пользователем instance, ни про наш хендл. Поэтому для консольного
+// UART генерируется собственная, сильная реализация xputc — но именно одна:
+// два определения xputc снова дали бы конфликт символов.
+//
+// emit_demo_loop — добавлять ли в тело while(1) периодическую печать строки
+// (см. обоснование флага в codegen/project/project_codegen.h).
+ParseResult<PeripheralContribution> buildUartContribution(
+    const UartConfig& config,
+    const UartKnowledge& knowledge,
+    bool is_console,
+    bool emit_demo_loop);
+
+#endif //MIK32_CONFIGURATOR_UART_CONTRIBUTION_H

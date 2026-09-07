@@ -18,7 +18,10 @@
 
 #include <string>
 #include <vector>
+#include "json.hpp"
 #include "uart_knowledge.h"
+#include "timer16_knowledge.h"
+#include "i2c_knowledge.h"
 
 struct PinConflict
 {
@@ -42,8 +45,31 @@ struct CrossModuleValidationResult
 // прошёл собственную schema-валидацию (parseGpioConfig/parseUsartConfig) —
 // эта функция не переисполняет её и не заменяет собой возврат
 // makeError-стиля из отдельных парсеров.
+// timer16_knowledge добавлен по той же схеме, что и uart_knowledge: Timer16
+// тоже не декларирует пин в JSON (см. schemas/timer16.json — ШИМ-вывод
+// жёстко закреплён датащитом за instance), заявка выводится из
+// knowledge_base/timer16.json (instance_fixed_pwm_pin), и только когда
+// выбранный mode реально задействует ШИМ-вывод (mode_waveform_enable) —
+// ТЗ §3.1.4 п.4.
+// i2c_knowledge — четвёртый источник заявок: I2C всегда занимает ОБЕ линии
+// (SDA+SCL) сразу при включении инстанса, независимо от mode (master/slave)
+// или demo — в отличие от UART (зависит от direction/flow_control) и Timer16
+// (зависит от mode_waveform_enable), у I2C нет режима, не использующего обе
+// линии (см. knowledge_base/i2c.json, instance_fixed_pins).
 CrossModuleValidationResult validatePinConflicts(
     const std::string& config_path,
-    const UartKnowledge& uart_knowledge);
+    const UartKnowledge& uart_knowledge,
+    const Timer16Knowledge& timer16_knowledge,
+    const I2cKnowledge& i2c_knowledge);
+
+// Документная перегрузка — по той же причине, что и parseProjectDocument
+// (codegen/project/project_config.h): GUI обязан показывать конфликты выводов
+// в реальном времени (ТЗ §3.1.9 п.5, панель диагностики), то есть проверять
+// конфигурацию, которой ещё нет на диске.
+CrossModuleValidationResult validatePinConflictsInDocument(
+    const nlohmann::json& root,
+    const UartKnowledge& uart_knowledge,
+    const Timer16Knowledge& timer16_knowledge,
+    const I2cKnowledge& i2c_knowledge);
 
 #endif //MIK32_CONFIGURATOR_CROSS_MODULE_VALIDATOR_H

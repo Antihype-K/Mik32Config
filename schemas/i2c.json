@@ -1,0 +1,48 @@
+{
+  "peripheral_type": "i2c",
+  "max_instances": 2,
+  "_comment_max_instances": "docs/examples/mik32-hal/peripherals/Include/mik32_hal_pcc.h, строки 178-182: два макроса __HAL_PCC_I2C_0/1_CLK_ENABLE — I2C_0 и I2C_1, третьего блока нет. ТЗ (docs/Приложение_А_Техническое_задание_МИК32.docx) не содержит отдельного раздела по I2C — только упоминание 'I2C_0-1' в дереве GUI §3.1.1.3, поэтому вся схема ниже построена по черновику МИК32 конфигуратор - Архитектура.md §5.4 и реальному HAL, не по ТЗ.",
+  "required_fields": ["type", "instance", "mode", "clock_speed"],
+  "fields": {
+    "instance": {
+      "type": "integer",
+      "min": 0,
+      "max": 1
+    },
+    "mode": {
+      "type": "enum",
+      "values": ["master", "slave"],
+      "_comment": "mik32_hal_i2c.h, HAL_I2C_ModeTypeDef. HAL_I2C_MasterInit (mik32_hal_i2c.c:193-197) — пустая заглушка, не трогает адресные поля; HAL_I2C_SlaveInit (:178-191) настраивает OwnAddress1/2, GeneralCall, SBCMode — поэтому address_mode/own_address ниже требуются только для slave, а не 'обязательны всегда, но игнорируются', как было с Timer16.cmp."
+    },
+    "clock_speed": {
+      "type": "enum_int",
+      "values": [100000, 400000, 1000000],
+      "_comment": "Standard/Fast/Fast+ — из черновика архитектуры §5.4. TIMINGR (PRESC/SCLDEL/SDADEL/SCLH/SCLL) не хранится в схеме и не считается кодогеном на этапе генерации — в сгенерированный код вставляется вызов реального HAL_I2C_calcFreqCoef(&hi2c) (mik32_hal_i2c.c:199-217), который сам вычисляет эти поля из Init.frequency=clock_speed и Init.duty_factor (хардкод =2 в кодогене, см. codegen/i2c/i2c_codegen.cpp)."
+    },
+    "demo": {
+      "type": "enum",
+      "values": ["scanner", "ping_pong", "receive", "scanner_target"],
+      "_comment": "Не аппаратное поле HAL — переключатель поведения генерируемого main.c (пользовательское решение из /grill-me сессии). 'scanner' — только master (дефолт для master), требует блок uart в том же конфиге. 'receive' — только slave (дефолт для slave), пассивный приём (ждёт ЗАПИСЬ от master через HAL_I2C_Slave_Receive — НЕ отвечает на HAL_I2C_Master_Receive сканера, см. docs/implementations/i2c.md). 'scanner_target' — только slave, цикл HAL_I2C_Slave_Transmit с фиксированным байтом, специально чтобы ACK'ать чтение от сканера. 'ping_pong' — доступен для обоих режимов, парный демо-протокол master<->slave."
+    },
+    "address_mode": {
+      "type": "enum",
+      "values": ["7bit", "10bit"],
+      "_comment": "Только для mode=slave. mik32_hal_i2c.h: I2C_ADDRESSINGMODE_7BIT/10BIT — определяет ветвление в HAL_I2C_OwnAddress1 (mik32_hal_i2c.c:99-114) по величине OwnAddress1, не отдельным полем режима — схема хранит выбор явно для валидации диапазона own_address."
+    },
+    "own_address": {
+      "type": "integer",
+      "min": 0,
+      "max_by_address_mode": {
+        "7bit": 127,
+        "10bit": 1023
+      },
+      "_comment": "Только для mode=slave. I2C_ADDRESS_7BIT_MAX=0x7F, I2C_ADDRESS_10BIT_MAX=0x3FF (mik32_hal_i2c.h:32-33)."
+    },
+    "target_address": {
+      "type": "integer",
+      "min": 0,
+      "max": 127,
+      "_comment": "Только для mode=master И demo=ping_pong — адрес парного slave-инстанса (обычно на второй плате или на второй шине I2C той же платы, соединённой перемычками SDA-SDA/SCL-SCL с master). 7-битный (ping_pong-демо не поддерживает 10-битную адресацию в этой сессии)."
+    }
+  }
+}

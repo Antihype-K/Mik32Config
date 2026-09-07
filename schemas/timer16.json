@@ -1,0 +1,36 @@
+{
+  "peripheral_type": "timer16",
+  "max_instances": 3,
+  "_comment_max_instances": "ТЗ (docs/Приложение_А_Техническое_задание_МИК32.docx, §3.1.4): «МК МИК32 «Амур» содержит 3 модуля Timer16: Timer16_0, Timer16_1, Timer16_2» — подтверждено docs/examples/mik32-hal/peripherals/Include/mik32_hal_timer16.h (TIMER16_0/1/2).",
+  "required_fields": ["type", "instance", "mode", "prescaler", "arr", "cmp"],
+  "fields": {
+    "instance": {
+      "type": "integer",
+      "min": 0,
+      "max": 2
+    },
+    "mode": {
+      "type": "enum",
+      "values": ["period", "one_shot", "external_event_count"],
+      "_comment": "ТЗ §3.1.4 п.2: «режим работы (период / одиночный импульс / счёт внешних событий)». period -> HAL_Timer16_StartPWM (непрерывный ШИМ), one_shot -> HAL_Timer16_StartOneShot, external_event_count -> HAL_Timer16_Counter_Start с Clock.Source=EXTERNAL_INPUT1/CountMode=EXTERNAL (см. knowledge_base/timer16.json и codegen/timer16/timer16_codegen.cpp)."
+    },
+    "prescaler": {
+      "type": "enum_int",
+      "values": [1, 2, 4, 8, 16, 32, 64, 128],
+      "_comment": "mik32_hal_timer16.h, HAL_Timer16_PrescalerTypeDef: 8 значений делителя, все степени двойки от 1 до 128 (0b000..0b111). Схема хранит реальный делитель (пользовательское значение), HAL-enum — в knowledge_base/timer16.json."
+    },
+    "arr": {
+      "type": "integer",
+      "min": 0,
+      "max": 65535,
+      "_comment": "ТЗ §3.1.4 п.2: «период (ARR)». Регистр ARR — 16 бит (Timer16_HandleTypeDef/HAL_Timer16_SetARR принимает uint16_t)."
+    },
+    "cmp": {
+      "type": "integer",
+      "min": 0,
+      "max": 65535,
+      "max_field": "arr",
+      "_comment": "ТЗ §3.1.4 п.2: «порог сравнения для ШИМ (CMP, диапазон 0-ARR)» — верхняя граница не фиксированное число, а значение поля arr того же блока (max_field, по аналогии с тем, что item_max_by_instance в schemas/gpio.json завязан на другое поле блока). Поле обязательно для всех режимов по буквальному тексту ТЗ п.2 (единый список полей без оговорок по режимам), но в режиме external_event_count кодогеном игнорируется — реальный вызов HAL_Timer16_Counter_Start(handle, ARR) вообще не принимает Compare (см. docs/implementations/timer16.md)."
+    }
+  }
+}

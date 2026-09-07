@@ -1,0 +1,64 @@
+{
+  "_comment_scope": "Минимальный knowledge_base под HAL-уровень кодогенерации Timer16 (см. docs/implementations/timer16.md), по образцу knowledge_base/gpio.json и knowledge_base/uart.json. Только поля, реально нужные codegen/timer16/timer16_codegen.cpp — не полный регистровый мап.",
+
+  "peripheral": "timer16",
+
+  "max_instances": 3,
+  "_comment_max_instances": "ТЗ §3.1.4: 3 модуля Timer16 (Timer16_0/1/2), подтверждено mik32_hal_timer16.h.",
+
+  "instance_handle": {
+    "0": "TIMER16_0",
+    "1": "TIMER16_1",
+    "2": "TIMER16_2"
+  },
+  "_comment_instance_handle": "docs/examples/mik32-hal/peripherals/Include/mik32_hal_timer16.h — Instance принимает указатель TIMER16_0/1/2, по аналогии с GPIO_0/1/2 и UART_0/1.",
+
+  "clock_enable_macro": {
+    "0": "__HAL_PCC_TIMER16_0_CLK_ENABLE",
+    "1": "__HAL_PCC_TIMER16_1_CLK_ENABLE",
+    "2": "__HAL_PCC_TIMER16_2_CLK_ENABLE"
+  },
+  "_comment_clock_enable_macro": "docs/examples/mik32-hal/peripherals/Include/mik32_hal_pcc.h, строки 157-164. Как и в UART (не GPIO), кодогену вызывать этот макрос вручную не нужно — HAL_Timer16_Init сам вызывает его внутри HAL_TIMER16_MspInit (mik32_hal_timer16.c, строки 7-14/43-45/71-72) вместе с настройкой ШИМ-вывода в HAL_GPIO_MODE_TIMER_SERIAL, когда Waveform.Enable=ENABLE — тот же 'single call covers clock and pin mux' принцип, что и у UART. Указано здесь для полноты картины.",
+
+  "prescaler_hal_enum": {
+    "1": "TIMER16_PRESCALER_1",
+    "2": "TIMER16_PRESCALER_2",
+    "4": "TIMER16_PRESCALER_4",
+    "8": "TIMER16_PRESCALER_8",
+    "16": "TIMER16_PRESCALER_16",
+    "32": "TIMER16_PRESCALER_32",
+    "64": "TIMER16_PRESCALER_64",
+    "128": "TIMER16_PRESCALER_128"
+  },
+  "_comment_prescaler_hal_enum": "mik32_hal_timer16.h, HAL_Timer16_PrescalerTypeDef (строки 39-48): 8 значений делителя, степени двойки 1..128 (0b000..0b111).",
+
+  "sys_clk_hz": 32000000,
+  "_comment_sys_clk_hz": "ТЗ §3.1.8: HSI 32МГц — единственный источник тактирования. При Clock.Source=TIMER16_SOURCE_INTERNAL_SYSTEM (sys_clk) и AHBDivider=APBPDivider=0 в нашем SystemClock_Config (см. codegen/gpio, codegen/uart, codegen/demo) sys_clk совпадает с HSI. Используется codegen'ом для расчёта частоты ШИМ в комментарии над Timer16_Init: freq = sys_clk_hz / (prescaler * (ARR + 1)).",
+
+  "instance_fixed_pwm_pin": {
+    "0": { "gpio_instance": 0, "pin": 7 },
+    "1": { "gpio_instance": 0, "pin": 10 },
+    "2": { "gpio_instance": 0, "pin": 13 }
+  },
+  "_comment_instance_fixed_pwm_pin": "ТЗ §3.1.4: «Выводы ШИМ жёстко закреплены в технической документации: Timer16_0 -> GPIO_0/PIN_7, Timer16_1 -> GPIO_0/PIN_10, Timer16_2 -> GPIO_0/PIN_13». Подтверждено исходником: mik32_hal_timer16.c, HAL_TIMER16_MspInit (строки 32-38/59-65/89-95) — GPIO_PIN_7/10/13 на GPIO_0 в HAL_GPIO_MODE_TIMER_SERIAL, включается ТОЛЬКО когда Waveform.Enable=TIMER16_WAVEFORM_GENERATION_ENABLE (т.е. в режимах period/one_shot, но не external_event_count — см. mode_waveform_enable ниже). Читается validation/cross_module_validator.cpp по аналогии с uart.json/instance_fixed_pins — для резервирования вывода и поиска конфликтов (ТЗ §3.1.4 п.4).",
+
+  "instance_default_trigger_source": {
+    "0": "TIMER16_TRIGGER_TIM0_GPIO0_7",
+    "1": "TIMER16_TRIGGER_TIM1_GPIO1_9",
+    "2": "TIMER16_TRIGGER_TIM2_GPIO2_3"
+  },
+  "_comment_instance_default_trigger_source": "mik32_hal_timer16.h, HAL_Timer16_TriggerTypeDef (строки 74-88): по одному значению 0b000 на instance, с разным именем макроса. Триггер не запрошен ТЗ §3.1.4 п.2, поэтому codegen всегда ставит Trigger.ActiveEdge=SOFTWARE (аппаратный триггер функционально не действует), но поле Trigger.Source всё равно должно быть инициализировано каким-то валидным для своего instance значением — берём дефолт по образцу docs/examples/mik32-examples/HAL_Timer16 (Timer16_1 -> TIMER16_TRIGGER_TIM1_GPIO1_9).",
+
+  "mode_waveform_enable": {
+    "period": true,
+    "one_shot": true,
+    "external_event_count": false
+  },
+  "_comment_mode_waveform_enable": "mik32_hal_timer16.c: Waveform.Enable управляет и генерацией сигнала на CMP/ARR, и (через MspInit) авто-мультиплексированием ШИМ-вывода. period/one_shot используют HAL_Timer16_StartPWM/StartOneShot (оба требуют Waveform.Enable=ENABLE для видимого сигнала), external_event_count — HAL_Timer16_Counter_Start (только подсчёт внешних событий на Input1, без вывода ШИМ) -> Waveform.Enable=DISABLE, вывод ШИМ не резервируется и не занимается для этого режима.",
+
+  "not_covered_by_this_codegen": {
+    "errata_8_1": "Errata MIK32V2 v1.0.1, §8.1 «Длительность тактов таймера и ШИМ»: при PRESCALER>1 длительность первого и последнего такта ШИМ-периода отличается от промежуточных на 1 такт Timer16_clk, из-за чего фактическая скважность смещена относительно заданной по CMP/ARR. Обход: Нет (подтверждено текстом errata). Отражается безусловным комментарием в генерируемом коде по ТЗ §3.1.4 п.3 / §3.1.7.5.",
+    "errata_8_2": "Errata MIK32V2 v1.0.1, §8.2 «Повторная установка флага сравнения CMPM»: флаг CMPM может выставиться повторно, если счётчик не успел измениться за такт после сброса флага внутри обработчика прерывания. Актуально только при использовании прерываний Timer16 (HAL_Timer16_StartPWM_IT и т.п.) — этот MVP-кодоген вызывает только non-IT варианты (StartPWM/StartOneShot/Counter_Start), прерывания не включает. Комментарий всё равно включается безусловно по буквальному требованию ТЗ §3.1.4 п.3.",
+    "trigger_and_encoder": "Trigger.Source (8 вариантов: GPIO/термосенсор/АЦП/RTC/будильник), Filter.*, EncoderMode — не запрошены ТЗ §3.1.4 п.2 (только режим/предделитель/ARR/CMP), зашиты безопасными дефолтами (software-триггер отключён, фильтры отключены, энкодер отключён) по образцу docs/examples/mik32-examples/HAL_Timer16."
+  }
+}

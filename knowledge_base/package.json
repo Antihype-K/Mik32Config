@@ -1,0 +1,395 @@
+{
+  "_comment_scope": "Физическая карта выводов корпуса МИК32 «Амур» (К1948ВК018). Источник: Датащит МИК32 v2.2.3, раздел 6 «Назначение выводов», Таблица 193, с.320-325 — таблица извлечена из PDF программно (pdftotext -layout + разбор колонки «Обозначение вывода»), а не переписана на глаз с картинки. Файл описывает КОРПУС, а не периферию: отвечает на вопрос «что физически висит на выводе N», тогда как остальные knowledge_base/*.json отвечают на обратный «какой вывод занимает периферия X». Нужен GUI (ТЗ §3.1.9 п.2 — центральная панель со схемой корпуса); кодогенерация его не читает.",
+  "package": "QFN-64",
+  "_comment_package": "Тип корпуса указан пользователем (в изученных разделах даташита названо только «количество выводов корпуса – 64», с.5). Геометрия — 16 выводов на каждую из четырёх сторон, нумерация против часовой стрелки от ключа — стандартное соглашение QFN и выводится в коде GUI (gui/package_view.cpp), а не хранится здесь: это факт о конвенции корпусирования, а не о конкретном МК, и он проверяется по шелкографии платы, а не по даташиту.",
+  "pin_count": 64,
+  "_comment_pin_count": "Датащит МИК32 v2.2.3, с.5: «количество выводов корпуса – 64».",
+  "_comment_pins": "Массив из 64 записей, по одной на физический вывод. Поля: \"pin\" — номер вывода корпуса (1..64, как в Таблице 193); \"name\" — обозначение вывода из даташита (PORT_x_y для мультиплексируемых, VCC/VSS/RST#/BOOT_0 и т.п. для служебных); \"gpio_instance\"/\"gpio_pin\" — разряд GPIO, если вывод мультиплексируемый, иначе null. Именно эта пара связывает карту корпуса с полем \"pins\" в schemas/gpio.json и с instance_fixed_pins из uart.json/i2c.json/timer16.json. Мультиплексируемых выводов ровно 40 — совпадает с ТЗ §3.1.2 «итого 40 мультиплексируемых выводов», что и служит проверкой полноты разбора.",
+  "_comment_no_alt_functions": "СОЗНАТЕЛЬНЫЙ ПРОБЕЛ: альтернативные функции вывода (колонки PADx_CFG = 1/2/3 Таблицы 193) здесь НЕ хранятся. Причина: в PDF ячейки этих колонок вертически отцентрованы относительно строки вывода и переносятся по словам (например «Timer16_1_ou» + «t» на разных строках, причём первая часть стоит ВЫШЕ строки со своим номером вывода), поэтому автоматически приписать функцию нужному выводу без ошибок не получается, а вносить наполовину разобранные данные в базу знаний нельзя. Выборочная ручная проверка подтвердила PORT_0_7 -> Timer16_0_out и PORT_0_10 -> Timer16_1_out, то есть согласие с instance_fixed_pwm_pin из knowledge_base/timer16.json. Для подсветки занятых выводов в GUI это поле и не нужно: обратное отображение «периферия -> вывод» уже есть в uart.json/i2c.json/timer16.json и оно проверено на реальной плате. Заполнять — отдельной задачей, вручную по Таблице 193.",
+  "pins": [
+    {
+      "pin": 1,
+      "name": "PORT_1_12",
+      "gpio_instance": 1,
+      "gpio_pin": 12
+    },
+    {
+      "pin": 2,
+      "name": "PORT_1_11",
+      "gpio_instance": 1,
+      "gpio_pin": 11
+    },
+    {
+      "pin": 3,
+      "name": "PORT_1_10",
+      "gpio_instance": 1,
+      "gpio_pin": 10
+    },
+    {
+      "pin": 4,
+      "name": "PORT_1_9",
+      "gpio_instance": 1,
+      "gpio_pin": 9
+    },
+    {
+      "pin": 5,
+      "name": "VCC",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 6,
+      "name": "VDD",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 7,
+      "name": "PORT_1_8",
+      "gpio_instance": 1,
+      "gpio_pin": 8
+    },
+    {
+      "pin": 8,
+      "name": "VBAT",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 9,
+      "name": "VSS",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 10,
+      "name": "VCC_BU",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 11,
+      "name": "VDD_BU",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 12,
+      "name": "OSC32K_XO",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 13,
+      "name": "OSC32K_XI",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 14,
+      "name": "RST#",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 15,
+      "name": "EXT_WU",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 16,
+      "name": "RTC_ALARM",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 17,
+      "name": "BOOT_0",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 18,
+      "name": "BOOT_1",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 19,
+      "name": "VPRG",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 20,
+      "name": "VCC",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 21,
+      "name": "PORT_1_7",
+      "gpio_instance": 1,
+      "gpio_pin": 7
+    },
+    {
+      "pin": 22,
+      "name": "PORT_1_6",
+      "gpio_instance": 1,
+      "gpio_pin": 6
+    },
+    {
+      "pin": 23,
+      "name": "PORT_1_5",
+      "gpio_instance": 1,
+      "gpio_pin": 5
+    },
+    {
+      "pin": 24,
+      "name": "VDD",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 25,
+      "name": "PORT_1_4",
+      "gpio_instance": 1,
+      "gpio_pin": 4
+    },
+    {
+      "pin": 26,
+      "name": "PORT_1_3",
+      "gpio_instance": 1,
+      "gpio_pin": 3
+    },
+    {
+      "pin": 27,
+      "name": "PORT_1_2",
+      "gpio_instance": 1,
+      "gpio_pin": 2
+    },
+    {
+      "pin": 28,
+      "name": "PORT_1_1",
+      "gpio_instance": 1,
+      "gpio_pin": 1
+    },
+    {
+      "pin": 29,
+      "name": "VSS",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 30,
+      "name": "PORT_1_0",
+      "gpio_instance": 1,
+      "gpio_pin": 0
+    },
+    {
+      "pin": 31,
+      "name": "PORT_2_7",
+      "gpio_instance": 2,
+      "gpio_pin": 7
+    },
+    {
+      "pin": 32,
+      "name": "PORT_2_6",
+      "gpio_instance": 2,
+      "gpio_pin": 6
+    },
+    {
+      "pin": 33,
+      "name": "PORT_2_5",
+      "gpio_instance": 2,
+      "gpio_pin": 5
+    },
+    {
+      "pin": 34,
+      "name": "PORT_2_4",
+      "gpio_instance": 2,
+      "gpio_pin": 4
+    },
+    {
+      "pin": 35,
+      "name": "PORT_2_3",
+      "gpio_instance": 2,
+      "gpio_pin": 3
+    },
+    {
+      "pin": 36,
+      "name": "PORT_2_2",
+      "gpio_instance": 2,
+      "gpio_pin": 2
+    },
+    {
+      "pin": 37,
+      "name": "PORT_2_1",
+      "gpio_instance": 2,
+      "gpio_pin": 1
+    },
+    {
+      "pin": 38,
+      "name": "PORT_2_0",
+      "gpio_instance": 2,
+      "gpio_pin": 0
+    },
+    {
+      "pin": 39,
+      "name": "OSC32M_XO",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 40,
+      "name": "OSC32M_XI",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 41,
+      "name": "VDD",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 42,
+      "name": "PORT_0_15",
+      "gpio_instance": 0,
+      "gpio_pin": 15
+    },
+    {
+      "pin": 43,
+      "name": "PORT_0_14",
+      "gpio_instance": 0,
+      "gpio_pin": 14
+    },
+    {
+      "pin": 44,
+      "name": "PORT_0_13",
+      "gpio_instance": 0,
+      "gpio_pin": 13
+    },
+    {
+      "pin": 45,
+      "name": "PORT_0_12",
+      "gpio_instance": 0,
+      "gpio_pin": 12
+    },
+    {
+      "pin": 46,
+      "name": "PORT_0_11",
+      "gpio_instance": 0,
+      "gpio_pin": 11
+    },
+    {
+      "pin": 47,
+      "name": "PORT_0_10",
+      "gpio_instance": 0,
+      "gpio_pin": 10
+    },
+    {
+      "pin": 48,
+      "name": "PORT_0_9",
+      "gpio_instance": 0,
+      "gpio_pin": 9
+    },
+    {
+      "pin": 49,
+      "name": "PORT_0_8",
+      "gpio_instance": 0,
+      "gpio_pin": 8
+    },
+    {
+      "pin": 50,
+      "name": "PORT_0_7",
+      "gpio_instance": 0,
+      "gpio_pin": 7
+    },
+    {
+      "pin": 51,
+      "name": "PORT_0_6",
+      "gpio_instance": 0,
+      "gpio_pin": 6
+    },
+    {
+      "pin": 52,
+      "name": "VCC",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 53,
+      "name": "PORT_0_5",
+      "gpio_instance": 0,
+      "gpio_pin": 5
+    },
+    {
+      "pin": 54,
+      "name": "PORT_0_4",
+      "gpio_instance": 0,
+      "gpio_pin": 4
+    },
+    {
+      "pin": 55,
+      "name": "PORT_0_3",
+      "gpio_instance": 0,
+      "gpio_pin": 3
+    },
+    {
+      "pin": 56,
+      "name": "PORT_0_2",
+      "gpio_instance": 0,
+      "gpio_pin": 2
+    },
+    {
+      "pin": 57,
+      "name": "PORT_0_1",
+      "gpio_instance": 0,
+      "gpio_pin": 1
+    },
+    {
+      "pin": 58,
+      "name": "PORT_0_0",
+      "gpio_instance": 0,
+      "gpio_pin": 0
+    },
+    {
+      "pin": 59,
+      "name": "VSS",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 60,
+      "name": "PORT_1_15",
+      "gpio_instance": 1,
+      "gpio_pin": 15
+    },
+    {
+      "pin": 61,
+      "name": "PORT_1_14",
+      "gpio_instance": 1,
+      "gpio_pin": 14
+    },
+    {
+      "pin": 62,
+      "name": "AVCC",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 63,
+      "name": "AVSS",
+      "gpio_instance": null,
+      "gpio_pin": null
+    },
+    {
+      "pin": 64,
+      "name": "PORT_1_13",
+      "gpio_instance": 1,
+      "gpio_pin": 13
+    }
+  ]
+}

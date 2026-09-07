@@ -1,0 +1,44 @@
+{
+  "_comment_scope": "Минимальный knowledge_base под HAL-уровень кодогенерации I2C (см. docs/implementations/i2c.md), по образцу knowledge_base/gpio.json, uart.json, timer16.json. ТЗ по I2C не содержит отдельного раздела — источники: мИК32 конфигуратор - Архитектура.md §5.4 (черновик) и реальный HAL (docs/examples/mik32-hal/peripherals/{Include,Source}/mik32_hal_i2c.c).",
+
+  "peripheral": "i2c",
+
+  "max_instances": 2,
+  "_comment_max_instances": "mik32_hal_pcc.h, строки 178-182: два блока I2C_0/I2C_1.",
+
+  "instance_handle": {
+    "0": "I2C_0",
+    "1": "I2C_1"
+  },
+  "_comment_instance_handle": "mik32_hal_i2c.c, HAL_I2C_MspInit (строки 3-26): switch по hi2c->Instance сравнивает именно с I2C_0/I2C_1.",
+
+  "instance_fixed_pins": {
+    "0": [{ "gpio_instance": 0, "pin": 9 }, { "gpio_instance": 0, "pin": 10 }],
+    "1": [{ "gpio_instance": 1, "pin": 12 }, { "gpio_instance": 1, "pin": 13 }]
+  },
+  "_comment_instance_fixed_pins": "mik32_hal_i2c.c, HAL_I2C_MspInit: I2C_0 -> GPIO_0 (GPIO_PIN_9 | GPIO_PIN_10), I2C_1 -> GPIO_1 (GPIO_PIN_12 | GPIO_PIN_13), оба в HAL_GPIO_MODE_SERIAL с Pull=HAL_GPIO_PULL_UP (обязательная подтяжка для открытого стока I2C). ВАЖНО: подтверждён только номер пина и instance GPIO, но НЕ то, какой из двух пинов — SDA, а какой SCL (датащит МИК32 в изученных разделах явно эту привязку не называет, HAL тоже не даёт этой информации — маска задаёт оба пина одним вызовом HAL_GPIO_Init, порядок в маске не гарантирует физического соответствия). Поэтому здесь пины хранятся как неразличимая пара, не 'sda'/'scl' — не выдумываем неподтверждённый факт. Используется validation/cross_module_validator.cpp для резервирования обоих пинов сразу при включении instance (в отличие от UART, где резервирование зависит от direction/flow_control — I2C всегда открытый сток на двух линиях, обе нужны в любом mode).",
+
+  "clock_enable_macro": {
+    "0": "__HAL_PCC_I2C_0_CLK_ENABLE",
+    "1": "__HAL_PCC_I2C_1_CLK_ENABLE"
+  },
+  "_comment_clock_enable_macro": "mik32_hal_pcc.h, строки 178-182. Как и в UART/Timer16, кодогену вызывать вручную не нужно — HAL_I2C_Init сам вызывает его внутри HAL_I2C_MspInit вместе с настройкой SDA/SCL в serial-режим — тот же 'single call covers clock and pin mux' принцип. Указано здесь для полноты.",
+
+  "call_shape": {
+    "single_call_covers_clock_and_pin_mux": true,
+    "timingr_computed_at_codegen_time_not_runtime": true
+  },
+  "_comment_call_shape": "ПЕРЕСМОТРЕНО (2026-09-06, после первой реальной прошивки): изначальный план — вызывать реальный HAL_I2C_calcFreqCoef(&hi2c) в сгенерированном коде — провалился на компиляции: реально установленный PlatformIO-пакет framework-mik32v2-sdk@0.2.2 (~/.platformio/packages/framework-mik32v2-sdk/hal/peripherals/Include/mik32_hal_i2c.h) НЕ содержит ни полей Init.frequency/Init.duty_factor, ни самой функции HAL_I2C_calcFreqCoef — они есть только в docs/examples/mik32-hal/ (более новый/другой снэпшот SDK, который лежит в репозитории конфигуратора, но не совпадает с тем, что реально ставится через registry). Ошибка компиляции: \"I2C_InitTypeDef has no member named frequency\". Это объясняет и находку про вендорные примеры (Hal_I2C_Master, I2C_Scan) — они не 'забыли' использовать calcFreqCoef, а физически не могли: этой функции не было в SDK на момент их написания. РЕШЕНИЕ: PRESC/SCLDEL/SDADEL/SCLH/SCLL считаются в C++ на этапе кодогенерации (codegen/i2c/i2c_codegen.cpp, calcI2cTimingr) по формуле из HAL_I2C_calcFreqCoef (реальный вендорный алгоритм, просто перенесён из рантайма в компилятор конфигуратора), результат — literal-числа в Clock.* поля, ровно как это делают оба вендорных примера, только не наугад, а по прослеживаемой формуле. УРОК: сверять существование HAL-функций/полей не только с docs/examples/mik32-hal в репозитории, а с реально установленным ~/.platformio/packages/framework-mik32v2-sdk — репозиторный снэпшот может быть впереди/расходиться с тем, что фактически компилируется.",
+
+  "duty_factor_default": 2,
+  "_comment_duty_factor_default": "SCLH = i2c_cycles/duty_factor, SCLL = i2c_cycles-SCLH — duty_factor=2 даёт приблизительно равные SCLH/SCLL (~50/50). Не запрошено ни ТЗ (молчит), ни черновиком архитектуры (нет такого поля) — хардкод в codegen/i2c/i2c_codegen.cpp, не в пользовательской схеме.",
+
+  "sys_clk_hz": 32000000,
+  "_comment_sys_clk_hz": "ТЗ §3.1.8: HSI 32МГц — единственный источник тактирования. При Clock.Source по умолчанию и APBPDivider=0 в SystemClock_Config (см. codegen/gpio, codegen/uart и др.) sys_clk совпадает с HSI. Используется codegen/i2c/i2c_codegen.cpp для расчёта PRESC/SCLDEL/SDADEL/SCLH/SCLL на этапе кодогенерации (не в рантайме — см. call_shape ниже).",
+
+  "not_covered_by_this_codegen": {
+    "errata_4_1": "Errata MIK32V2 v1.0.1, §4.1 «Флаг TXIS»: флаг TXIS формируется в конце передачи байта, а не в начале — при работе slave без растягивания (NOSTRETCH=1) это может привести к недозагрузке TXDR. Актуально только для mode=slave (мы всегда хардкодим NoStretchMode=DISABLE по умолчанию, т.е. растягивание активно и errata не проявляется), но комментарий включается в генерируемый код безусловно в slave-режиме (решение пользователя) как предупреждение на будущее — при добавлении пользовательского выбора NoStretchMode.",
+    "slave_full_config": "GeneralCall, SBCMode, DualAddressMode, OwnAddress2/OwnAddress2Mask — реальные поля HAL_I2C_SlaveInit, не запрошены ни ТЗ (молчит), ни этой сессией — хардкод DISABLE.",
+    "dma_and_it": "HAL_I2C_*_DMA/_IT варианты (mik32_hal_i2c.h) — вне скоупа, кодоген использует только блокирующие Master_Transmit/Receive и Slave_Transmit/Receive."
+  }
+}

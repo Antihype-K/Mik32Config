@@ -1,0 +1,143 @@
+#include "uart_contribution.h"
+#include "contribution_utils.h"
+#include <iomanip>
+#include <sstream>
+
+ParseResult<PeripheralContribution> buildUartContribution(
+    const UartConfig& config,
+    const UartKnowledge& knowledge,
+    bool is_console,
+    bool emit_demo_loop)
+{
+    const std::string* uart_handle = findOrNull(knowledge.instance_handle, config.instance);
+    const std::string* frame_enum = findOrNull(knowledge.data_bits_hal_enum, std::to_string(config.data_bits));
+    const std::string* stop_bit_enum = findOrNull(knowledge.stop_bits_hal_enum, std::to_string(config.stop_bits));
+    const UartKnowledge::ParitySetting* parity_setting = findOrNull(knowledge.parity_hal_setting, config.parity);
+
+    if (!uart_handle || !frame_enum || !stop_bit_enum || !parity_setting)
+    {
+        return ParseResult<PeripheralContribution>{
+            false,
+            "UartConfig ссылается на instance/data_bits/stop_bits/parity, отсутствующий в knowledge_base/uart.json",
+            std::nullopt};
+    }
+
+    const std::string handle_name = "husart_" + std::to_string(config.instance);
+
+    PeripheralContribution contribution;
+    contribution.label = "UART_" + std::to_string(config.instance);
+    contribution.init_order = kInitOrderUart;
+    contribution.init_function_name = "UART_" + std::to_string(config.instance) + "_Init";
+    // Только mik32_hal_usart.h: в отличие от GPIO/Timer16/I2C, тело
+    // UART_x_Init не обращается ни к одному макросу PCC — HAL_USART_Init
+    // включает тактирование самостоятельно. Лишний #include здесь был бы
+    // безвреден (в SDK везде include guard'ы), но замусоривал бы вывод.
+    contribution.init_c_includes = {"mik32_hal_usart.h"};
+    contribution.public_prototypes = {"void " + contribution.init_function_name + "(void);"};
+    contribution.global_definitions = "USART_HandleTypeDef " + handle_name + ";\n";
+
+    // ТЗ §3.1.3: direction управляет тем, какие направления включены;
+    // flow_control — аппаратным RTS/CTS.
+    const std::string flow = config.flow_control ? "Enable" : "Disable";
+    const std::string transmitting = (config.direction == "tx" || config.direction == "duplex") ? "Enable" : "Disable";
+    const std::string receiving = (config.direction == "rx" || config.direction == "duplex") ? "Enable" : "Disable";
+
+    // ТЗ §3.1.3.2/§3.1.8: фактическая скорость получается делением HSI 32МГц
+    // на целочисленный делитель, поэтому запрошенная скорость достижима не
+    // точно. Погрешность выводится комментарием — GUI, который показал бы её
+    // пользователю до генерации, ещё не написан.
+    const long divider = knowledge.hsi_hz / config.baud_rate;
+    const double actual_baud_rate = static_cast<double>(knowledge.hsi_hz) / static_cast<double>(divider);
+    const double baud_error_percent = (actual_baud_rate - config.baud_rate) / config.baud_rate * 100.0;
+
+    std::ostringstream init_c;
+    init_c << std::fixed << std::setprecision(3);
+    init_c << "/*\n"
+              " * " << *uart_handle << ": baud_rate=" << config.baud_rate
+           << ", data_bits=" << config.data_bits << ", stop_bits=" << config.stop_bits
+           << ", parity=" << config.parity << ", flow_control=" << (config.flow_control ? "true" : "false")
+           << ", direction=" << config.direction << ".\n"
+              " * Фактическая скорость при HSI=" << knowledge.hsi_hz << "Гц: DIVIDER=" << divider
+           << " -> " << actual_baud_rate << " бод, погрешность " << baud_error_percent << "%\n"
+              " * Только Asynchronous_Mode (Errata MIK32V2 v1.0.1, §10.1 — см. knowledge_base/uart.json).\n"
+              " */\n"
+              "void " << contribution.init_function_name << "(void)\n"
+              "{\n"
+              "    " << handle_name << ".Instance = " << *uart_handle << ";\n"
+              "    " << handle_name << ".transmitting = " << transmitting << ";\n"
+              "    " << handle_name << ".receiving = " << receiving << ";\n"
+              "    " << handle_name << ".frame = " << *frame_enum << ";\n"
+              "    " << handle_name << ".parity_bit = " << parity_setting->parity_bit << ";\n"
+              "    " << handle_name << ".parity_bit_inversion = " << parity_setting->parity_bit_inversion << ";\n"
+              "    " << handle_name << ".bit_direction = LSB_First;\n"
+              "    " << handle_name << ".data_inversion = Disable;\n"
+              "    " << handle_name << ".tx_inversion = Disable;\n"
+              "    " << handle_name << ".rx_inversion = Disable;\n"
+              "    " << handle_name << ".swap = Disable;\n"
+              "    " << handle_name << ".lbm = Disable;\n"
+              "    " << handle_name << ".stop_bit = " << *stop_bit_enum << ";\n"
+              "    " << handle_name << ".mode = Asynchronous_Mode;\n"
+              "    " << handle_name << ".xck_mode = XCK_Mode3;\n"
+              "    " << handle_name << ".last_byte_clock = Disable;\n"
+              "    " << handle_name << ".overwrite = Disable;\n"
+              "    " << handle_name << ".rts_mode = AlwaysEnable_mode;\n"
+              "    " << handle_name << ".dma_tx_request = Disable;\n"
+              "    " << handle_name << ".dma_rx_request = Disable;\n"
+              "    " << handle_name << ".channel_mode = Duplex_Mode;\n"
+              "    " << handle_name << ".tx_break_mode = Disable;\n"
+              "    " << handle_name << ".Interrupt.ctsie = Disable;\n"
+              "    " << handle_name << ".Interrupt.eie = Disable;\n"
+              "    " << handle_name << ".Interrupt.idleie = Disable;\n"
+              "    " << handle_name << ".Interrupt.lbdie = Disable;\n"
+              "    " << handle_name << ".Interrupt.peie = Disable;\n"
+              "    " << handle_name << ".Interrupt.rxneie = Disable;\n"
+              "    " << handle_name << ".Interrupt.tcie = Disable;\n"
+              "    " << handle_name << ".Interrupt.txeie = Disable;\n"
+              "    " << handle_name << ".Modem.rts = " << flow << ";\n"
+              "    " << handle_name << ".Modem.cts = " << flow << ";\n"
+              "    " << handle_name << ".Modem.dtr = Disable;\n"
+              "    " << handle_name << ".Modem.dcd = Disable;\n"
+              "    " << handle_name << ".Modem.dsr = Disable;\n"
+              "    " << handle_name << ".Modem.ri = Disable;\n"
+              "    " << handle_name << ".Modem.ddis = Disable;\n"
+              "    " << handle_name << ".baudrate = " << config.baud_rate << ";\n"
+              "\n"
+              "    HAL_USART_Init(&" << handle_name << ");\n"
+              "}\n";
+    contribution.init_function_text = init_c.str();
+
+    // Сильная (переопределяющая слабую) реализация xputc — обоснование в
+    // uart_contribution.h. Прототип в mik32_init.h не выносится: xputc
+    // объявлена в xprintf.h из SDK, и своё объявление создало бы риск
+    // расхождения сигнатур.
+    if (is_console)
+    {
+        std::ostringstream helpers;
+        helpers << "/*\n"
+                   " * Приёмник вывода xprintf. Штатная слабая реализация xputc\n"
+                   " * (mik32_hal_usart.c:435) жёстко привязана к UART_0 — эта заменяет её\n"
+                   " * и печатает в выбранный конфигурацией " << *uart_handle << ".\n"
+                   " */\n"
+                   "void xputc(char c)\n"
+                   "{\n"
+                   "    HAL_USART_Transmit(&" << handle_name << ", c, USART_TIMEOUT_DEFAULT);\n"
+                   "}\n";
+        contribution.helper_functions_text = helpers.str();
+    }
+
+    // Демо-логика: периодический текстовый лог. Только если передача вообще
+    // включена — при direction="rx" HAL_USART_Print писал бы в выключенный
+    // передатчик, то есть молча ничего не делал бы.
+    if (emit_demo_loop && transmitting == "Enable")
+    {
+        std::ostringstream loop;
+        loop << "            HAL_USART_Print(&" << handle_name << ", \"" << contribution.label
+             << ": MIK32-Configurator tick\\r\\n\", USART_TIMEOUT_DEFAULT);\n";
+        contribution.loop_body = loop.str();
+        contribution.wants_loop_delay = true;
+        contribution.main_c_includes = {"mik32_hal_usart.h"};
+        contribution.extern_declarations = "extern USART_HandleTypeDef " + handle_name + ";\n";
+    }
+
+    return ParseResult<PeripheralContribution>{true, "", contribution};
+}

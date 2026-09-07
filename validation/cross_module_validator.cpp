@@ -18,11 +18,33 @@ namespace
         owner << "UART instance " << uart_instance << " (" << role << ")";
         claims[{fixed_pin.gpio_instance, fixed_pin.pin}].push_back(owner.str());
     }
+
+    void addTimer16Claim(
+        std::map<PinKey, std::vector<std::string>>& claims,
+        const Timer16Knowledge::FixedPin& fixed_pin,
+        int timer16_instance)
+    {
+        std::ostringstream owner;
+        owner << "Timer16 instance " << timer16_instance << " (PWM)";
+        claims[{fixed_pin.gpio_instance, fixed_pin.pin}].push_back(owner.str());
+    }
+
+    void addI2cClaim(
+        std::map<PinKey, std::vector<std::string>>& claims,
+        const I2cKnowledge::FixedPin& fixed_pin,
+        int i2c_instance)
+    {
+        std::ostringstream owner;
+        owner << "I2C instance " << i2c_instance << " (SDA/SCL)";
+        claims[{fixed_pin.gpio_instance, fixed_pin.pin}].push_back(owner.str());
+    }
 }
 
 CrossModuleValidationResult validatePinConflicts(
     const std::string& config_path,
-    const UartKnowledge& uart_knowledge)
+    const UartKnowledge& uart_knowledge,
+    const Timer16Knowledge& timer16_knowledge,
+    const I2cKnowledge& i2c_knowledge)
 {
     std::ifstream input_file(config_path);
     if (!input_file.is_open())
@@ -40,6 +62,15 @@ CrossModuleValidationResult validatePinConflicts(
         return CrossModuleValidationResult{false, std::string("Ошибка разбора JSON: ") + parse_error.what(), {}};
     }
 
+    return validatePinConflictsInDocument(root, uart_knowledge, timer16_knowledge, i2c_knowledge);
+}
+
+CrossModuleValidationResult validatePinConflictsInDocument(
+    const nlohmann::json& root,
+    const UartKnowledge& uart_knowledge,
+    const Timer16Knowledge& timer16_knowledge,
+    const I2cKnowledge& i2c_knowledge)
+{
     if (!root.contains("peripherals") || !root["peripherals"].is_array())
     {
         return CrossModuleValidationResult{false, "Конфигурация не содержит массив \"peripherals\"", {}};
@@ -112,6 +143,52 @@ CrossModuleValidationResult validatePinConflicts(
             {
                 addUartClaim(claims, fixed.rts, instance, "RTS");
                 addUartClaim(claims, fixed.cts, instance, "CTS");
+            }
+        }
+        else if (type == "timer16")
+        {
+            if (!peripheral.contains("instance") || !peripheral["instance"].is_number_integer()
+                || !peripheral.contains("mode") || !peripheral["mode"].is_string())
+            {
+                continue;
+            }
+            const int instance = peripheral["instance"].get<int>();
+            const std::string mode = peripheral["mode"].get<std::string>();
+
+            // ТЗ §3.1.4 п.4: пин резервируется "при включении экземпляра
+            // Timer16" — но только когда выбранный режим реально
+            // задействует ШИМ-вывод (period/one_shot); external_event_count
+            // ничего не мультиплексирует на этот пин (см.
+            // knowledge_base/timer16.json, mode_waveform_enable, и
+            // codegen/project/timer16_contribution.cpp).
+            auto waveform_it = timer16_knowledge.mode_waveform_enable.find(mode);
+            if (waveform_it == timer16_knowledge.mode_waveform_enable.end() || !waveform_it->second)
+            {
+                continue;
+            }
+
+            auto fixed_pin_it = timer16_knowledge.instance_fixed_pwm_pin.find(instance);
+            if (fixed_pin_it == timer16_knowledge.instance_fixed_pwm_pin.end())
+            {
+                continue;  // невалидный instance — parseTimer16Config это отловит раньше.
+            }
+            addTimer16Claim(claims, fixed_pin_it->second, instance);
+        }
+        else if (type == "i2c")
+        {
+            if (!peripheral.contains("instance") || !peripheral["instance"].is_number_integer())
+            {
+                continue;
+            }
+            const int instance = peripheral["instance"].get<int>();
+            auto fixed_pins_it = i2c_knowledge.instance_fixed_pins.find(instance);
+            if (fixed_pins_it == i2c_knowledge.instance_fixed_pins.end())
+            {
+                continue;  // невалидный instance — parseI2cConfig это отловит раньше.
+            }
+            for (const I2cKnowledge::FixedPin& pin : fixed_pins_it->second)
+            {
+                addI2cClaim(claims, pin, instance);
             }
         }
     }

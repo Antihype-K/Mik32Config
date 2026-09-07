@@ -2,10 +2,10 @@
 #define MIK32_CONFIGURATOR_CODEGEN_RESULT_H
 #include <string>
 
-// Общий результат "запись сгенерированного проекта на диск" — используется
-// и codegen/gpio, и codegen/uart (см. writeGeneratedGpioProject /
-// writeGeneratedUartProject), поэтому вынесен сюда, а не продублирован в
-// каждом codegen/<peripheral>/*.h по отдельности.
+// Общий результат "запись сгенерированного проекта на диск". Вынесен в
+// include/, а не в заголовок конкретного модуля, ещё со времён пяти
+// однопериферийных генераторов; сейчас его использует единственный
+// writeGeneratedProject (codegen/project/project_codegen.h).
 struct CodegenWriteResult
 {
     bool success;

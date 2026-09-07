@@ -84,7 +84,11 @@ ParseResult<UartConfig> parseUsartConfig(const std::string& file_name_path)
         return makeError("В конфигурации не найден блок peripherals с type=\"uart\"");
     }
 
-    const nlohmann::json& uart = *uart_node;
+    return parseUartBlock(*uart_node);
+}
+
+ParseResult<UartConfig> parseUartBlock(const nlohmann::json& uart)
+{
 
     // schemas/uart.json: "required_fields" — все семь полей обязательны
     // (tx_pin/rx_pin из черновика архитектуры §5.3 сюда сознательно не

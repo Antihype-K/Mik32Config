@@ -110,8 +110,11 @@ ParseResult<GpioConfig> parseGpioConfig(const std::string& file_name_path)
         return makeError("В конфигурации не найден блок peripherals с type=\"gpio\"");
     }
 
-    const nlohmann::json& gpio = *gpio_node;
+    return parseGpioBlock(*gpio_node);
+}
 
+ParseResult<GpioConfig> parseGpioBlock(const nlohmann::json& gpio)
+{
     // schemas/gpio.json: "required_fields" — все пять полей обязательны,
     // отсутствие любого делает блок невалидным целиком.
     for (const char* field : {"instance", "mode", "pull", "drive_strength", "pins"})
