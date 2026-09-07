@@ -1,10 +1,11 @@
 #include "timer16_knowledge.h"
+#include "utf8_path.h"
 #include "json.hpp"
 #include <fstream>
 
 ParseResult<Timer16Knowledge> loadTimer16Knowledge(const std::string& file_path)
 {
-    std::ifstream input_file(file_path);
+    std::ifstream input_file(utf8Path(file_path));
     if (!input_file.is_open())
     {
         return ParseResult<Timer16Knowledge>{false, "Не удалось открыть knowledge_base: " + file_path, std::nullopt};

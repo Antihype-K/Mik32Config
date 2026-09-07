@@ -15,6 +15,8 @@
 // именно периферия в конфиге — забота сборщика
 // (codegen/project/project_codegen.h).
 #include <iostream>
+#include "utf8_arguments.h"
+#include <vector>
 #include "project_config.h"
 #include "project_codegen.h"
 #include "gpio_knowledge.h"
@@ -91,28 +93,37 @@ namespace
 
 int main(int argc, char** argv)
 {
+    // Консоль Windows по умолчанию в CP866 — без этого русские сообщения
+    // выводятся кракозябрами (наблюдалось на реальной Windows).
+    utf8_arguments::configureConsole();
+
+    // Приводим аргументы к UTF-8: на Windows CRT отдаёт их в ANSI-кодировке,
+    // а весь остальной код принимает пути как UTF-8 (см. include/utf8_path.h).
+    // Без этого шага путь с кириллицей, набранный в консоли, не открылся бы.
+    const std::vector<std::string> arguments = utf8_arguments::toUtf8(argc, argv);
+
     if (argc < 3)
     {
-        std::cerr << "Использование: " << argv[0]
+        std::cerr << "Использование: " << arguments[0]
                   << " <путь-к-json-конфигу> <имя-проекта-в-generated_projects> [--no-demo]\n"
                      "  --no-demo — генерировать только инициализацию периферии,\n"
                      "              с пустым телом while(1) под маркерами USER CODE.\n";
         return 1;
     }
 
-    const std::string config_path = argv[1];
-    const std::string output_dir = "generated_projects/" + std::string(argv[2]);
+    const std::string config_path = arguments[1];
+    const std::string output_dir = "generated_projects/" + arguments[2];
 
     bool emit_demo_loops = true;
     for (int i = 3; i < argc; ++i)
     {
-        if (std::string(argv[i]) == "--no-demo")
+        if (arguments[static_cast<size_t>(i)] == "--no-demo")
         {
             emit_demo_loops = false;
         }
         else
         {
-            std::cerr << "Неизвестный аргумент: " << argv[i] << "\n";
+            std::cerr << "Неизвестный аргумент: " << arguments[static_cast<size_t>(i)] << "\n";
             return 1;
         }
     }

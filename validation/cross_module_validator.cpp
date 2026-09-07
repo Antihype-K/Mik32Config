@@ -1,4 +1,5 @@
 #include "cross_module_validator.h"
+#include "utf8_path.h"
 #include "json.hpp"
 #include <fstream>
 #include <map>
@@ -46,7 +47,7 @@ CrossModuleValidationResult validatePinConflicts(
     const Timer16Knowledge& timer16_knowledge,
     const I2cKnowledge& i2c_knowledge)
 {
-    std::ifstream input_file(config_path);
+    std::ifstream input_file(utf8Path(config_path));
     if (!input_file.is_open())
     {
         return CrossModuleValidationResult{false, "Не удалось открыть файл конфигурации: " + config_path, {}};

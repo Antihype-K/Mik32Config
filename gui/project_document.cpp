@@ -1,4 +1,5 @@
 #include "project_document.h"
+#include "utf8_path.h"
 #include "project_config.h"
 #include "cross_module_validator.h"
 #include <cstdio>
@@ -71,7 +72,7 @@ ProjectDocument::ProjectDocument()
 
 bool ProjectDocument::load(const std::string& path, std::string& error_out)
 {
-    std::ifstream input(path);
+    std::ifstream input(utf8Path(path));
     if (!input.is_open())
     {
         error_out = "Не удалось открыть файл: " + path;
@@ -107,14 +108,20 @@ bool ProjectDocument::save(const std::string& path, std::string& error_out)
     // намеренно: переименование атомарно только в пределах одной файловой
     // системы, а /tmp может оказаться отдельной ФС, и тогда rename выродится
     // в копирование — ровно тот незащищённый случай, который мы и обходим.
-    const fs::path target(path);
-    const fs::path temporary = target.parent_path() / (target.filename().string() + ".tmp");
+    // path приходит из QString::toStdString(), то есть в UTF-8 — на Windows
+    // его нельзя отдавать в fs::path напрямую (см. include/utf8_path.h).
+    const fs::path target = utf8Path(path);
+    // Суффикс дописывается прямо к пути, а не через filename().string():
+    // narrow-конверсия имени на Windows шла бы через ANSI-кодировку и теряла
+    // символы, которых в ней нет. Результат тот же — <целевой файл>.tmp.
+    fs::path temporary = target;
+    temporary += ".tmp";
 
     {
         std::ofstream output(temporary, std::ios::trunc);
         if (!output.is_open())
         {
-            error_out = "Не удалось создать временный файл: " + temporary.string();
+            error_out = "Не удалось создать временный файл: " + temporary.u8string();
             return false;
         }
         output << document_.dump(2) << "\n";
@@ -123,7 +130,7 @@ bool ProjectDocument::save(const std::string& path, std::string& error_out)
             output.close();
             std::error_code ignored;
             fs::remove(temporary, ignored);
-            error_out = "Ошибка записи во временный файл: " + temporary.string();
+            error_out = "Ошибка записи во временный файл: " + temporary.u8string();
             return false;
         }
     }

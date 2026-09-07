@@ -3,6 +3,7 @@
 //
 
 #include "gpio_parser.h"
+#include "utf8_path.h"
 #include "json.hpp"
 #include <fstream>
 #include <set>
@@ -70,7 +71,7 @@ ParseResult<GpioConfig> parseGpioConfig(const std::string& file_name_path)
     // передаём путь напрямую в nlohmann::json), чтобы отличить "файла нет"
     // от "файл есть, но в нём невалидный JSON" — это два разных, отдельно
     // диагностируемых случая для пользователя конфигуратора.
-    std::ifstream input_file(file_name_path);
+    std::ifstream input_file(utf8Path(file_name_path));
     if (!input_file.is_open())
     {
         return makeError("Не удалось открыть файл конфигурации: " + file_name_path);

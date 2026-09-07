@@ -1,4 +1,5 @@
 #include "project_codegen.h"
+#include "utf8_path.h"
 #include "peripheral_contribution.h"
 #include "contribution_utils.h"
 #include "gpio_contribution.h"
@@ -116,7 +117,7 @@ namespace
                           const std::string& output_project_dir,
                           std::error_code& fs_error)
     {
-        fs::recursive_directory_iterator it(skeleton_dir, fs_error);
+        fs::recursive_directory_iterator it(utf8Path(skeleton_dir), fs_error);
         if (fs_error)
         {
             return false;
@@ -132,12 +133,12 @@ namespace
             // Путь элемента относительно корня скелета переносится один в один
             // внутрь каталога проекта: templates/pio_skeleton/.vscode/x.json
             // -> <проект>/.vscode/x.json.
-            const fs::path relative = fs::relative(it->path(), skeleton_dir, fs_error);
+            const fs::path relative = fs::relative(it->path(), utf8Path(skeleton_dir), fs_error);
             if (fs_error)
             {
                 return false;
             }
-            const fs::path destination = fs::path(output_project_dir) / relative;
+            const fs::path destination = utf8Path(output_project_dir) / relative;
 
             if (it->is_directory(fs_error))
             {
@@ -413,12 +414,12 @@ CodegenWriteResult writeGeneratedProject(
     // Скелет (platformio.ini/.vscode/lib/test) копируется только один раз —
     // повторная генерация в тот же каталог не должна затирать файлы, которые
     // пользователь мог отредактировать вручную после первого запуска.
-    if (!fs::exists(fs::path(output_project_dir) / "platformio.ini"))
+    if (!fs::exists(utf8Path(output_project_dir) / "platformio.ini"))
     {
         // Корень проекта создаём явно: generated_projects/ в свежем
         // репозитории ещё не существует, а copySkeletonInto создаёт только
         // подкаталоги, найденные внутри скелета.
-        fs::create_directories(output_project_dir, fs_error);
+        fs::create_directories(utf8Path(output_project_dir), fs_error);
         if (fs_error)
         {
             return CodegenWriteResult{false, "Не удалось создать " + output_project_dir + ": " + fs_error.message()};
@@ -430,7 +431,7 @@ CodegenWriteResult writeGeneratedProject(
         }
     }
 
-    const fs::path src_dir = fs::path(output_project_dir) / "src";
+    const fs::path src_dir = utf8Path(output_project_dir) / "src";
     fs::create_directories(src_dir, fs_error);
     if (fs_error)
     {

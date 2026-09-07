@@ -1,4 +1,5 @@
 #include "project_config.h"
+#include "utf8_path.h"
 #include "json.hpp"
 #include <fstream>
 #include <set>
@@ -27,7 +28,7 @@ ParseResult<ProjectConfig> parseProjectConfig(const std::string& file_name_path)
     // Файл открывается вручную (не через nlohmann::json(path)) по той же
     // причине, что и во всех parse<Peripheral>Config: «файла нет» и «файл
     // есть, но JSON битый» — два разных диагноза для пользователя.
-    std::ifstream input_file(file_name_path);
+    std::ifstream input_file(utf8Path(file_name_path));
     if (!input_file.is_open())
     {
         return makeError("Не удалось открыть файл конфигурации: " + file_name_path);

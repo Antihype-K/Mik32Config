@@ -3,6 +3,7 @@
 //
 
 #include "usart_parser.h"
+#include "utf8_path.h"
 #include "json.hpp"
 #include <fstream>
 #include <set>
@@ -47,7 +48,7 @@ namespace
 
 ParseResult<UartConfig> parseUsartConfig(const std::string& file_name_path)
 {
-    std::ifstream input_file(file_name_path);
+    std::ifstream input_file(utf8Path(file_name_path));
     if (!input_file.is_open())
     {
         return makeError("Не удалось открыть файл конфигурации: " + file_name_path);

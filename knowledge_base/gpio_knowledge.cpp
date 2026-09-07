@@ -1,4 +1,5 @@
 #include "gpio_knowledge.h"
+#include "utf8_path.h"
 #include "json.hpp"
 #include <fstream>
 
@@ -22,7 +23,7 @@ namespace
 
 ParseResult<GpioKnowledge> loadGpioKnowledge(const std::string& file_path)
 {
-    std::ifstream input_file(file_path);
+    std::ifstream input_file(utf8Path(file_path));
     if (!input_file.is_open())
     {
         return ParseResult<GpioKnowledge>{false, "Не удалось открыть knowledge_base: " + file_path, std::nullopt};
