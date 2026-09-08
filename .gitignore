@@ -1,7 +1,9 @@
 *.zip
 build/
+build-win64/
 *.o
 generated_projects/
+packaging/windows/out/
 docs/
 CLAUDE.md
 MENTOR_MODE.md
@@ -9,3 +11,6 @@ MENTOR_MODE.md
 .agents/
 .claude/
 skills-lock.json
+.idea/
+userflow.drawio
+MAKET_DESIGN_TZ.md
