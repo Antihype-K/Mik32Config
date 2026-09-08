@@ -18,21 +18,41 @@
 // инкрементальное обновление здесь стоило бы дороже, чем экономило, и было бы
 // источником рассинхрона панелей.
 //
+// Поверх этих четырёх панелей (которые остаются ЦЕЛИКОМ как есть) теперь
+// живёт слой экранов верхнего уровня — Home / NewProject / Config /
+// ProjectManager / CodePreview, см. gui/screen_navigator.h и
+// MAKET_DESIGN_TZ.md. Четыре панели — это содержимое ровно ОДНОГО из этих
+// экранов (Config); остальные экраны — отдельные QWidget, MainWindow лишь
+// переключает между ними через QStackedWidget и накладывает NavViewModel на
+// верхнюю строку/вкладки (applyViewModel).
+//
 #ifndef MIK32_CONFIGURATOR_MAIN_WINDOW_H
 #define MIK32_CONFIGURATOR_MAIN_WINDOW_H
 
 #include <QMainWindow>
 #include <QString>
+#include <QStringList>
 
 #include "project_document.h"
 #include "project_codegen.h"
 #include "package_knowledge.h"
 #include "peripheral_tree.h"
+#include "screen_navigator.h"
+#include "new_project_screen.h"
 
 class PackageView;
 class PropertiesPanel;
 class DiagnosticsPanel;
+class HomeScreen;
+class NewProjectScreen;
+class ProjectManagerScreen;
+class CodePreviewScreen;
 class QAction;
+class QLabel;
+class QPushButton;
+class QStackedWidget;
+class QTabBar;
+class QWidget;
 
 // Пути к ресурсам конфигуратора приходят снаружи (их ищет gui_main.cpp),
 // чтобы окно не зависело от того, из какого каталога запущено приложение.
@@ -52,8 +72,9 @@ public:
                const GuiPaths& paths,
                QWidget* parent = nullptr);
 
-    // Открыть файл, переданный аргументом командной строки.
-    void openPath(const QString& path);
+    // Открыть файл, переданный аргументом командной строки. Возвращает
+    // false, если файл не открылся (документ в этом случае не меняется).
+    bool openPath(const QString& path);
 
 protected:
     // Несохранённая конфигурация не должна исчезать молча (ТЗ §3.2 п.1 — о
@@ -79,9 +100,31 @@ private slots:
     void onPinClicked(int pin_number);
     void onJumpToBlock(int block_index);
 
+    // --- Навигация по экранам (MAKET_DESIGN_TZ.md, раздел 1 и "New Project /
+    // ChipSelect") -------------------------------------------------------
+    void onGoHome();
+    void onTabStripChanged(int tab_index);
+    void onHomeNewProjectRequested();
+    void onHomeOpenProjectRequested();
+    void onHomeRecentProjectChosen(const QString& path);
+    void onNewProjectCreateRequested(const NewProjectParams& params);
+
 private:
     void buildMenus();
     void buildLayout();
+    void buildChrome(QWidget* central);
+
+    // Аналог MainWindow::applyViewModel из проектирования ScreenNavigator:
+    // единственное место, где NavViewModel накладывается на реальные
+    // виджеты (стек страниц, верхняя строка, вкладочная строка).
+    void applyViewModel();
+
+    // Список последних проектов — персистентность через QSettings (её в
+    // приложении раньше не было вообще, см. MAKET_DESIGN_TZ.md §5).
+    void loadRecentProjects();
+    void pushRecentProject(const QString& path);
+
+    QString packageSummary() const;
 
     // Полный цикл обновления: перевалидировать документ, обновить дерево,
     // перекрасить схему, обновить заголовок окна и строку состояния.
@@ -112,6 +155,21 @@ private:
     DiagnosticsPanel* diagnostics_ = nullptr;
 
     QAction* demo_loops_action_ = nullptr;  // переключатель emit_demo_loops
+
+    // --- Навигация по экранам ------------------------------------------
+    ScreenNavigator navigator_;
+    QStackedWidget* screens_stack_ = nullptr;   // порядок страниц = Screen enum
+    QWidget* top_bar_ = nullptr;
+    QLabel* breadcrumb_label_ = nullptr;
+    QPushButton* generate_button_ = nullptr;
+    QTabBar* tab_strip_ = nullptr;               // 0=Config, 1=ProjectManager, 2=CodePreview
+
+    HomeScreen* home_screen_ = nullptr;
+    NewProjectScreen* new_project_screen_ = nullptr;
+    ProjectManagerScreen* project_manager_screen_ = nullptr;
+    CodePreviewScreen* code_preview_screen_ = nullptr;
+
+    QStringList recent_projects_;
 
     // Буфер «копировать настройки» из контекстного меню дерева
     // (ТЗ §3.1.9 п.3). Хранится блок целиком, кроме instance: копируются

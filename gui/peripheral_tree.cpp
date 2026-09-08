@@ -72,8 +72,7 @@ PeripheralTree::PeripheralTree(QWidget* parent)
     }
     for (int instance = 0; instance <= 1; ++instance)
     {
-        // SPI: parser/spi/spi_parser.cpp — пустая заглушка.
-        addLeaf(connectivity, QString("SPI_%1").arg(instance), QString(), -1, false);
+        addLeaf(connectivity, QString("SPI_%1").arg(instance), "spi", instance, true);
     }
 
     tree_->expandAll();

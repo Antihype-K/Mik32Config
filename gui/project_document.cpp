@@ -1,10 +1,10 @@
 #include "project_document.h"
 #include "utf8_path.h"
+#include "win_file_io.h"
 #include "project_config.h"
 #include "cross_module_validator.h"
 #include <cstdio>
 #include <filesystem>
-#include <fstream>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -58,6 +58,22 @@ namespace
             block["clock_speed"] = 100000;
             block["demo"] = "scanner";
         }
+        else if (type == "spi")
+        {
+            // master/CPHA=on/CPOL=high/DIV64/CS0 — ровно значения обоих
+            // вендорных примеров SPI0_Init (docs/examples/mik32-examples/
+            // HAL_SPI_Master/src/main.c), кроме manual_cs: там ManualCS=OFF,
+            // здесь тоже OFF (auto), чтобы не задеть Errata п.7.1 (та
+            // актуальна только для chip_select=cs3, дефолт — cs0).
+            block["mode"] = "master";
+            block["clk_phase"] = "on";
+            block["clk_polarity"] = "high";
+            block["threshold_tx"] = 4;
+            block["baud_rate_div"] = 64;
+            block["manual_cs"] = false;
+            block["decoder"] = false;
+            block["chip_select"] = "cs0";
+        }
         return block;
     }
 }
@@ -72,17 +88,17 @@ ProjectDocument::ProjectDocument()
 
 bool ProjectDocument::load(const std::string& path, std::string& error_out)
 {
-    std::ifstream input(utf8Path(path));
-    if (!input.is_open())
+    const FileReadOutcome file = readUtf8PathFile(path);
+    if (!file.success)
     {
-        error_out = "Не удалось открыть файл: " + path;
+        error_out = "Не удалось открыть файл: " + path + file.diagnostic;
         return false;
     }
 
     nlohmann::json parsed;
     try
     {
-        input >> parsed;
+        parsed = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {
@@ -118,19 +134,12 @@ bool ProjectDocument::save(const std::string& path, std::string& error_out)
     temporary += ".tmp";
 
     {
-        std::ofstream output(temporary, std::ios::trunc);
-        if (!output.is_open())
+        const FileWriteOutcome write_result = writeUtf8PathFile(temporary.u8string(), document_.dump(2) + "\n");
+        if (!write_result.success)
         {
-            error_out = "Не удалось создать временный файл: " + temporary.u8string();
-            return false;
-        }
-        output << document_.dump(2) << "\n";
-        if (!output.good())
-        {
-            output.close();
             std::error_code ignored;
             fs::remove(temporary, ignored);
-            error_out = "Ошибка записи во временный файл: " + temporary.u8string();
+            error_out = "Не удалось записать временный файл: " + temporary.u8string() + write_result.diagnostic;
             return false;
         }
     }
@@ -259,7 +268,7 @@ std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowle
 
     // 2. Кросс-модульные конфликты выводов (ТЗ §3.1.6.2/3.1.6.3 — Ошибка).
     CrossModuleValidationResult cross = validatePinConflictsInDocument(
-        document_, knowledge.uart, knowledge.timer16, knowledge.i2c);
+        document_, knowledge.uart, knowledge.timer16, knowledge.i2c, knowledge.timer32, knowledge.spi);
     if (!cross.success)
     {
         diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error, cross.error, -1});
@@ -306,6 +315,26 @@ std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowle
             ? DiagnosticSeverity::Warning
             : DiagnosticSeverity::Info;
         diagnostics.push_back(Diagnostic{severity, message.str(), -1});
+    }
+
+    // 4. Errata MIK32V2 v1.0.1 §7.1 (SPI0, авто-выбор ведомых) — ситуации из
+    // Errata по конвенции проекта являются Предупреждением, не Ошибкой (не
+    // блокируют генерацию, см. codegen/project/spi_contribution.cpp,
+    // errata_7_1_applies), но в отличие от кодогена, где это только
+    // комментарий, GUI может показать её ДО генерации — тот же приём, что и
+    // с погрешностью Baud Rate выше.
+    for (const SpiConfig& spi : parsed.config->spi_blocks)
+    {
+        if (spi.instance == 0 && spi.mode == "master" && !spi.manual_cs && spi.chip_select == "cs3")
+        {
+            const std::vector<int> indices = blockIndices("spi", spi.instance);
+            const int block_index = indices.empty() ? -1 : indices.front();
+            diagnostics.push_back(Diagnostic{DiagnosticSeverity::Warning,
+                "SPI_0: Errata п. 7.1 — в автоматическом режиме выбора ведомых вывод "
+                "SPI0_n_ss_out_3 не работает и дублирует SPI0_n_ss_out_2. Используйте "
+                "manual_cs=true с ручным управлением через GPIO для 4-го ведомого.",
+                block_index});
+        }
     }
 
     return diagnostics;
@@ -375,6 +404,32 @@ std::vector<std::pair<int, int>> ProjectDocument::claimedPins(
             for (const I2cKnowledge::FixedPin& pin : it->second)
             {
                 pins.emplace_back(pin.gpio_instance, pin.pin);
+            }
+        }
+    }
+    else if (type == "spi")
+    {
+        // SCK/MOSI/MISO/SS_IN — заняты всегда (см. cross_module_validator.cpp).
+        auto it = knowledge.spi.instance_fixed_pins.find(instance);
+        if (it != knowledge.spi.instance_fixed_pins.end())
+        {
+            for (const SpiKnowledge::FixedPin& pin : it->second)
+            {
+                pins.emplace_back(pin.gpio_instance, pin.pin);
+            }
+        }
+        // CS-пин — только для master, тот же порог, что в cross_module_validator.cpp.
+        if (block.value("mode", std::string()) == "master" && block.contains("chip_select")
+            && block["chip_select"].is_string())
+        {
+            auto cs_it = knowledge.spi.instance_chip_select_pin.find(instance);
+            if (cs_it != knowledge.spi.instance_chip_select_pin.end())
+            {
+                auto pin_it = cs_it->second.find(block["chip_select"].get<std::string>());
+                if (pin_it != cs_it->second.end())
+                {
+                    pins.emplace_back(pin_it->second.gpio_instance, pin_it->second.pin);
+                }
             }
         }
     }

@@ -3,16 +3,25 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDir>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHash>
+#include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QSet>
+#include <QSettings>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
+#include <QTabBar>
+#include <QTextStream>
 #include <QVBoxLayout>
 
 #include <map>
@@ -22,6 +31,29 @@
 #include "properties_panel.h"
 #include "diagnostics_panel.h"
 #include "project_config.h"
+#include "home_screen.h"
+#include "new_project_screen.h"
+#include "project_manager_screen.h"
+#include "code_preview_screen.h"
+
+namespace
+{
+    // Кап на длину списка «недавних проектов» — QSettings хранит его как
+    // QStringList под одним ключом, без капа список рос бы бесконечно.
+    constexpr int kMaxRecentProjects = 8;
+
+    QString readFileUtf8(const QString& path)
+    {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            return QString();
+        }
+        QTextStream stream(&file);
+        stream.setEncoding(QStringConverter::Utf8);
+        return stream.readAll();
+    }
+}
 
 namespace
 {
@@ -29,7 +61,7 @@ namespace
     // Совпадает с набором листьев дерева, помеченных supported=true
     // (gui/peripheral_tree.cpp), и с диспетчером parseProjectDocument.
     const std::vector<std::pair<const char*, int>> kSupportedBlocks = {
-        {"gpio", 3}, {"uart", 2}, {"timer16", 3}, {"i2c", 2},
+        {"gpio", 3}, {"uart", 2}, {"timer16", 3}, {"i2c", 2}, {"spi", 2},
     };
 }
 
@@ -48,8 +80,11 @@ MainWindow::MainWindow(const ProjectKnowledge& knowledge,
     properties_->setContext(&document_, &knowledge_);
     package_view_->setPackage(package_);
 
+    loadRecentProjects();
+    home_screen_->setRecentProjects(recent_projects_);
+
     resize(1280, 800);
-    refreshEverything();
+    refreshEverything();  // заканчивается applyViewModel() — экран Home по умолчанию.
 }
 
 void MainWindow::buildMenus()
@@ -84,13 +119,14 @@ void MainWindow::buildMenus()
     generate_action->setShortcut(QKeySequence("Ctrl+G"));
     connect(generate_action, &QAction::triggered, this, &MainWindow::onGenerate);
 
-    // Тот же переключатель, что и --no-demo у консольного приложения
+    // Тот же переключатель, что и --demo у консольного приложения
     // (src/main.cpp). Смысл флага — в project_codegen.h: демо-логика в while(1)
-    // нужна для аппаратной проверки, но не нужна в «чистой» инициализации.
+    // нужна для аппаратной проверки, но не нужна в «чистой» инициализации —
+    // поэтому по умолчанию выключено, включается по явному запросу.
     demo_loops_action_ = project_menu->addAction(
         QString::fromUtf8("Генерировать демо-логику в while(1)"));
     demo_loops_action_->setCheckable(true);
-    demo_loops_action_->setChecked(true);
+    demo_loops_action_->setChecked(false);
 
     QMenu* help_menu = menuBar()->addMenu(QString::fromUtf8("&Справка"));
     QAction* about_action = help_menu->addAction(QString::fromUtf8("&О программе"));
@@ -129,8 +165,8 @@ void MainWindow::buildLayout()
     vertical->addWidget(diagnostics_);
     vertical->setStretchFactor(0, 4);
     vertical->setStretchFactor(1, 1);
+    // "vertical" — это ровно содержимое экрана Screen::Config, см. buildChrome.
 
-    setCentralWidget(vertical);
     statusBar()->showMessage(QString::fromUtf8("Готово"));
 
     connect(tree_, &PeripheralTree::selectionChanged, this, &MainWindow::onSelectionChanged);
@@ -143,6 +179,94 @@ void MainWindow::buildLayout()
     connect(properties_, &PropertiesPanel::documentChanged, this, &MainWindow::onDocumentChanged);
     connect(package_view_, &PackageView::pinClicked, this, &MainWindow::onPinClicked);
     connect(diagnostics_, &DiagnosticsPanel::jumpToBlock, this, &MainWindow::onJumpToBlock);
+
+    home_screen_ = new HomeScreen();
+    new_project_screen_ = new NewProjectScreen();
+    project_manager_screen_ = new ProjectManagerScreen();
+    code_preview_screen_ = new CodePreviewScreen();
+
+    connect(home_screen_, &HomeScreen::newProjectRequested, this, &MainWindow::onHomeNewProjectRequested);
+    connect(home_screen_, &HomeScreen::openProjectRequested, this, &MainWindow::onHomeOpenProjectRequested);
+    connect(home_screen_, &HomeScreen::recentProjectChosen, this, &MainWindow::onHomeRecentProjectChosen);
+    connect(new_project_screen_, &NewProjectScreen::createRequested,
+            this, &MainWindow::onNewProjectCreateRequested);
+
+    screens_stack_ = new QStackedWidget();
+    // Порядок добавления обязан совпадать с NavViewModel::stackIndex
+    // (screen_navigator.cpp): Home=0, NewProject=1, Config=2,
+    // ProjectManager=3, CodePreview=4.
+    screens_stack_->addWidget(home_screen_);
+    screens_stack_->addWidget(new_project_screen_);
+    screens_stack_->addWidget(vertical);
+    screens_stack_->addWidget(project_manager_screen_);
+    screens_stack_->addWidget(code_preview_screen_);
+
+    QWidget* central = new QWidget();
+    buildChrome(central);
+}
+
+void MainWindow::buildChrome(QWidget* central)
+{
+    top_bar_ = new QWidget();
+    top_bar_->setStyleSheet("background: palette(alternate-base);");
+    QHBoxLayout* top_bar_layout = new QHBoxLayout(top_bar_);
+    top_bar_layout->setContentsMargins(12, 6, 12, 6);
+
+    QPushButton* logo_button = new QPushButton(QString::fromUtf8("МИК32 Конфигуратор периферии"));
+    logo_button->setFlat(true);
+    logo_button->setCursor(Qt::PointingHandCursor);
+    connect(logo_button, &QPushButton::clicked, this, &MainWindow::onGoHome);
+    top_bar_layout->addWidget(logo_button);
+    top_bar_layout->addStretch(1);
+
+    breadcrumb_label_ = new QLabel();
+    breadcrumb_label_->setStyleSheet("color: gray;");
+    top_bar_layout->addWidget(breadcrumb_label_);
+    top_bar_layout->addStretch(1);
+
+    generate_button_ = new QPushButton(QString::fromUtf8("Сгенерировать код"));
+    connect(generate_button_, &QPushButton::clicked, this, &MainWindow::onGenerate);
+    top_bar_layout->addWidget(generate_button_);
+
+    tab_strip_ = new QTabBar();
+    tab_strip_->addTab(QString::fromUtf8("Pinout & Configuration"));
+    tab_strip_->addTab(QString::fromUtf8("Project Manager"));
+    tab_strip_->addTab(QString::fromUtf8("Просмотр кода"));
+    connect(tab_strip_, &QTabBar::currentChanged, this, &MainWindow::onTabStripChanged);
+
+    QVBoxLayout* central_layout = new QVBoxLayout(central);
+    central_layout->setContentsMargins(0, 0, 0, 0);
+    central_layout->setSpacing(0);
+    central_layout->addWidget(top_bar_);
+    central_layout->addWidget(tab_strip_);
+    central_layout->addWidget(screens_stack_, 1);
+
+    setCentralWidget(central);
+}
+
+void MainWindow::applyViewModel()
+{
+    const NavViewModel vm = navigator_.viewModel();
+
+    screens_stack_->setCurrentIndex(vm.stackIndex);
+    top_bar_->setVisible(vm.topBarVisible);
+    tab_strip_->setVisible(vm.tabStripVisible);
+    generate_button_->setVisible(vm.generateButtonVisible);
+    generate_button_->setEnabled(vm.generateButtonEnabled);
+    tab_strip_->setTabEnabled(2, vm.codeTabEnabled);
+    breadcrumb_label_->setText(vm.breadcrumbText);
+
+    if (vm.activeTabIndex >= 0 && tab_strip_->currentIndex() != vm.activeTabIndex)
+    {
+        // blockSignals — переключение экрана программно (например, кликом по
+        // выводу схемы) не должно снова дёргать onTabStripChanged и приводить
+        // к повторному (но безвредному) navigator_.goTo того же экрана; смысл
+        // в том, чтобы вкладочная строка была следствием состояния, а не его
+        // независимым источником.
+        tab_strip_->blockSignals(true);
+        tab_strip_->setCurrentIndex(vm.activeTabIndex);
+        tab_strip_->blockSignals(false);
+    }
 }
 
 QString MainWindow::defaultTitle(const QString& type, int instance)
@@ -155,6 +279,7 @@ QString MainWindow::defaultTitle(const QString& type, int instance)
     if (type == "gpio")     return QString("GPIO_%1").arg(instance);
     if (type == "timer16")  return QString("Timer16_%1").arg(instance);
     if (type == "i2c")      return QString("I2C_%1").arg(instance);
+    if (type == "spi")      return QString("SPI_%1").arg(instance);
     return QString("%1_%2").arg(type).arg(instance);
 }
 
@@ -198,14 +323,17 @@ bool MainWindow::confirmDiscardChanges()
 
 void MainWindow::onNew()
 {
+    // userflow.drawio, ЭТАП 2 (n05/n06, ветвь «создание нового»): «Новый
+    // проект» — это форма (имя/каталог/версия МК/тулчейн/плата), не мгновенный
+    // сброс документа. Сам документ создаётся и сохраняется в
+    // onNewProjectCreateRequested, когда пользователь заполнит форму.
     if (!confirmDiscardChanges())
     {
         return;
     }
-    document_ = ProjectDocument();
-    properties_->setContext(&document_, &knowledge_);
-    properties_->showPeripheral(QString(), -1);
-    refreshEverything();
+    new_project_screen_->resetForm();
+    navigator_.goTo(Screen::NewProject);
+    applyViewModel();
 }
 
 bool MainWindow::onOpen()
@@ -221,21 +349,33 @@ bool MainWindow::onOpen()
     {
         return false;
     }
+    // userflow.drawio: «открытие существующего» ведёт сразу в главное окно
+    // (коннектор Б), минуя Home/NewProject — сама навигация уже внутри
+    // openPath (см. её комментарий).
     openPath(path);
     return true;
 }
 
-void MainWindow::openPath(const QString& path)
+bool MainWindow::openPath(const QString& path)
 {
     std::string error;
     if (!document_.load(path.toStdString(), error))
     {
         QMessageBox::critical(this, QString::fromUtf8("Не удалось открыть файл"),
                               QString::fromStdString(error));
-        return;
+        return false;
     }
     properties_->showPeripheral(QString(), -1);
     refreshEverything();
+
+    // Открытие файла — из File>Open, из Home (недавние) или из аргумента
+    // командной строки (gui_main.cpp) — всегда ведёт в главное окно и всегда
+    // попадает в список недавних; логика собрана здесь одним местом, а не
+    // повторена у каждого вызывающего.
+    pushRecentProject(path);
+    navigator_.goTo(Screen::Config);
+    applyViewModel();
+    return true;
 }
 
 bool MainWindow::onSave()
@@ -309,6 +449,22 @@ void MainWindow::onGenerate()
         return;
     }
 
+    // userflow.drawio, ЭТАП 4 (n44/n45): предупреждения не блокируют
+    // генерацию, но требуют явного подтверждения — раньше приложение молча
+    // генерировало дальше, полагаясь только на счётчик в строке состояния.
+    if (diagnostics_->warningCount() > 0)
+    {
+        const QMessageBox::StandardButton answer = QMessageBox::question(
+            this, QString::fromUtf8("Есть предупреждения"),
+            QString::fromUtf8("В конфигурации %1 предупреждени(е/я/й). Продолжить генерацию?")
+                .arg(diagnostics_->warningCount()),
+            QMessageBox::Yes | QMessageBox::No);
+        if (answer != QMessageBox::Yes)
+        {
+            return;
+        }
+    }
+
     ParseResult<ProjectConfig> parsed = parseProjectDocument(document_.document());
     if (!parsed.success)
     {
@@ -351,6 +507,18 @@ void MainWindow::onGenerate()
                           "USER CODE BEGIN/END в src/main.c сохранено.")
             .arg(output_dir));
     statusBar()->showMessage(QString::fromUtf8("Сгенерировано: %1").arg(output_dir), 5000);
+
+    // Вкладка «Просмотр кода» показывает то, что РЕАЛЬНО легло на диск
+    // (см. code_preview_screen.h) — читаем обратно, а не второй раз строим
+    // GeneratedProjectFirmware в памяти.
+    code_preview_screen_->setContents(
+        readFileUtf8(output_dir + "/src/main.c"),
+        readFileUtf8(output_dir + "/src/mik32_init.c"),
+        readFileUtf8(output_dir + "/src/mik32_init.h"),
+        readFileUtf8(output_dir + "/platformio.ini"));
+    navigator_.setGeneratedOnce(true);
+    navigator_.goTo(Screen::CodePreview);
+    applyViewModel();
 }
 
 void MainWindow::onAbout()
@@ -563,6 +731,19 @@ void MainWindow::refreshEverything()
     updateWindowTitle();
     statusBar()->showMessage(QString::fromUtf8("Ошибок: %1, предупреждений: %2")
         .arg(diagnostics_->errorCount()).arg(diagnostics_->warningCount()));
+
+    // 4. Навигация: кнопка «Сгенерировать» и breadcrumb зависят от текущего
+    // документа, поэтому обновляются в одном цикле с остальным (см. §1
+    // MAKET_DESIGN_TZ.md — генератор и есть единственный источник счётчика
+    // ошибок).
+    navigator_.setDiagnosticErrors(diagnostics_->errorCount());
+    const QString project_name = document_.filePath().empty()
+        ? QString::fromUtf8("(без имени)")
+        : QFileInfo(QString::fromStdString(document_.filePath())).baseName();
+    navigator_.setActiveProjectName(project_name);
+    project_manager_screen_->setProjectInfo(
+        QString::fromStdString(document_.filePath()), packageSummary());
+    applyViewModel();
 }
 
 void MainWindow::updatePackageColors()
@@ -686,4 +867,111 @@ void MainWindow::onJumpToBlock(int block_index)
     tree_->selectPeripheral(
         QString::fromStdString(peripherals[block_index].value("type", std::string())),
         peripherals[block_index].value("instance", -1));
+}
+
+// --- Навигация по экранам -----------------------------------------------
+
+void MainWindow::onGoHome()
+{
+    // Переход на Home — это смена ВИДА, а не отказ от документа: он остаётся
+    // в памяти как есть (в отличие от onNew/onOpen, которые документ
+    // заменяют и поэтому спрашивают confirmDiscardChanges). Если
+    // пользователь оттуда выберет «новый проект» или откроет другой файл,
+    // подтверждение потребуется уже там.
+    home_screen_->setRecentProjects(recent_projects_);
+    navigator_.goTo(Screen::Home);
+    applyViewModel();
+}
+
+void MainWindow::onTabStripChanged(int tab_index)
+{
+    switch (tab_index)
+    {
+        case 0: navigator_.goTo(Screen::Config); break;
+        case 1: navigator_.goTo(Screen::ProjectManager); break;
+        case 2: navigator_.goTo(Screen::CodePreview); break;
+        default: return;
+    }
+    applyViewModel();
+}
+
+void MainWindow::onHomeNewProjectRequested()
+{
+    new_project_screen_->resetForm();
+    navigator_.goTo(Screen::NewProject);
+    applyViewModel();
+}
+
+void MainWindow::onHomeOpenProjectRequested()
+{
+    onOpen();
+}
+
+void MainWindow::onHomeRecentProjectChosen(const QString& path)
+{
+    if (!confirmDiscardChanges())
+    {
+        return;
+    }
+    // При неудаче openPath уже показал причину (диалог ошибки) и не менял
+    // ни документ, ни экран — остаёмся на Home.
+    openPath(path);
+}
+
+void MainWindow::onNewProjectCreateRequested(const NewProjectParams& params)
+{
+    // userflow.drawio, n11: «Формирование конфигурации по умолчанию» — здесь
+    // это буквально ProjectDocument() (mcu/version по умолчанию, пустой
+    // peripherals) плюс немедленная запись по выбранному пути, чтобы у
+    // проекта сразу было место на диске (а не отложенное «Сохранить как»).
+    QDir dir(params.directory);
+    if (!dir.exists() && !dir.mkpath("."))
+    {
+        QMessageBox::critical(this, QString::fromUtf8("Не удалось создать каталог"),
+            QString::fromUtf8("Каталог не существует и не может быть создан:\n%1")
+                .arg(params.directory));
+        return;
+    }
+    const QString target_path = dir.filePath(params.name + ".json");
+
+    ProjectDocument fresh;
+    std::string error;
+    if (!fresh.save(target_path.toStdString(), error))
+    {
+        QMessageBox::critical(this, QString::fromUtf8("Не удалось создать проект"),
+                              QString::fromStdString(error));
+        return;
+    }
+
+    document_ = std::move(fresh);
+    properties_->setContext(&document_, &knowledge_);
+    properties_->showPeripheral(QString(), -1);
+    pushRecentProject(target_path);
+    navigator_.goTo(Screen::Config);
+    refreshEverything();
+}
+
+void MainWindow::loadRecentProjects()
+{
+    QSettings settings;
+    recent_projects_ = settings.value("recentProjects").toStringList();
+}
+
+void MainWindow::pushRecentProject(const QString& path)
+{
+    recent_projects_.removeAll(path);
+    recent_projects_.prepend(path);
+    while (recent_projects_.size() > kMaxRecentProjects)
+    {
+        recent_projects_.removeLast();
+    }
+    QSettings settings;
+    settings.setValue("recentProjects", recent_projects_);
+    home_screen_->setRecentProjects(recent_projects_);
+}
+
+QString MainWindow::packageSummary() const
+{
+    return QString::fromUtf8("%1, %2 выводов")
+        .arg(QString::fromStdString(package_.package)).arg(package_.pin_count);
 }

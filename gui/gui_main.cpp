@@ -23,6 +23,8 @@
 #include "uart_knowledge.h"
 #include "timer16_knowledge.h"
 #include "i2c_knowledge.h"
+#include "timer32_knowledge.h"
+#include "spi_knowledge.h"
 #include "package_knowledge.h"
 
 namespace
@@ -86,6 +88,10 @@ namespace
 int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
+    // organizationName обязателен для QSettings (MainWindow::loadRecentProjects/
+    // pushRecentProject) — без него Qt не может определить путь к конфигу
+    // на диске.
+    QCoreApplication::setOrganizationName("MIK32");
     QCoreApplication::setApplicationName("MIK32 Configurator");
 
     const QString root = findResourceRoot();
@@ -107,6 +113,8 @@ int main(int argc, char** argv)
         && loadOne(knowledge.uart, loadUartKnowledge, root + "/knowledge_base/uart.json", error)
         && loadOne(knowledge.timer16, loadTimer16Knowledge, root + "/knowledge_base/timer16.json", error)
         && loadOne(knowledge.i2c, loadI2cKnowledge, root + "/knowledge_base/i2c.json", error)
+        && loadOne(knowledge.timer32, loadTimer32Knowledge, root + "/knowledge_base/timer32.json", error)
+        && loadOne(knowledge.spi, loadSpiKnowledge, root + "/knowledge_base/spi.json", error)
         && loadOne(package, loadPackageKnowledge, root + "/knowledge_base/package.json", error);
     if (!loaded)
     {

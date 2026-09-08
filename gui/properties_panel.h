@@ -49,6 +49,7 @@ private:
     void buildUartForm(QVBoxLayout* layout, int instance);
     void buildTimer16Form(QVBoxLayout* layout, int instance);
     void buildI2cForm(QVBoxLayout* layout, int instance);
+    void buildSpiForm(QVBoxLayout* layout, int instance);
     void buildDisabledPlaceholder(QVBoxLayout* layout, int instance);
 
     void clearForm();

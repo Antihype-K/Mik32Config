@@ -114,6 +114,24 @@ namespace
         {"Ping-pong",                       "ping_pong"},
     };
 
+    // schemas/spi.json, fields.clk_phase / fields.clk_polarity.
+    const std::vector<std::pair<const char*, const char*>> kSpiClkPhases = {
+        {"Активна вне слова (off)",    "off"},
+        {"Неактивна вне слова (on)",   "on"},
+    };
+    const std::vector<std::pair<const char*, const char*>> kSpiClkPolarities = {
+        {"Низкий уровень (low)",  "low"},
+        {"Высокий уровень (high)", "high"},
+    };
+
+    // schemas/spi.json, fields.baud_rate_div — семь ступеней деления spi_ref_clk.
+    const std::vector<int> kSpiBaudRateDivs = {4, 8, 16, 32, 64, 128, 256};
+
+    // schemas/spi.json, fields.chip_select.
+    const std::vector<std::pair<const char*, const char*>> kSpiChipSelects = {
+        {"CS0", "cs0"}, {"CS1", "cs1"}, {"CS2", "cs2"}, {"CS3", "cs3"},
+    };
+
     // --- Мелкие строители виджетов -----------------------------------------
     // Выпадающий список строковых значений. on_change получает уже само
     // значение схемы ("pull_up"), а не индекс: вызывающий не должен знать,
@@ -248,6 +266,7 @@ void PropertiesPanel::refresh()
     else if (type_ == "uart")     buildUartForm(layout, instance_);
     else if (type_ == "timer16")  buildTimer16Form(layout, instance_);
     else if (type_ == "i2c")      buildI2cForm(layout, instance_);
+    else if (type_ == "spi")      buildSpiForm(layout, instance_);
 }
 
 void PropertiesPanel::buildDisabledPlaceholder(QVBoxLayout* layout, int instance)
@@ -832,6 +851,165 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
     connect(disable, &QPushButton::clicked, this, [this, instance]()
     {
         document_->removeBlocks("i2c", instance);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
+{
+    const std::vector<int> indices = document_->blockIndices("spi", instance);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString("<b>SPI_%1</b>").arg(instance));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    const std::string mode = document_->field(block_index, "mode").is_string()
+        ? document_->field(block_index, "mode").get<std::string>() : "master";
+
+    form->addRow(QString::fromUtf8("Режим:"), stringCombo(
+        {{"Ведущий (master)", "master"}, {"Ведомый (slave)", "slave"}}, mode,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "mode", value);
+            // master-поля (baud_rate_div/manual_cs/decoder/chip_select)
+            // реальный HAL для slave не читает вовсе (mik32_hal_spi.c,
+            // HAL_SPI_Init:232-241) — при переходе на master подставляем те
+            // же значения, что и в defaultBlock (project_document.cpp), а не
+            // оставляем блок без обязательных полей до перезаполнения руками.
+            if (value == "master" && !document_->field(block_index, "chip_select").is_string())
+            {
+                document_->setField(block_index, "baud_rate_div", 64);
+                document_->setField(block_index, "manual_cs", false);
+                document_->setField(block_index, "decoder", false);
+                document_->setField(block_index, "chip_select", "cs0");
+            }
+            emit documentChanged();
+            refresh();
+        }));
+
+    const std::string clk_phase = document_->field(block_index, "clk_phase").is_string()
+        ? document_->field(block_index, "clk_phase").get<std::string>() : "on";
+    form->addRow(QString::fromUtf8("Фаза такта (CPHA):"), stringCombo(
+        kSpiClkPhases, clk_phase,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "clk_phase", value);
+            emit documentChanged();
+        }));
+
+    const std::string clk_polarity = document_->field(block_index, "clk_polarity").is_string()
+        ? document_->field(block_index, "clk_polarity").get<std::string>() : "high";
+    form->addRow(QString::fromUtf8("Полярность такта (CPOL):"), stringCombo(
+        kSpiClkPolarities, clk_polarity,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "clk_polarity", value);
+            emit documentChanged();
+        }));
+
+    QSpinBox* threshold = new QSpinBox();
+    // 0-8: mik32_hal_spi.c, HAL_SPI_Init — единственная явная граница
+    // (ThresholdTX > 8 -> HAL_ERROR), см. parser/spi/spi_parser.cpp.
+    threshold->setRange(0, 8);
+    const nlohmann::json threshold_value = document_->field(block_index, "threshold_tx");
+    threshold->setValue(threshold_value.is_number_integer() ? threshold_value.get<int>() : 4);
+    connect(threshold, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    {
+        document_->setField(block_index, "threshold_tx", value);
+        emit documentChanged();
+    });
+    form->addRow(QString::fromUtf8("Порог TX FIFO:"), threshold);
+    document_->setField(block_index, "threshold_tx", threshold->value());
+
+    if (mode == "master")
+    {
+        const nlohmann::json div = document_->field(block_index, "baud_rate_div");
+        form->addRow(QString::fromUtf8("Делитель частоты:"), intCombo(
+            kSpiBaudRateDivs, "", div.is_number_integer() ? div.get<int>() : 64,
+            [this, block_index](int value)
+            {
+                document_->setField(block_index, "baud_rate_div", value);
+                emit documentChanged();
+            }));
+
+        QCheckBox* manual_cs = new QCheckBox(QString::fromUtf8("Ручное управление CS"));
+        manual_cs->setChecked(document_->field(block_index, "manual_cs").is_boolean()
+            && document_->field(block_index, "manual_cs").get<bool>());
+        connect(manual_cs, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setField(block_index, "manual_cs", checked);
+            emit documentChanged();
+            refresh();  // может появиться/исчезнуть предупреждение об Errata п.7.1
+        });
+        form->addRow(QString(), manual_cs);
+
+        QCheckBox* decoder = new QCheckBox(QString::fromUtf8("Внешний дешифратор CS"));
+        decoder->setChecked(document_->field(block_index, "decoder").is_boolean()
+            && document_->field(block_index, "decoder").get<bool>());
+        connect(decoder, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setField(block_index, "decoder", checked);
+            emit documentChanged();
+        });
+        form->addRow(QString(), decoder);
+
+        const std::string chip_select = document_->field(block_index, "chip_select").is_string()
+            ? document_->field(block_index, "chip_select").get<std::string>() : "cs0";
+        form->addRow(QString::fromUtf8("Выбор ведомого (CS):"), stringCombo(
+            kSpiChipSelects, chip_select,
+            [this, block_index](const std::string& value)
+            {
+                document_->setField(block_index, "chip_select", value);
+                emit documentChanged();
+                refresh();  // может появиться/исчезнуть предупреждение об Errata п.7.1
+            }));
+
+        // Errata MIK32V2 v1.0.1 §7.1 — тот же порог, что в project_document.cpp
+        // (validate()) и codegen/project/spi_contribution.cpp (errata_7_1_applies).
+        if (instance == 0 && !manual_cs->isChecked() && chip_select == "cs3")
+        {
+            QLabel* errata = new QLabel(QString::fromUtf8(
+                "⚠ Errata п. 7.1: на SPI_0 в автоматическом режиме CS3 дублирует CS2. "
+                "Включите «Ручное управление CS» для реальной работы с 4-м ведомым."));
+            errata->setWordWrap(true);
+            layout->addWidget(errata);
+        }
+    }
+
+    layout->addWidget(box);
+
+    auto fixed = knowledge_->spi.instance_fixed_pins.find(instance);
+    if (fixed != knowledge_->spi.instance_fixed_pins.end() && !fixed->second.empty())
+    {
+        QString pins_text = QString::fromUtf8("Выводы SCK/MOSI/MISO/SS_IN (фиксированы аппаратно): ");
+        for (size_t i = 0; i < fixed->second.size(); ++i)
+        {
+            if (i > 0)
+            {
+                pins_text += ", ";
+            }
+            pins_text += QString("GPIO_%1.%2")
+                             .arg(fixed->second[i].gpio_instance).arg(fixed->second[i].pin);
+        }
+        QLabel* pins = new QLabel(pins_text);
+        pins->setWordWrap(true);
+        pins->setEnabled(false);
+        layout->addWidget(pins);
+    }
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this, instance]()
+    {
+        document_->removeBlocks("spi", instance);
         emit documentChanged();
         refresh();
     });
