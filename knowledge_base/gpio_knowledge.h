@@ -37,6 +37,17 @@ struct GpioKnowledge
     std::map<std::string, std::string> mode_hal_enum;
     std::map<std::string, std::string> pull_hal_enum;
     std::map<std::string, std::string> drive_strength_hal_enum;
+
+    // "low"/"high"/"falling"/"rising"/"change" -> имя HAL enum'а
+    // HAL_GPIO_InterruptMode (ТЗ §3.1.2 п.5).
+    std::map<std::string, std::string> trigger_hal_enum;
+
+    // "<gpio_instance>_<pin>_<line>" -> имя enum-константы
+    // HAL_GPIO_Line_Config, например "GPIO_MUX_PORT0_6_LINE_2". Не каждая
+    // комбинация (pin, line) существует физически — отсутствие ключа
+    // означает недопустимую комбинацию (см. _comment_irq_mux_enum в
+    // knowledge_base/gpio.json).
+    std::map<std::string, std::string> irq_mux_enum;
 };
 
 ParseResult<GpioKnowledge> loadGpioKnowledge(const std::string& file_path);

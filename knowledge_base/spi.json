@@ -1,0 +1,64 @@
+{
+  "_comment_scope": "Минимальный knowledge_base под HAL-уровень кодогенерации SPI (см. docs/implementations/spi.md), по образцу knowledge_base/i2c.json. ТЗ по SPI не содержит отдельного раздела — источники: docs/MIK32_REFERENCE.md §4 (SPI), datasheet стр. 160-172 и реальный HAL (docs/examples/mik32-hal/peripherals/{Include,Source}/mik32_hal_spi.{h,c} — проверено идентично установленному ~/.platformio/packages/framework-mik32v2-sdk).",
+
+  "peripheral": "spi",
+
+  "max_instances": 2,
+  "_comment_max_instances": "mik32_hal_spi.c, HAL_SPI_MspInit (строки 12,53): два блока SPI_0/SPI_1.",
+
+  "instance_handle": {
+    "0": "SPI_0",
+    "1": "SPI_1"
+  },
+  "_comment_instance_handle": "mik32_hal_spi.c, HAL_SPI_MspInit: switch по hspi->Instance сравнивает именно с SPI_0/SPI_1.",
+
+  "instance_fixed_pins": {
+    "0": [
+      { "gpio_instance": 0, "pin": 0, "role": "sck" },
+      { "gpio_instance": 0, "pin": 1, "role": "mosi" },
+      { "gpio_instance": 0, "pin": 2, "role": "miso" },
+      { "gpio_instance": 0, "pin": 3, "role": "ss_in" }
+    ],
+    "1": [
+      { "gpio_instance": 1, "pin": 0, "role": "sck" },
+      { "gpio_instance": 1, "pin": 1, "role": "mosi" },
+      { "gpio_instance": 1, "pin": 2, "role": "miso" },
+      { "gpio_instance": 1, "pin": 3, "role": "ss_in" }
+    ]
+  },
+  "_comment_instance_fixed_pins": "mik32_hal_spi.c, HAL_SPI_MspInit: SPI_0 -> GPIO_0 (GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2, строка 16) в HAL_GPIO_MODE_SERIAL плюс отдельно GPIO_PIN_3 (n_ss_in, строка 45); SPI_1 -> тот же паттерн на GPIO_1 (строки 57, 82). Роли SCK/MOSI/MISO — порядок бит в маске GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2 не гарантирует физического соответствия конкретному имени сигнала (тот же случай неразличимости, что и SDA/SCL в knowledge_base/i2c.json), поэтому роль здесь — ярлык для читаемости комментариев кодогена, а не подтверждённый факт распиновки; для валидации конфликтов (validation/cross_module_validator.cpp) важен только сам факт занятости пина, не его роль. Эти 4 пина резервируются ВСЕГДА при включении instance, независимо от mode (master/slave) — HAL_SPI_MspInit вызывается безусловно из HAL_SPI_Init и не смотрит на Init.SPI_Mode при настройке SCK/MOSI/MISO/SS_IN.",
+
+  "instance_chip_select_pin": {
+    "0": {
+      "cs0": { "gpio_instance": 0, "pin": 4 },
+      "cs1": { "gpio_instance": 1, "pin": 14 },
+      "cs2": { "gpio_instance": 1, "pin": 15 },
+      "cs3": { "gpio_instance": 2, "pin": 6 }
+    },
+    "1": {
+      "cs0": { "gpio_instance": 1, "pin": 4 },
+      "cs1": { "gpio_instance": 1, "pin": 5 },
+      "cs2": { "gpio_instance": 1, "pin": 6 },
+      "cs3": { "gpio_instance": 1, "pin": 7 }
+    }
+  },
+  "_comment_instance_chip_select_pin": "mik32_hal_spi.c, HAL_SPI_MspInit: switch(hspi->Init.ChipSelect) — SPI_0: CS_0->GPIO_0/PIN_4 (строка 24), CS_1->GPIO_1/PIN_14 (строка 29), CS_2->GPIO_1/PIN_15 (строка 34), CS_3->GPIO_2/PIN_6 (строка 39). SPI_1: CS_0->GPIO_1/PIN_4 (строка 65), CS_1->GPIO_1/PIN_5 (строка 69), CS_2->GPIO_1/PIN_6 (строка 73), CS_3->GPIO_1/PIN_7 (строка 77). ВАЖНО: этот пин резервируется, ТОЛЬКО когда mode=master — в реальном вендорном примере HAL_SPI_Slave (docs/examples/mik32-examples/HAL_SPI_Slave/src/main.c) поле Init.ChipSelect никогда не заполняется (остаётся 0 от статической zero-инициализации), это значение не совпадает ни с одной веткой switch (SPI_CS_0..3 = 0b1110..0b0111), поэтому для slave HAL_GPIO_Init вызывается с Pin=0 — пустая маска, ни один вывод физически не занимается. Кодоген (codegen/project/spi_contribution.cpp) и cross_module_validator это отражают: заявка на CS-пин формируется только при mode=master.",
+
+  "clock_enable_macro": {
+    "0": "__HAL_PCC_SPI_0_CLK_ENABLE",
+    "1": "__HAL_PCC_SPI_1_CLK_ENABLE"
+  },
+  "_comment_clock_enable_macro": "mik32_hal_spi.c, HAL_SPI_MspInit: строки 14, 55. Как и в UART/I2C, кодогену вызывать вручную не нужно — HAL_SPI_Init сам вызывает его внутри HAL_SPI_MspInit вместе с настройкой SCK/MOSI/MISO/SS_IN в serial-режим — тот же 'single call covers clock and pin mux' принцип. Указано здесь для полноты.",
+
+  "call_shape": {
+    "single_call_covers_clock_and_pin_mux": true
+  },
+
+  "not_covered_by_this_codegen": {
+    "errata_7_1": "Errata MIK32V2 v1.0.1 §7.1 «Автоматический выбор ведомых SPI0»: в автоматическом режиме (MANUAL_CS=0) на SPI_0 вывод SPI0_n_ss_out_3 не работает и дублирует SPI0_n_ss_out_2 — 4-й CS в этой комбинации физически не отличим от 3-го. Обход по errata — ручное управление CS через GPIO (manual_cs=true), а не через встроенный декодер/авто-CS. Конфигуратор не блокирует комбинацию instance=0+mode=master+manual_cs=false+chip_select=cs3 (Ошибка была бы избыточна — ситуация из Errata по конвенции проекта classифицируется как Предупреждение), но помечает её комментарием в сгенерированном коде.",
+    "errata_7_2": "Errata MIK32V2 v1.0.1 §7.2 «Режим ведущего устройства»: если во время обмена вывод SPIx_n_ss_in не в режиме SPI, возникает ложный MODE_FAIL. Обход уже встроен в реальный HAL_SPI_MspInit безусловно (mik32_hal_spi.c:44-50/82-87 — Pull=HAL_GPIO_PULL_UP на n_ss_in автоматически при SPI_Mode==MASTER), поэтому кодоген не требует отдельного действия — HAL_SPI_Init, вызываемый сгенерированным кодом, уже покрывает этот errata-пункт.",
+    "data_size_field": "SPI_DATASIZE_8/16/24/32BITS определены в mik32_hal_spi.h, но поле DataSize в SPI_InitTypeDef ОТСУТСТВУЕТ (закомментировано в HAL_SPI_Init, mik32_hal_spi.c:249: '//(hspi->Init.DataSize << SPI_CONFIG_DATA_SZ_S)') — регистровый бит физически не подключён ни к одному полю Init в этой версии HAL. Не выдумываем несуществующее пользовательское поле в схеме.",
+    "delay_fields": "HAL_SPI_SetDelayBTWN/AFTER/INIT, HAL_SPI_SetSlaveIdleCounter — реальные функции HAL, не запрошены ни ТЗ (молчит), ни этой сессией — не входят в кодогенерируемый Init, доступны пользователю руками в USER CODE (как I2C_x_Reset у I2C).",
+    "interrupt_mode": "HAL_SPI_Exchange_IT / HAL_SPI_IRQHandler — вне скоупа, кодоген использует только блокирующий HAL_SPI_Exchange (как оба вендорных примера HAL_SPI_Master/HAL_SPI_Slave)."
+  }
+}

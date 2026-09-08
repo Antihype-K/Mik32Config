@@ -36,8 +36,16 @@
 //    запускается, когда остальная периферия уже настроена.
 constexpr int kInitOrderGpio = 10;
 constexpr int kInitOrderUart = 20;
+// SPI между UART и I2C: обе шинные периферии равноценны по порядку
+// относительно печати диагностики (см. обоснование I2C выше), а не друг
+// друга — значение выбрано просто чтобы оставить зазор с обеих сторон.
+constexpr int kInitOrderSpi = 25;
 constexpr int kInitOrderI2c = 30;
 constexpr int kInitOrderTimer16 = 40;
+// Timer32 после Timer16 по той же причине — начинает считать (и, при
+// сконфигурированных каналах, генерировать прерывания) сразу внутри своей
+// init-функции.
+constexpr int kInitOrderTimer32 = 50;
 
 template <typename ValueT>
 const ValueT* findOrNull(const std::map<std::string, ValueT>& map, const std::string& key)

@@ -1,0 +1,67 @@
+{
+  "_comment_scope": "Минимальный knowledge_base под HAL-уровень кодогенерации Timer32 (ТЗ §3.1.5), по образцу knowledge_base/timer16.json. Только поля, реально нужные codegen/project/timer32_contribution.cpp.",
+
+  "peripheral": "timer32",
+
+  "max_instances": 3,
+  "_comment_max_instances": "ТЗ §3.1.5: 3 модуля Timer32 (Timer32_0/1/2), подтверждено mik32_hal_timer32.h.",
+
+  "instance_handle": {
+    "0": "TIMER32_0",
+    "1": "TIMER32_1",
+    "2": "TIMER32_2"
+  },
+  "_comment_instance_handle": "docs/examples/mik32-hal/peripherals/Include/mik32_hal_timer32.h — Instance принимает указатель TIMER32_0/1/2.",
+
+  "instance_has_channels": {
+    "0": false,
+    "1": true,
+    "2": true
+  },
+  "_comment_instance_has_channels": "ТЗ §3.1.5: «Timer32_0 (шина APB_M) – базовый счётчик без режимов ШИМ, захвата и сравнения. Timer32_1 и Timer32_2 (шина APB_P) – по 4 канала ШИМ / захват / сравнение каждый». Подтверждено mik32_hal_timer32.c: HAL_Timer32_Channel_Init/Enable/Disable/OCR_Set/... — каждая возвращает HAL_ERROR немедленно, если timerChannel->TimerInstance == TIMER32_0 (строки 204-207 и далее по всем Channel_*-функциям). Читается парсером для запрета поля \"channels\" при instance=0.",
+
+  "count_mode_hal_enum": {
+    "forward": "TIMER32_COUNTMODE_FORWARD",
+    "reverse": "TIMER32_COUNTMODE_REVERSE",
+    "bidirectional": "TIMER32_COUNTMODE_BIDIRECTIONAL"
+  },
+  "_comment_count_mode_hal_enum": "mik32_hal_timer32.h, HAL_TIMER32_CountModeTypeDef (строки 36-41).",
+
+  "channel_mode_hal_enum": {
+    "pwm": "TIMER32_CHANNEL_MODE_PWM",
+    "capture": "TIMER32_CHANNEL_MODE_CAPTURE",
+    "compare": "TIMER32_CHANNEL_MODE_COMPARE"
+  },
+  "_comment_channel_mode_hal_enum": "mik32_hal_timer32.h, HAL_TIMER32_CHANNEL_ModeTypeDef (строки 61-66).",
+
+  "capture_edge_hal_enum": {
+    "rising": "TIMER32_CHANNEL_CAPTUREEDGE_RISING",
+    "falling": "TIMER32_CHANNEL_CAPTUREEDGE_FALLING"
+  },
+  "_comment_capture_edge_hal_enum": "mik32_hal_timer32.h, HAL_TIMER32_CHANNEL_CaptureEdgeTypeDef (строки 68-72).",
+
+  "sys_clk_hz": 32000000,
+  "_comment_sys_clk_hz": "ТЗ §3.1.8: HSI 32МГц — единственный источник тактирования. Clock.Source этого кодогена всегда TIMER32_SOURCE_PRESCALER (делитель от hclk, mik32_hal_timer32.h строка 28) — источники TIM1_SYS_CLK/TIM1_HCLK/TIM2_OSC32K/TIM2_LSI32K/TX_PAD не запрошены ТЗ §3.1.5 (там описаны только предделитель и режим счёта) и не введены в этот MVP-кодоген; при AHBDivider=0 в SystemClock_Config (как и у GPIO/UART/I2C/Timer16 кодогена) hclk совпадает с sys_clk. Используется для расчётного комментария freq = sys_clk_hz / (prescaler + 1) над Timer32_Init — mik32_hal_timer32.h, комментарий к полю Prescaler (строки 93-94): «Частота делится на Prescaler + 1».",
+
+  "instance_channel_fixed_pin": {
+    "1": {
+      "0": { "gpio_instance": 0, "pin": 0 },
+      "1": { "gpio_instance": 0, "pin": 1 },
+      "2": { "gpio_instance": 0, "pin": 2 },
+      "3": { "gpio_instance": 0, "pin": 3 }
+    },
+    "2": {
+      "0": { "gpio_instance": 1, "pin": 0 },
+      "1": { "gpio_instance": 1, "pin": 1 },
+      "2": { "gpio_instance": 1, "pin": 2 },
+      "3": { "gpio_instance": 1, "pin": 3 }
+    }
+  },
+  "_comment_instance_channel_fixed_pin": "ТЗ §3.1.5 явно называет как обязательный только один случай («Канал 0 модуля Timer32_1 закреплён за выводом GPIO_0/PIN_0», п.4 — автоrезервирование и конфликт-детект). Реальное железо резервирует вывод для ЛЮБОГО включённого канала, не только канала 0: mik32_hal_timer32.c, HAL_TIMER32_Channel_MspInit (строки 38-66) — switch по ChannelIndex (0..3 -> GPIO_PIN_0..3), затем HAL_GPIO_Init на GPIO_0 если TimerInstance==TIMER32_1, на GPIO_1 если TimerInstance==TIMER32_2, режим HAL_GPIO_MODE_TIMER_SERIAL. Расширение за пределы буквального текста ТЗ сделано осознанно (см. docs/implementations/timer32.md, раздел «Решения помимо буквального текста ТЗ») — иначе включение, например, канала 2 Timer32_2 создавало бы реальный физический конфликт вывода GPIO_1/PIN_2 с другим блоком, необнаруживаемый validation/cross_module_validator.cpp. Timer32_0 отсутствует в этой карте — у него нет каналов (instance_has_channels).",
+
+  "not_covered_by_this_codegen": {
+    "clock_source_alternatives": "TIMER32_SOURCE_TIM1_SYS_CLK/TIM1_HCLK/TIM2_OSC32K/TIM2_LSI32K/TX_PAD (mik32_hal_timer32.h, HAL_TIMER32_SourceTypeDef) — не запрошены ТЗ §3.1.5 (текст ограничивается предделителем и режимом счёта), зашит фиксированный TIMER32_SOURCE_PRESCALER по образцу того, как Timer16-кодоген фиксирует Trigger.Source безопасным дефолтом.",
+    "interrupt_wiring": "ТЗ §3.1.5 п.3 требует только шаблон обработчика прерывания с программным сбросом флага в начале тела функции и предупреждение об Errata п.9.1 — не полную привязку к вектору прерываний RISC-V (raw_trap_handler/HAL_EPIC_MaskLevelSet/HAL_IRQ_EnableInterrupts). Кодоген генерирует функцию-шаблон Timer32_<N>_IRQHandler в mik32_init.c (helper, не вызывается автоматически) с сообщением об этом ограничении в комментарии — пользователь подключает её к своему обработчику вручную. Тот же принцип прозрачного MVP-скоупа, что и not_covered_by_this_codegen в knowledge_base/timer16.json.",
+    "errata_9_1": "Errata MIK32V2 v1.0.1, §9.1 «Сброс флагов»: сброс IC_INT_CHx/OC_INT_CHx/UDF_INT/OVF_INT происходит в конце счёта таймера, во время которого была запись в INT_CLEAR — возможен повторный вход в обработчик при низкой частоте счёта. Полный обход по тексту errata — отключение прерывания по флагу и повторное включение в основном цикле после того как флаг был реально очищен (пример в errata использует HAL_Timer32_InterruptFlags_Get + INT_MASK toggle в trap_handler и в while(1)). ТЗ §3.1.5 п.3 требует буквально «программный сброс флага в начале тела функции» — этот кодоген реализует ровно эту часть (HAL_Timer32_InterruptFlags_Clear как первая строка шаблона), полная схема mask-disable/re-enable из errata оставлена пользователю как TODO в теле шаблона (см. docs/implementations/timer32.md)."
+  }
+}

@@ -31,6 +31,29 @@
       },
       "min_length": 1,
       "allow_duplicates": false
+    },
+    "interrupts": {
+      "type": "array",
+      "_comment": "ТЗ §3.1.2 п.5: «конфигурировать прерывания GPIO через 8 каналов контроллера GPIO IRQ (мультиплексор LINE_MUX)». Необязательное поле — блок без прерываний ничем не отличается от текущего поведения. Каждый элемент — один физический вывод этого же блока (pin должен входить в массив \"pins\" того же блока), привязанный к одному из 8 каналов (line). Не выражается декларативно в этом MVP-формате схемы (условие «pin из pins этого же блока», глобальный пул 8 line на весь конфиг) — реализовано прямо в parser/gpio/gpio_parser.cpp и codegen/project/project_config.cpp, по тому же принципу, что и условные поля schemas/i2c.json/schemas/timer32.json.",
+      "max_length": 8,
+      "item_required_fields": ["pin", "line", "trigger"],
+      "item_fields": {
+        "pin": {
+          "type": "integer",
+          "_comment": "Должен присутствовать в массиве \"pins\" этого же блока — интерпретируется как GPIO-вход, а не независимое поле."
+        },
+        "line": {
+          "type": "integer",
+          "min": 0,
+          "max": 7,
+          "_comment": "ТЗ §3.1.2 п.5: «8 каналов контроллера GPIO IRQ». mik32_hal_gpio.h, HAL_GPIO_Line: GPIO_LINE_0..7."
+        },
+        "trigger": {
+          "type": "enum",
+          "values": ["low", "high", "falling", "rising", "change"],
+          "_comment": "mik32_hal_gpio.h, HAL_GPIO_InterruptMode: GPIO_INT_MODE_LOW/HIGH/FALLING/RISING/CHANGE."
+        }
+      }
     }
   }
 }

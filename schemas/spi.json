@@ -1,0 +1,52 @@
+{
+  "peripheral_type": "spi",
+  "max_instances": 2,
+  "_comment_max_instances": "docs/examples/mik32-hal/peripherals/Include/mik32_hal_spi.c, HAL_SPI_MspInit: switch по hspi->Instance сравнивает только с SPI_0/SPI_1 — третьего блока нет. ТЗ (docs/Приложение_А_Техническое_задание_МИК32.docx) не содержит отдельного раздела по SPI — только упоминание 'SPI_0-1' в дереве GUI §3.1.9 п.3, поэтому вся схема ниже построена по реальному HAL (mik32_hal_spi.h/.c) и datasheet (docs/MIK32_REFERENCE.md, §4 SPI), не по ТЗ — тот же прецедент, что и I2C (см. schemas/i2c.json).",
+  "required_fields": ["type", "instance", "mode", "clk_phase", "clk_polarity", "threshold_tx"],
+  "fields": {
+    "instance": {
+      "type": "integer",
+      "min": 0,
+      "max": 1
+    },
+    "mode": {
+      "type": "enum",
+      "values": ["master", "slave"],
+      "_comment": "mik32_hal_spi.h, HAL_SPI_ModeTypeDef. Определяет и то, какие поля обязательны ниже: baud_rate_div/manual_cs/decoder/chip_select читаются только SPI_config-веткой master (mik32_hal_spi.c, HAL_SPI_Init:232-241) — реальные вендорные примеры HAL_SPI_Master и HAL_SPI_Slave их и заполняют/не заполняют именно по этому признаку (SPI0_Init в обоих примерах, main.c)."
+    },
+    "clk_phase": {
+      "type": "enum",
+      "values": ["off", "on"],
+      "_comment": "SPI_PHASE_OFF/SPI_PHASE_ON (mik32_hal_spi.h:41-43). Общее поле для master и slave — CONFIG.CLK_PH пишется в HAL_SPI_Init безусловно (mik32_hal_spi.c:246)."
+    },
+    "clk_polarity": {
+      "type": "enum",
+      "values": ["low", "high"],
+      "_comment": "SPI_POLARITY_LOW/SPI_POLARITY_HIGH (mik32_hal_spi.h:45-47). Общее для master/slave, как и clk_phase."
+    },
+    "threshold_tx": {
+      "type": "integer",
+      "min": 0,
+      "max": 8,
+      "_comment": "mik32_hal_spi.c, HAL_SPI_Init:270-275 — единственная явная граница, реально проверяемая в HAL: 'if (ThresholdTX > 8) return HAL_ERROR'. Общее поле для master/slave (оба вендорных примера SPI0_Init задают его безусловно, =4)."
+    },
+    "baud_rate_div": {
+      "type": "enum_int",
+      "values": [4, 8, 16, 32, 64, 128, 256],
+      "_comment": "Только для mode=master. SPI_BAUDRATE_DIV4..DIV256 (mik32_hal_spi.h:28-35) — семь ступеней деления spi_ref_clk. HAL_SPI_Slave (docs/examples/mik32-examples/HAL_SPI_Slave/src/main.c) вообще не трогает Init.BaudRateDiv — ведомый не генерирует SCLK."
+    },
+    "manual_cs": {
+      "type": "boolean",
+      "_comment": "Только для mode=master. SPI_MANUALCS_OFF(false)/SPI_MANUALCS_ON(true) (mik32_hal_spi.h:38-39). Для slave HAL_SPI_Init сам принудительно выставляет ManualCS=SPI_MANUALCS_OFF (mik32_hal_spi.c:239) независимо от того, что было в структуре — конфигурировать это поле для slave бессмысленно, поэтому оно не запрашивается."
+    },
+    "decoder": {
+      "type": "boolean",
+      "_comment": "Только для mode=master. SPI_DECODER_NONE(false)/SPI_DECODER_USE(true) (mik32_hal_spi.h:49-51) — использование внешнего дешифратора для выбора ведомого."
+    },
+    "chip_select": {
+      "type": "enum",
+      "values": ["cs0", "cs1", "cs2", "cs3"],
+      "_comment": "Только для mode=master. SPI_CS_0..SPI_CS_3 (mik32_hal_spi.h:22-26). Определяет физический вывод CS в HAL_SPI_MspInit (mik32_hal_spi.c:21-42/62-79) НЕЗАВИСИМО от manual_cs — в ручном режиме это поле всё равно задаёт, какой вывод MspInit сконфигурирует под управление вручную через HAL_SPI_CS_Enable. ⚠ Errata MIK32V2 v1.0.1 §7.1: на SPI_0 в автоматическом режиме (manual_cs=false) chip_select=cs3 дублирует cs2 (SPI0_n_ss_out_3 не работает) — конфигуратор не блокирует эту комбинацию (ситуации из Errata — Предупреждение, не Ошибка), но помечает её комментарием в сгенерированном коде (см. codegen/project/spi_contribution.cpp)."
+    }
+  }
+}

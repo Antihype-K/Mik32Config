@@ -63,7 +63,30 @@
   },
   "_comment_call_shape": "docs/examples/mik32-hal/peripherals/Source/mik32_hal_usart.c, строки 10-57: HAL_USART_Init сам включает тактирование нужного instance и сам настраивает TX/RX (и RTS/CTS, если включены) пины в HAL_GPIO_MODE_SERIAL — по аналогии с тем, как HAL_GPIO_Init сам объединяет GPIO+PAD_CONFIG (см. knowledge_base/gpio.json, call_shape). Кодоген строит один USART_HandleTypeDef и делает один вызов HAL_USART_Init, ничего не настраивая вручную через HAL_GPIO_*.",
 
+  "dma_request_enum": {
+    "0": "DMA_CHANNEL_USART_0_REQUEST",
+    "1": "DMA_CHANNEL_USART_1_REQUEST"
+  },
+  "_comment_dma_request_enum": "mik32_hal_dma.h, HAL_DMA_ChannelRequestTypeDef (строки 90-111): DMA_CHANNEL_USART_0_REQUEST=0, DMA_CHANNEL_USART_1_REQUEST=1 — линия запроса ПДП, привязанная к конкретному instance USART, используется и для Read-, и для Write-стороны канала при настройке DMA под этот UART (см. docs/examples/mik32-examples/HAL_USART_DMA/src/main.c, строки 92/99 — оба поля ReadRequest/WriteRequest установлены в один и тот же DMA_CHANNEL_USART_0_REQUEST).",
+
+  "dma_channel_hal_enum": {
+    "0": "DMA_CHANNEL_0",
+    "1": "DMA_CHANNEL_1",
+    "2": "DMA_CHANNEL_2",
+    "3": "DMA_CHANNEL_3"
+  },
+  "_comment_dma_channel_hal_enum": "mik32_hal_dma.h, HAL_DMA_ChannelIndexTypeDef.",
+
+  "dma_element_size_hal_enum": {
+    "byte": "DMA_CHANNEL_SIZE_BYTE",
+    "halfword": "DMA_CHANNEL_SIZE_HALFWORD",
+    "word": "DMA_CHANNEL_SIZE_WORD"
+  },
+  "_comment_dma_element_size_hal_enum": "mik32_hal_dma.h, HAL_DMA_ChannelSizeTypeDef.",
+
   "not_covered_by_this_codegen": {
-    "synchronous_mode_errata": "Errata MIK32V2 v1.0.1, раздел 10.1 «Сигнал CK в USART1», с.23: при синхронном режиме (CONTROL2.CLKEN=1), выключенном контроле чётности и PORT2_6 в режиме UART1_ck вырабатывается непрекращающийся сигнал CK без возможности обхода. PORT2_6 — тот же физический пин, где на 1T Rex Board распаян встроенный светодиод (см. docs/implementations/gpio.md, раздел 7) — включение синхронного режима UART1 сломало бы индикацию платы. Эта сессия генерирует только Asynchronous_Mode, поэтому errata не активируется, но это должно быть учтено при добавлении синхронного режима в будущем."
+    "synchronous_mode_errata": "Errata MIK32V2 v1.0.1, раздел 10.1 «Сигнал CK в USART1», с.23: при синхронном режиме (CONTROL2.CLKEN=1), выключенном контроле чётности и PORT2_6 в режиме UART1_ck вырабатывается непрекращающийся сигнал CK без возможности обхода. PORT2_6 — тот же физический пин, где на 1T Rex Board распаян встроенный светодиод (см. docs/implementations/gpio.md, раздел 7) — включение синхронного режима UART1 сломало бы индикацию платы. Эта сессия генерирует только Asynchronous_Mode, поэтому errata не активируется, но это должно быть учтено при добавлении синхронного режима в будущем.",
+    "dma_circular_buffer": "ТЗ §3.1.3.3 просит настраивать «тип буфера (линейный/кольцевой)», но реальный HAL (mik32_hal_dma.h/.c) не содержит понятия кольцевого буфера вообще — HAL_DMA_Start всегда одноразовая передача (docs/examples/mik32-examples/HAL_USART_DMA/src/main.c вызывает её заново из главного цикла на каждой итерации). Circular в этом кодогене генерирует только явный комментарий-TODO о необходимости повторного вызова стартовой функции из обработчика прерывания DMA (HAL_DMA_LocalIRQEnable/HAL_DMA_GetChannelIrq) — самого зацикливания кодоген не реализует, см. docs/implementations/dma.md.",
+    "dma_priority_and_ack": "DMA_ChannelInitHandleTypeDef.Priority/ReadAck/WriteAck/ReadBurstSize/WriteBurstSize не запрошены ТЗ §3.1.3.3 (там только channel/direction/buffer_type/buffer_size_bytes/element_size/increment) — зашиты безопасными дефолтами по образцу docs/examples/mik32-examples/HAL_USART_DMA: Priority=VERY_HIGH, BurstSize=0, Ack — DISABLE на стороне MEMORY и ENABLE на стороне PERIPHERY (Ack предназначен для работы с откликом Timer32, но вендорный пример включает его на периферийной стороне и для USART — оставлено по образцу примера, не изобретено)."
   }
 }

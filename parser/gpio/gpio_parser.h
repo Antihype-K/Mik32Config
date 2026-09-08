@@ -12,6 +12,13 @@
 
 
 
+struct GpioInterruptConfig
+{
+    uint8_t pin;         // должен входить в GpioConfig::pins того же блока
+    int line;            // 0-7 — канал контроллера GPIO IRQ (ТЗ §3.1.2 п.5)
+    std::string trigger; // "low" | "high" | "falling" | "rising" | "change"
+};
+
 struct GpioConfig
 {
     std::string type;
@@ -20,6 +27,9 @@ struct GpioConfig
     std::string pull;
     std::string drive_strength;
     std::vector<uint8_t> pins;
+    // Пусто, если у блока нет ни одного настроенного прерывания (обычный
+    // случай) — ТЗ §3.1.2 п.5.
+    std::vector<GpioInterruptConfig> interrupts;
 };
 
 ParseResult<GpioConfig> parseGpioConfig(const std::string& file_name_path);

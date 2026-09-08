@@ -37,11 +37,13 @@
 #include "uart_knowledge.h"
 #include "timer16_knowledge.h"
 #include "i2c_knowledge.h"
+#include "timer32_knowledge.h"
+#include "spi_knowledge.h"
 #include "parse_result.h"
 #include "codegen_result.h"
 
-// Все четыре базы знаний передаются всегда, даже если соответствующей
-// периферии в конфиге нет: их загрузка — дело вызывающего (одна точка чтения
+// Все базы знаний передаются всегда, даже если соответствующей периферии в
+// конфиге нет: их загрузка — дело вызывающего (одна точка чтения
 // knowledge_base/*.json), а не сборщика, и они всё равно нужны целиком для
 // кросс-модульной валидации пинов.
 struct ProjectKnowledge
@@ -50,6 +52,8 @@ struct ProjectKnowledge
     UartKnowledge uart;
     Timer16Knowledge timer16;
     I2cKnowledge i2c;
+    Timer32Knowledge timer32;
+    SpiKnowledge spi;
 };
 
 struct GeneratedProjectFirmware

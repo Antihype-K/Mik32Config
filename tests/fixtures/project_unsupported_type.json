@@ -11,7 +11,7 @@
       "pins": [3]
     },
     {
-      "type": "spi",
+      "type": "timing",
       "instance": 0
     }
   ]

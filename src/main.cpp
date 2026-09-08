@@ -23,11 +23,13 @@
 #include "uart_knowledge.h"
 #include "timer16_knowledge.h"
 #include "i2c_knowledge.h"
+#include "timer32_knowledge.h"
+#include "spi_knowledge.h"
 #include "cross_module_validator.h"
 
 namespace
 {
-    // Все четыре базы знаний читаются всегда, независимо от содержимого
+    // Все шесть баз знаний читаются всегда, независимо от содержимого
     // конфига: кросс-модульная валидация пинов (ТЗ §3.1.6.2) обходит блоки
     // всех типов сразу и не может работать с частично загруженной базой.
     bool loadAllKnowledge(ProjectKnowledge& knowledge)
@@ -56,11 +58,25 @@ namespace
             std::cerr << "Ошибка knowledge_base/i2c.json: " << i2c.error << "\n";
             return false;
         }
+        ParseResult<Timer32Knowledge> timer32 = loadTimer32Knowledge("knowledge_base/timer32.json");
+        if (!timer32.success)
+        {
+            std::cerr << "Ошибка knowledge_base/timer32.json: " << timer32.error << "\n";
+            return false;
+        }
+        ParseResult<SpiKnowledge> spi = loadSpiKnowledge("knowledge_base/spi.json");
+        if (!spi.success)
+        {
+            std::cerr << "Ошибка knowledge_base/spi.json: " << spi.error << "\n";
+            return false;
+        }
 
         knowledge.gpio = *gpio.config;
         knowledge.uart = *uart.config;
         knowledge.timer16 = *timer16.config;
         knowledge.i2c = *i2c.config;
+        knowledge.timer32 = *timer32.config;
+        knowledge.spi = *spi.config;
         return true;
     }
 
@@ -105,21 +121,23 @@ int main(int argc, char** argv)
     if (argc < 3)
     {
         std::cerr << "Использование: " << arguments[0]
-                  << " <путь-к-json-конфигу> <имя-проекта-в-generated_projects> [--no-demo]\n"
-                     "  --no-demo — генерировать только инициализацию периферии,\n"
-                     "              с пустым телом while(1) под маркерами USER CODE.\n";
+                  << " <путь-к-json-конфигу> <имя-проекта-в-generated_projects> [--demo]\n"
+                     "  --demo — добавить в тело while(1) демонстрационную логику\n"
+                     "           периферии (мигание, эхо по UART, сканер I2C и т.п.).\n"
+                     "           Без флага генерируется только инициализация,\n"
+                     "           с пустым телом while(1) под маркерами USER CODE.\n";
         return 1;
     }
 
     const std::string config_path = arguments[1];
     const std::string output_dir = "generated_projects/" + arguments[2];
 
-    bool emit_demo_loops = true;
+    bool emit_demo_loops = false;
     for (int i = 3; i < argc; ++i)
     {
-        if (arguments[static_cast<size_t>(i)] == "--no-demo")
+        if (arguments[static_cast<size_t>(i)] == "--demo")
         {
-            emit_demo_loops = false;
+            emit_demo_loops = true;
         }
         else
         {
@@ -147,7 +165,7 @@ int main(int argc, char** argv)
     // типов. Идёт строго после per-module валидации (шаг 1) и строго до
     // кодогенерации — порядок задан ТЗ §3.1.6.
     CrossModuleValidationResult validation =
-        validatePinConflicts(config_path, knowledge.uart, knowledge.timer16, knowledge.i2c);
+        validatePinConflicts(config_path, knowledge.uart, knowledge.timer16, knowledge.i2c, knowledge.timer32, knowledge.spi);
     if (!validation.success)
     {
         std::cerr << "Ошибка кросс-модульной валидации: " << validation.error << "\n";

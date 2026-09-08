@@ -26,6 +26,8 @@
 #include "usart_parser.h"
 #include "timer16_parser.h"
 #include "i2c_parser.h"
+#include "timer32_parser.h"
+#include "spi_parser.h"
 
 struct ProjectConfig
 {
@@ -40,6 +42,8 @@ struct ProjectConfig
     std::vector<UartConfig> uart_blocks;
     std::vector<Timer16Config> timer16_blocks;
     std::vector<I2cConfig> i2c_blocks;
+    std::vector<Timer32Config> timer32_blocks;
+    std::vector<SpiConfig> spi_blocks;
 };
 
 // Ошибка возвращается, если:
@@ -50,7 +54,7 @@ struct ProjectConfig
 //  - встретился тип периферии, для которого ещё нет парсера/кодогена
 //    (тихо игнорировать нельзя: пользователь получил бы прошивку без
 //    запрошенной периферии и без единого сообщения);
-//  - два блока uart/timer16/i2c ссылаются на один и тот же instance
+//  - два блока uart/timer16/i2c/spi ссылаются на один и тот же instance
 //    (один физический блок периферии нельзя настроить дважды двумя разными
 //    наборами параметров — это нарушение аппаратного ограничения,
 //    ТЗ §3.1.6.2). Для gpio это НЕ ошибка: несколько блоков на один

@@ -3,9 +3,9 @@
 //
 
 #include "gpio_parser.h"
-#include "utf8_path.h"
+#include "win_file_io.h"
 #include "json.hpp"
-#include <fstream>
+#include <algorithm>
 #include <set>
 
 // Концепция: правила ниже дословно повторяют schemas/gpio.json (записан
@@ -39,6 +39,14 @@ namespace
         "2mA", "4mA", "8mA"
     };
 
+    // ТЗ §3.1.2 п.5: «8 каналов контроллера GPIO IRQ». mik32_hal_gpio.h,
+    // HAL_GPIO_InterruptMode: GPIO_INT_MODE_LOW/HIGH/FALLING/RISING/CHANGE.
+    const std::set<std::string> kValidTriggers = {
+        "low", "high", "falling", "rising", "change"
+    };
+    constexpr int kMinLine = 0;
+    constexpr int kMaxLine = 7;
+
     // Датащит, Таблица 2, с.11-12: в карте памяти перечислены ровно три блока
     // GPIO (GPIO_0/1/2) — четвёртого адреса в этой шине нет.
     constexpr int kMinInstance = 0;
@@ -71,16 +79,16 @@ ParseResult<GpioConfig> parseGpioConfig(const std::string& file_name_path)
     // передаём путь напрямую в nlohmann::json), чтобы отличить "файла нет"
     // от "файл есть, но в нём невалидный JSON" — это два разных, отдельно
     // диагностируемых случая для пользователя конфигуратора.
-    std::ifstream input_file(utf8Path(file_name_path));
-    if (!input_file.is_open())
+    const FileReadOutcome file = readUtf8PathFile(file_name_path);
+    if (!file.success)
     {
-        return makeError("Не удалось открыть файл конфигурации: " + file_name_path);
+        return makeError("Не удалось открыть файл конфигурации: " + file_name_path + file.diagnostic);
     }
 
     nlohmann::json root;
     try
     {
-        input_file >> root;
+        root = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {
@@ -197,7 +205,90 @@ ParseResult<GpioConfig> parseGpioBlock(const nlohmann::json& gpio)
     config.mode = gpio["mode"].get<std::string>();
     config.pull = gpio["pull"].get<std::string>();
     config.drive_strength = gpio["drive_strength"].get<std::string>();
-    config.pins = std::move(pins);
+    config.pins = pins;
+
+    // ТЗ §3.1.2 п.5 — необязательное поле, отсутствие ничего не меняет
+    // в поведении блока (обычный случай).
+    if (gpio.contains("interrupts"))
+    {
+        if (!gpio["interrupts"].is_array())
+        {
+            return makeError("Поле \"interrupts\" должно быть массивом");
+        }
+        if (gpio["interrupts"].size() > 8)
+        {
+            return makeError("Поле \"interrupts\" содержит больше 8 элементов (у контроллера GPIO IRQ ровно 8 каналов)");
+        }
+
+        std::set<int> seen_lines;
+        std::set<int> seen_interrupt_pins;
+        for (size_t i = 0; i < gpio["interrupts"].size(); ++i)
+        {
+            const nlohmann::json& irq = gpio["interrupts"][i];
+            const std::string prefix = "Прерывание #" + std::to_string(i + 1) + ": ";
+
+            for (const char* field : {"pin", "line", "trigger"})
+            {
+                if (!irq.contains(field))
+                {
+                    return makeError(prefix + "отсутствует обязательное поле \"" + field + "\"");
+                }
+            }
+
+            if (!irq["pin"].is_number_integer())
+            {
+                return makeError(prefix + "поле \"pin\" должно быть целым числом");
+            }
+            const int irq_pin = irq["pin"].get<int>();
+            // Прерывание конфигурируется на вывод, который этот же блок уже
+            // объявил как GPIO (мультиплексор LINE_MUX подключается к
+            // физическому выводу, а не к абстрактному номеру) — pin должен
+            // быть частью pins[] этого же блока, а не произвольным числом.
+            if (std::find(pins.begin(), pins.end(), static_cast<uint8_t>(irq_pin)) == pins.end())
+            {
+                return makeError(prefix + "pin " + std::to_string(irq_pin)
+                    + " не входит в массив \"pins\" этого же блока");
+            }
+
+            if (!irq["line"].is_number_integer())
+            {
+                return makeError(prefix + "поле \"line\" должно быть целым числом");
+            }
+            const int line = irq["line"].get<int>();
+            if (line < kMinLine || line > kMaxLine)
+            {
+                return makeError(prefix + "поле \"line\" вне диапазона 0-7 (8 каналов GPIO IRQ)");
+            }
+
+            if (!irq["trigger"].is_string() || !kValidTriggers.count(irq["trigger"].get<std::string>()))
+            {
+                return makeError(prefix + "поле \"trigger\" содержит недопустимое значение "
+                    "(разрешены low, high, falling, rising, change)");
+            }
+
+            // В пределах ОДНОГО блока: один физический вывод не может быть
+            // источником двух разных линий одновременно, и одна линия не
+            // может слушать два разных вывода одновременно (регистр
+            // LINE_MUX хранит ровно один источник на канал). Конфликт МЕЖДУ
+            // блоками/типами периферии (глобальный пул из 8 каналов на весь
+            // конфиг) проверяется позже, в project_config.cpp — здесь
+            // виден только один блок.
+            if (!seen_lines.insert(line).second)
+            {
+                return makeError(prefix + "line " + std::to_string(line) + " уже занята другим прерыванием этого же блока");
+            }
+            if (!seen_interrupt_pins.insert(irq_pin).second)
+            {
+                return makeError(prefix + "pin " + std::to_string(irq_pin) + " уже привязан к другой линии в этом же блоке");
+            }
+
+            GpioInterruptConfig interrupt_config;
+            interrupt_config.pin = static_cast<uint8_t>(irq_pin);
+            interrupt_config.line = line;
+            interrupt_config.trigger = irq["trigger"].get<std::string>();
+            config.interrupts.push_back(interrupt_config);
+        }
+    }
 
     return ParseResult<GpioConfig>{true, "", config};
 }

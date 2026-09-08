@@ -50,6 +50,14 @@ struct UartKnowledge
     // validation/cross_module_validator.cpp для поиска конфликтов пинов
     // между GPIO-блоком и UART-инстансом (ТЗ §3.1.6.2).
     std::map<int, InstanceFixedPins> instance_fixed_pins;
+
+    // instance (0/1) -> имя HAL_DMA_ChannelRequestTypeDef, например
+    // "DMA_CHANNEL_USART_0_REQUEST" (ТЗ §3.1.3.3).
+    std::map<int, std::string> dma_request_enum;
+    // "0".."3" -> "DMA_CHANNEL_0".."DMA_CHANNEL_3".
+    std::map<std::string, std::string> dma_channel_hal_enum;
+    // "byte"/"halfword"/"word" -> HAL_DMA_ChannelSizeTypeDef.
+    std::map<std::string, std::string> dma_element_size_hal_enum;
 };
 
 ParseResult<UartKnowledge> loadUartKnowledge(const std::string& file_path);

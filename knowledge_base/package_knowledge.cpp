@@ -1,7 +1,6 @@
 #include "package_knowledge.h"
-#include "utf8_path.h"
+#include "win_file_io.h"
 #include "json.hpp"
-#include <fstream>
 
 const PackagePin* PackageKnowledge::findPin(int pin_number) const
 {
@@ -30,16 +29,16 @@ const PackagePin* PackageKnowledge::findByGpio(int gpio_instance_value, int gpio
 
 ParseResult<PackageKnowledge> loadPackageKnowledge(const std::string& file_path)
 {
-    std::ifstream input_file(utf8Path(file_path));
-    if (!input_file.is_open())
+    const FileReadOutcome file = readUtf8PathFile(file_path);
+    if (!file.success)
     {
-        return ParseResult<PackageKnowledge>{false, "Не удалось открыть knowledge_base: " + file_path, std::nullopt};
+        return ParseResult<PackageKnowledge>{false, "Не удалось открыть knowledge_base: " + file_path + file.diagnostic, std::nullopt};
     }
 
     nlohmann::json root;
     try
     {
-        input_file >> root;
+        root = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {

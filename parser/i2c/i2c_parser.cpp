@@ -1,7 +1,6 @@
 #include "i2c_parser.h"
-#include "utf8_path.h"
+#include "win_file_io.h"
 #include "json.hpp"
-#include <fstream>
 #include <set>
 
 // Концепция: как и в остальных parser/*, правила ниже дословно повторяют
@@ -32,16 +31,16 @@ namespace
 
 ParseResult<I2cConfig> parseI2cConfig(const std::string& file_name_path)
 {
-    std::ifstream input_file(utf8Path(file_name_path));
-    if (!input_file.is_open())
+    const FileReadOutcome file = readUtf8PathFile(file_name_path);
+    if (!file.success)
     {
-        return makeError("Не удалось открыть файл конфигурации: " + file_name_path);
+        return makeError("Не удалось открыть файл конфигурации: " + file_name_path + file.diagnostic);
     }
 
     nlohmann::json root;
     try
     {
-        input_file >> root;
+        root = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {

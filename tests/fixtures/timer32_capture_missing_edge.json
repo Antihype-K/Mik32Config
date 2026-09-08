@@ -1,0 +1,16 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "timer32",
+      "instance": 2,
+      "prescaler": 0,
+      "count_mode": "forward",
+      "top": 4294967295,
+      "channels": [
+        { "index": 1, "mode": "capture" }
+      ]
+    }
+  ]
+}

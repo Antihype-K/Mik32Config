@@ -1,7 +1,6 @@
 #include "cross_module_validator.h"
-#include "utf8_path.h"
+#include "win_file_io.h"
 #include "json.hpp"
-#include <fstream>
 #include <map>
 #include <sstream>
 
@@ -39,38 +38,64 @@ namespace
         owner << "I2C instance " << i2c_instance << " (SDA/SCL)";
         claims[{fixed_pin.gpio_instance, fixed_pin.pin}].push_back(owner.str());
     }
+
+    void addTimer32Claim(
+        std::map<PinKey, std::vector<std::string>>& claims,
+        const Timer32Knowledge::FixedPin& fixed_pin,
+        int timer32_instance,
+        int channel_index)
+    {
+        std::ostringstream owner;
+        owner << "Timer32 instance " << timer32_instance << " (канал " << channel_index << ")";
+        claims[{fixed_pin.gpio_instance, fixed_pin.pin}].push_back(owner.str());
+    }
+
+    void addSpiClaim(
+        std::map<PinKey, std::vector<std::string>>& claims,
+        const SpiKnowledge::FixedPin& fixed_pin,
+        int spi_instance,
+        const char* role)
+    {
+        std::ostringstream owner;
+        owner << "SPI instance " << spi_instance << " (" << role << ")";
+        claims[{fixed_pin.gpio_instance, fixed_pin.pin}].push_back(owner.str());
+    }
 }
 
 CrossModuleValidationResult validatePinConflicts(
     const std::string& config_path,
     const UartKnowledge& uart_knowledge,
     const Timer16Knowledge& timer16_knowledge,
-    const I2cKnowledge& i2c_knowledge)
+    const I2cKnowledge& i2c_knowledge,
+    const Timer32Knowledge& timer32_knowledge,
+    const SpiKnowledge& spi_knowledge)
 {
-    std::ifstream input_file(utf8Path(config_path));
-    if (!input_file.is_open())
+    const FileReadOutcome file = readUtf8PathFile(config_path);
+    if (!file.success)
     {
-        return CrossModuleValidationResult{false, "Не удалось открыть файл конфигурации: " + config_path, {}};
+        return CrossModuleValidationResult{false, "Не удалось открыть файл конфигурации: " + config_path + file.diagnostic, {}};
     }
 
     nlohmann::json root;
     try
     {
-        input_file >> root;
+        root = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {
         return CrossModuleValidationResult{false, std::string("Ошибка разбора JSON: ") + parse_error.what(), {}};
     }
 
-    return validatePinConflictsInDocument(root, uart_knowledge, timer16_knowledge, i2c_knowledge);
+    return validatePinConflictsInDocument(root, uart_knowledge, timer16_knowledge, i2c_knowledge, timer32_knowledge, spi_knowledge);
 }
 
 CrossModuleValidationResult validatePinConflictsInDocument(
     const nlohmann::json& root,
     const UartKnowledge& uart_knowledge,
     const Timer16Knowledge& timer16_knowledge,
-    const I2cKnowledge& i2c_knowledge)
+    const I2cKnowledge& i2c_knowledge,
+    const Timer32Knowledge& timer32_knowledge,
+    const SpiKnowledge& spi_knowledge)
 {
     if (!root.contains("peripherals") || !root["peripherals"].is_array())
     {
@@ -190,6 +215,73 @@ CrossModuleValidationResult validatePinConflictsInDocument(
             for (const I2cKnowledge::FixedPin& pin : fixed_pins_it->second)
             {
                 addI2cClaim(claims, pin, instance);
+            }
+        }
+        else if (type == "timer32")
+        {
+            if (!peripheral.contains("instance") || !peripheral["instance"].is_number_integer()
+                || !peripheral.contains("channels") || !peripheral["channels"].is_array())
+            {
+                continue;  // без channels нечего резервировать; instance=0 сюда и не попадёт по схеме.
+            }
+            const int instance = peripheral["instance"].get<int>();
+            auto instance_map_it = timer32_knowledge.instance_channel_fixed_pin.find(instance);
+            if (instance_map_it == timer32_knowledge.instance_channel_fixed_pin.end())
+            {
+                continue;  // Timer32_0 или невалидный instance — parseTimer32Config это отловит раньше.
+            }
+            for (const auto& channel : peripheral["channels"])
+            {
+                if (!channel.contains("index") || !channel["index"].is_number_integer())
+                {
+                    continue;
+                }
+                const int channel_index = channel["index"].get<int>();
+                auto fixed_pin_it = instance_map_it->second.find(channel_index);
+                if (fixed_pin_it == instance_map_it->second.end())
+                {
+                    continue;  // невалидный index — parseTimer32Config это отловит раньше.
+                }
+                addTimer32Claim(claims, fixed_pin_it->second, instance, channel_index);
+            }
+        }
+        else if (type == "spi")
+        {
+            if (!peripheral.contains("instance") || !peripheral["instance"].is_number_integer())
+            {
+                continue;
+            }
+            const int instance = peripheral["instance"].get<int>();
+            auto fixed_pins_it = spi_knowledge.instance_fixed_pins.find(instance);
+            if (fixed_pins_it == spi_knowledge.instance_fixed_pins.end())
+            {
+                continue;  // невалидный instance — parseSpiConfig это отловит раньше.
+            }
+            // SCK/MOSI/MISO/SS_IN заняты всегда, независимо от mode —
+            // HAL_SPI_MspInit настраивает их безусловно (knowledge_base/
+            // spi.json, _comment_instance_fixed_pins).
+            for (const SpiKnowledge::FixedPin& pin : fixed_pins_it->second)
+            {
+                addSpiClaim(claims, pin, instance, "SCK/MOSI/MISO/SS_IN");
+            }
+
+            // CS-пин заявляется только для mode=master — у slave поле
+            // Init.ChipSelect не заполняется реальным HAL, ни один вывод не
+            // резервируется (knowledge_base/spi.json,
+            // _comment_instance_chip_select_pin).
+            const std::string mode = peripheral.value("mode", std::string());
+            if (mode == "master" && peripheral.contains("chip_select") && peripheral["chip_select"].is_string())
+            {
+                const std::string chip_select = peripheral["chip_select"].get<std::string>();
+                auto instance_cs_it = spi_knowledge.instance_chip_select_pin.find(instance);
+                if (instance_cs_it != spi_knowledge.instance_chip_select_pin.end())
+                {
+                    auto cs_pin_it = instance_cs_it->second.find(chip_select);
+                    if (cs_pin_it != instance_cs_it->second.end())
+                    {
+                        addSpiClaim(claims, cs_pin_it->second, instance, ("CS " + chip_select).c_str());
+                    }
+                }
             }
         }
     }

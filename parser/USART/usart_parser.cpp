@@ -3,9 +3,8 @@
 //
 
 #include "usart_parser.h"
-#include "utf8_path.h"
+#include "win_file_io.h"
 #include "json.hpp"
-#include <fstream>
 #include <set>
 
 // Концепция: как и в parser/gpio/gpio_parser.cpp, правила ниже дословно
@@ -40,6 +39,13 @@ namespace
     // schemas/uart.json: "direction" — ТЗ §3.1.3.2.
     const std::set<std::string> kValidDirection = {"tx", "rx", "duplex"};
 
+    // schemas/uart.json: "dma" — ТЗ §3.1.3.3.
+    const std::set<std::string> kValidDmaDirection = {"tx", "rx"};
+    const std::set<std::string> kValidBufferType = {"linear", "circular"};
+    const std::set<std::string> kValidElementSize = {"byte", "halfword", "word"};
+    constexpr int kMinDmaChannel = 0;
+    constexpr int kMaxDmaChannel = 3;
+
     ParseResult<UartConfig> makeError(const std::string& message)
     {
         return ParseResult<UartConfig>{false, message, std::nullopt};
@@ -48,16 +54,16 @@ namespace
 
 ParseResult<UartConfig> parseUsartConfig(const std::string& file_name_path)
 {
-    std::ifstream input_file(utf8Path(file_name_path));
-    if (!input_file.is_open())
+    const FileReadOutcome file = readUtf8PathFile(file_name_path);
+    if (!file.success)
     {
-        return makeError("Не удалось открыть файл конфигурации: " + file_name_path);
+        return makeError("Не удалось открыть файл конфигурации: " + file_name_path + file.diagnostic);
     }
 
     nlohmann::json root;
     try
     {
-        input_file >> root;
+        root = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {
@@ -155,6 +161,106 @@ ParseResult<UartConfig> parseUartBlock(const nlohmann::json& uart)
     config.parity = uart["parity"].get<std::string>();
     config.flow_control = uart["flow_control"].get<bool>();
     config.direction = uart["direction"].get<std::string>();
+
+    // ТЗ §3.1.3.3 — необязательное поле, отсутствие ничего не меняет
+    // в поведении блока (обычный случай, как и GPIO "interrupts").
+    if (uart.contains("dma"))
+    {
+        if (!uart["dma"].is_array())
+        {
+            return makeError("Поле \"dma\" должно быть массивом");
+        }
+        if (uart["dma"].size() > 2)
+        {
+            return makeError("Поле \"dma\" содержит больше 2 элементов (не более одного на каждое направление tx/rx)");
+        }
+
+        std::set<std::string> seen_directions;
+        std::set<int> seen_channels;
+        for (size_t i = 0; i < uart["dma"].size(); ++i)
+        {
+            const nlohmann::json& dma_node = uart["dma"][i];
+            const std::string prefix = "dma[" + std::to_string(i) + "]: ";
+
+            for (const char* field : {"channel", "direction", "buffer_type", "buffer_size_bytes", "element_size", "increment"})
+            {
+                if (!dma_node.contains(field))
+                {
+                    return makeError(prefix + "отсутствует обязательное поле \"" + field + "\"");
+                }
+            }
+
+            if (!dma_node["channel"].is_number_integer())
+            {
+                return makeError(prefix + "поле \"channel\" должно быть целым числом");
+            }
+            const int channel = dma_node["channel"].get<int>();
+            if (channel < kMinDmaChannel || channel > kMaxDmaChannel)
+            {
+                return makeError(prefix + "поле \"channel\" вне диапазона 0-3 (у контроллера DMA 4 канала)");
+            }
+            if (!seen_channels.insert(channel).second)
+            {
+                return makeError(prefix + "channel " + std::to_string(channel) + " уже занят другим элементом массива \"dma\" этого же блока");
+            }
+
+            if (!dma_node["direction"].is_string() || !kValidDmaDirection.count(dma_node["direction"].get<std::string>()))
+            {
+                return makeError(prefix + "поле \"direction\" содержит недопустимое значение (разрешены tx, rx)");
+            }
+            const std::string dma_direction = dma_node["direction"].get<std::string>();
+
+            // ТЗ §3.1.3.3: «направление (память → периферия для TX / периферия
+            // → память для RX)» — DMA-передача имеет смысл только в ту
+            // сторону, которая у этого же блока реально включена.
+            if (dma_direction == "tx" && config.direction != "tx" && config.direction != "duplex")
+            {
+                return makeError(prefix + "direction=\"tx\" требует, чтобы у этого же блока uart передача была включена (direction=tx или duplex)");
+            }
+            if (dma_direction == "rx" && config.direction != "rx" && config.direction != "duplex")
+            {
+                return makeError(prefix + "direction=\"rx\" требует, чтобы у этого же блока uart приём был включён (direction=rx или duplex)");
+            }
+            if (!seen_directions.insert(dma_direction).second)
+            {
+                return makeError(prefix + "направление \"" + dma_direction + "\" уже задано другим элементом массива \"dma\" этого же блока");
+            }
+
+            if (!dma_node["buffer_type"].is_string() || !kValidBufferType.count(dma_node["buffer_type"].get<std::string>()))
+            {
+                return makeError(prefix + "поле \"buffer_type\" содержит недопустимое значение (разрешены linear, circular)");
+            }
+
+            if (!dma_node["buffer_size_bytes"].is_number_integer())
+            {
+                return makeError(prefix + "поле \"buffer_size_bytes\" должно быть целым числом");
+            }
+            const int buffer_size_bytes = dma_node["buffer_size_bytes"].get<int>();
+            if (buffer_size_bytes < 1)
+            {
+                return makeError(prefix + "поле \"buffer_size_bytes\" должно быть положительным");
+            }
+
+            if (!dma_node["element_size"].is_string() || !kValidElementSize.count(dma_node["element_size"].get<std::string>()))
+            {
+                return makeError(prefix + "поле \"element_size\" содержит недопустимое значение (разрешены byte, halfword, word)");
+            }
+
+            if (!dma_node["increment"].is_boolean())
+            {
+                return makeError(prefix + "поле \"increment\" должно быть булевым");
+            }
+
+            UartDmaConfig dma_config;
+            dma_config.channel = channel;
+            dma_config.direction = dma_direction;
+            dma_config.buffer_type = dma_node["buffer_type"].get<std::string>();
+            dma_config.buffer_size_bytes = buffer_size_bytes;
+            dma_config.element_size = dma_node["element_size"].get<std::string>();
+            dma_config.increment = dma_node["increment"].get<bool>();
+            config.dma.push_back(dma_config);
+        }
+    }
 
     return ParseResult<UartConfig>{true, "", config};
 }

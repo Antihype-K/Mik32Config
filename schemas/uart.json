@@ -37,6 +37,44 @@
       "type": "enum",
       "values": ["tx", "rx", "duplex"],
       "_comment": "ТЗ §3.1.3.2: направление (передача/приём/дуплекс) должно быть настраиваемым. tx -> transmitting=Enable,receiving=Disable; rx -> наоборот; duplex -> оба Enable (mik32_hal_usart.h, USART_HandleTypeDef.transmitting/receiving)."
+    },
+    "dma": {
+      "type": "array",
+      "_comment": "ТЗ §3.1.3.3: «позволять конфигурировать режим DMA для каждого экземпляра USART независимо». Необязательное поле — не более 2 элементов (по одному на направление tx/rx), не выражается декларативно в этом MVP-формате схемы (direction=tx требует, чтобы у этого же блока transmitting был включён направлением; уникальность channel — глобальный пул на 4 канала на ВЕСЬ конфиг, ТЗ §3.1.6 п.2) — реализовано прямо в parser/USART/usart_parser.cpp и codegen/project/project_config.cpp.",
+      "max_length": 2,
+      "item_required_fields": ["channel", "direction", "buffer_type", "buffer_size_bytes", "element_size", "increment"],
+      "item_fields": {
+        "channel": {
+          "type": "integer",
+          "min": 0,
+          "max": 3,
+          "_comment": "ТЗ §3.1.3.3: «номер канала (0-3)». mik32_hal_dma.h, HAL_DMA_ChannelIndexTypeDef: DMA_CHANNEL_0..3 — у контроллера DMA ровно 4 канала (dma_config.h, DMA_CHANNEL_COUNT=4)."
+        },
+        "direction": {
+          "type": "enum",
+          "values": ["tx", "rx"],
+          "_comment": "ТЗ §3.1.3.3: «направление (память → периферия для TX / периферия → память для RX)»."
+        },
+        "buffer_type": {
+          "type": "enum",
+          "values": ["linear", "circular"],
+          "_comment": "ТЗ §3.1.3.3: «тип буфера (линейный/кольцевой)». Аппаратно HAL не различает их (HAL_DMA_Start — всегда одноразовая передача, docs/examples/mik32-examples/HAL_USART_DMA/src/main.c вызывает её заново каждый раз из прикладного кода) — circular в этом кодогене означает только пояснительный комментарий-TODO о повторном запуске из обработчика прерывания DMA, реальное автоматическое зацикливание не реализовано (см. docs/implementations/dma.md)."
+        },
+        "buffer_size_bytes": {
+          "type": "integer",
+          "min": 1,
+          "_comment": "Размер статического буфера в байтах, который кодоген объявляет и передаёт в HAL_DMA_Start как Source (tx)/Destination (rx)."
+        },
+        "element_size": {
+          "type": "enum",
+          "values": ["byte", "halfword", "word"],
+          "_comment": "ТЗ §3.1.3.3: «размер элемента (байт / полуслово / слово)». mik32_hal_dma.h, HAL_DMA_ChannelSizeTypeDef. Датащит/HAL: разрядность должна быть кратна количеству байт пересылки (LEN)."
+        },
+        "increment": {
+          "type": "boolean",
+          "_comment": "ТЗ §3.1.3.3: «режим инкремента адреса памяти (с инкрементом / без инкремента)». Применяется к стороне MEMORY (для tx — Read*, для rx — Write*); сторона PERIPHERY (регистр TXDATA/RXDATA) всегда без инкремента — адрес регистра фиксирован."
+        }
+      }
     }
   }
 }

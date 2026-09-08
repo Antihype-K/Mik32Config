@@ -1,7 +1,6 @@
 #include "project_config.h"
-#include "utf8_path.h"
+#include "win_file_io.h"
 #include "json.hpp"
-#include <fstream>
 #include <set>
 #include <sstream>
 
@@ -28,16 +27,16 @@ ParseResult<ProjectConfig> parseProjectConfig(const std::string& file_name_path)
     // Файл открывается вручную (не через nlohmann::json(path)) по той же
     // причине, что и во всех parse<Peripheral>Config: «файла нет» и «файл
     // есть, но JSON битый» — два разных диагноза для пользователя.
-    std::ifstream input_file(utf8Path(file_name_path));
-    if (!input_file.is_open())
+    const FileReadOutcome file = readUtf8PathFile(file_name_path);
+    if (!file.success)
     {
-        return makeError("Не удалось открыть файл конфигурации: " + file_name_path);
+        return makeError("Не удалось открыть файл конфигурации: " + file_name_path + file.diagnostic);
     }
 
     nlohmann::json root;
     try
     {
-        input_file >> root;
+        root = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {
@@ -72,6 +71,10 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
     std::set<int> used_uart_instances;
     std::set<int> used_timer16_instances;
     std::set<int> used_i2c_instances;
+    std::set<int> used_timer32_instances;
+    std::set<int> used_spi_instances;
+    std::set<int> used_gpio_irq_lines;
+    std::set<int> used_dma_channels;
 
     const nlohmann::json& peripherals = root["peripherals"];
     for (size_t block_index = 0; block_index < peripherals.size(); ++block_index)
@@ -93,6 +96,19 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
             {
                 return makeError(blockPrefix(block_index, type) + block_result.error);
             }
+            // ТЗ §3.1.2 п.5 / §3.1.6 п.2: у контроллера GPIO IRQ ровно 8
+            // каналов НА ВЕСЬ конфиг (не на блок и не на instance) — тот же
+            // класс "глобального пула", что и 4 канала DMA. Внутри одного
+            // блока уникальность уже проверена в parseGpioBlock; здесь —
+            // конфликт МЕЖДУ блоками (в т.ч. с разными instance).
+            for (const GpioInterruptConfig& irq : block_result.config->interrupts)
+            {
+                if (!used_gpio_irq_lines.insert(irq.line).second)
+                {
+                    return makeError(blockPrefix(block_index, type) + "line " + std::to_string(irq.line)
+                        + " уже занята прерыванием другого блока gpio (у контроллера GPIO IRQ всего 8 каналов на весь конфиг)");
+                }
+            }
             // Дубликат instance для GPIO разрешён намеренно — см. .h.
             project.gpio_blocks.push_back(*block_result.config);
         }
@@ -108,6 +124,19 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
                 return makeError(blockPrefix(block_index, type) + "instance "
                     + std::to_string(block_result.config->instance)
                     + " уже настроен другим блоком uart (один физический UART нельзя настроить дважды)");
+            }
+            // ТЗ §3.1.3.3 / §3.1.6 п.2: «конфликты каналов DMA (4 канала на
+            // все периферийные запросы)» — буквально названный в ТЗ пример
+            // глобального пула, в отличие от которого GPIO IRQ (8 линий)
+            // выше был расширением по аналогии. Пул общий для ВСЕХ типов
+            // периферии, но пока DMA настраивает только UART.
+            for (const UartDmaConfig& dma : block_result.config->dma)
+            {
+                if (!used_dma_channels.insert(dma.channel).second)
+                {
+                    return makeError(blockPrefix(block_index, type) + "DMA channel " + std::to_string(dma.channel)
+                        + " уже занят другим блоком (у контроллера DMA всего 4 канала на весь конфиг)");
+                }
             }
             project.uart_blocks.push_back(*block_result.config);
         }
@@ -141,20 +170,51 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
             }
             project.i2c_blocks.push_back(*block_result.config);
         }
+        else if (type == "timer32")
+        {
+            ParseResult<Timer32Config> block_result = parseTimer32Block(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            if (!used_timer32_instances.insert(block_result.config->instance).second)
+            {
+                return makeError(blockPrefix(block_index, type) + "instance "
+                    + std::to_string(block_result.config->instance)
+                    + " уже настроен другим блоком timer32 (один физический Timer32 нельзя настроить дважды)");
+            }
+            project.timer32_blocks.push_back(*block_result.config);
+        }
+        else if (type == "spi")
+        {
+            ParseResult<SpiConfig> block_result = parseSpiBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            if (!used_spi_instances.insert(block_result.config->instance).second)
+            {
+                return makeError(blockPrefix(block_index, type) + "instance "
+                    + std::to_string(block_result.config->instance)
+                    + " уже настроен другим блоком spi (один физический SPI нельзя настроить дважды)");
+            }
+            project.spi_blocks.push_back(*block_result.config);
+        }
         else
         {
             // Тихо пропускать нельзя: пользователь получил бы прошивку без
             // запрошенной периферии и без единого сообщения об этом.
-            // parser/spi и parser/timing — пустые заглушки, их типы сюда
-            // попадут именно этой веткой, пока модули не реализованы.
+            // parser/timing — пустая заглушка, её тип сюда попадёт именно
+            // этой веткой, пока модуль не реализован.
             return makeError("Блок #" + std::to_string(block_index + 1)
                 + ": тип периферии \"" + type + "\" пока не поддерживается "
-                  "(реализованы: gpio, uart, timer16, i2c)");
+                  "(реализованы: gpio, uart, timer16, i2c, timer32, spi)");
         }
     }
 
     if (project.gpio_blocks.empty() && project.uart_blocks.empty()
-        && project.timer16_blocks.empty() && project.i2c_blocks.empty())
+        && project.timer16_blocks.empty() && project.i2c_blocks.empty()
+        && project.timer32_blocks.empty() && project.spi_blocks.empty())
     {
         return makeError("Массив \"peripherals\" пуст — нечего генерировать");
     }

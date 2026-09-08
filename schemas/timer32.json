@@ -1,0 +1,68 @@
+{
+  "peripheral_type": "timer32",
+  "max_instances": 3,
+  "_comment_max_instances": "ТЗ (docs/Приложение_А_Техническое_задание_МИК32.docx, §3.1.5): «МК МИК32 «Амур» содержит 3 модуля Timer32». Подтверждено docs/examples/mik32-hal/peripherals/Include/mik32_hal_timer32.h (TIMER32_0/1/2).",
+  "required_fields": ["type", "instance", "prescaler", "count_mode", "top"],
+  "fields": {
+    "instance": {
+      "type": "integer",
+      "min": 0,
+      "max": 2
+    },
+    "prescaler": {
+      "type": "integer",
+      "min": 0,
+      "max": 4294967295,
+      "_comment": "mik32_hal_timer32.h, TIMER32_ClockConfigTypeDef.Prescaler: uint32_t, комментарий в заголовке — «Делитель частоты. Частота делится на Prescaler + 1» (строки 93-94). В отличие от Timer16 это не enum HAL-констант, а прямое значение регистра PRESCALER."
+    },
+    "count_mode": {
+      "type": "enum",
+      "values": ["forward", "reverse", "bidirectional"],
+      "_comment": "ТЗ §3.1.5 п.2: «режим счёта (прямой / обратный / двунаправленный)». mik32_hal_timer32.h, HAL_TIMER32_CountModeTypeDef: TIMER32_COUNTMODE_FORWARD/REVERSE/BIDIRECTIONAL."
+    },
+    "top": {
+      "type": "integer",
+      "min": 0,
+      "max": 4294967295,
+      "_comment": "mik32_hal_timer32.h, TIMER32_HandleTypeDef.Top: uint32_t (регистр TOP, 32-битный — в отличие от 16-битных ARR/CMP у Timer16)."
+    },
+    "channels": {
+      "type": "array",
+      "_comment": "ТЗ §3.1.5 п.2: «для Timer32_1 и Timer32_2 позволять конфигурировать каждый из 4 каналов независимо в режимах: ШИМ, захват, сравнение; для Timer32_0 – только настройку счётчика». Поле допустимо только при instance=1 или instance=2 — эта межполевая проверка не выражается декларативно в этом MVP-формате схемы (см. schemas/i2c.json, где условные поля тоже описаны только текстом) и реализована прямо в parser/timer32/timer32_parser.cpp.",
+      "max_length": 4,
+      "item_required_fields": ["index", "mode"],
+      "item_fields": {
+        "index": {
+          "type": "integer",
+          "min": 0,
+          "max": 3,
+          "_comment": "mik32_hal_timer32.h, HAL_TIMER32_CHANNEL_IndexTypeDef: TIMER32_CHANNEL_0..3."
+        },
+        "mode": {
+          "type": "enum",
+          "values": ["pwm", "capture", "compare"],
+          "_comment": "mik32_hal_timer32.h, HAL_TIMER32_CHANNEL_ModeTypeDef: TIMER32_CHANNEL_MODE_PWM/CAPTURE/COMPARE."
+        },
+        "ocr": {
+          "type": "integer",
+          "min": 0,
+          "max": 4294967295,
+          "_comment": "Обязательно для mode=pwm и mode=compare (HAL_Timer32_Channel_OCR_Set); для mode=capture кодогеном игнорируется — в этом режиме канал ЧИТАЕТ ICR из сигнала, а не сравнивает со значением, заданным пользователем (mik32_hal_timer32.c, HAL_Timer32_Channel_Init вызывает OCR_Set безусловно значением 0, если поле не задано)."
+        },
+        "pwm_invert": {
+          "type": "boolean",
+          "_comment": "Только для mode=pwm. HAL_TIMER32_CHANNEL_PWMInvertTypeDef. По умолчанию false (TIMER32_CHANNEL_NON_INVERTED_PWM), если поле не задано."
+        },
+        "capture_edge": {
+          "type": "enum",
+          "values": ["rising", "falling"],
+          "_comment": "Обязательно для mode=capture. HAL_TIMER32_CHANNEL_CaptureEdgeTypeDef."
+        },
+        "noise_filter": {
+          "type": "boolean",
+          "_comment": "Только для mode=capture. HAL_TIMER32_CHANNEL_NoiseTypeDef. По умолчанию false (TIMER32_CHANNEL_FILTER_OFF), если поле не задано."
+        }
+      }
+    }
+  }
+}

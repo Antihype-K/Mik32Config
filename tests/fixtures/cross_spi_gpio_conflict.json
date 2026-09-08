@@ -1,0 +1,26 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "gpio",
+      "instance": 0,
+      "mode": "output",
+      "pull": "none",
+      "drive_strength": "2mA",
+      "pins": [1]
+    },
+    {
+      "type": "spi",
+      "instance": 0,
+      "mode": "master",
+      "clk_phase": "on",
+      "clk_polarity": "high",
+      "threshold_tx": 4,
+      "baud_rate_div": 64,
+      "manual_cs": false,
+      "decoder": false,
+      "chip_select": "cs0"
+    }
+  ]
+}

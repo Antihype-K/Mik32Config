@@ -1,7 +1,6 @@
 #include "gpio_knowledge.h"
-#include "utf8_path.h"
+#include "win_file_io.h"
 #include "json.hpp"
-#include <fstream>
 
 namespace
 {
@@ -23,16 +22,16 @@ namespace
 
 ParseResult<GpioKnowledge> loadGpioKnowledge(const std::string& file_path)
 {
-    std::ifstream input_file(utf8Path(file_path));
-    if (!input_file.is_open())
+    const FileReadOutcome file = readUtf8PathFile(file_path);
+    if (!file.success)
     {
-        return ParseResult<GpioKnowledge>{false, "Не удалось открыть knowledge_base: " + file_path, std::nullopt};
+        return ParseResult<GpioKnowledge>{false, "Не удалось открыть knowledge_base: " + file_path + file.diagnostic, std::nullopt};
     }
 
     nlohmann::json root;
     try
     {
-        input_file >> root;
+        root = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {
@@ -67,6 +66,17 @@ ParseResult<GpioKnowledge> loadGpioKnowledge(const std::string& file_path)
         knowledge.mode_hal_enum = extractHalEnumMap(root.at("mode_encoding"));
         knowledge.pull_hal_enum = extractHalEnumMap(root.at("pull_encoding"));
         knowledge.drive_strength_hal_enum = extractHalEnumMap(root.at("drive_strength_encoding"));
+
+        for (auto it = root.at("trigger_encoding").begin();
+             it != root.at("trigger_encoding").end(); ++it)
+        {
+            knowledge.trigger_hal_enum[it.key()] = it.value().get<std::string>();
+        }
+        for (auto it = root.at("irq_mux_enum").begin();
+             it != root.at("irq_mux_enum").end(); ++it)
+        {
+            knowledge.irq_mux_enum[it.key()] = it.value().get<std::string>();
+        }
     }
     catch (const nlohmann::json::exception& structure_error)
     {

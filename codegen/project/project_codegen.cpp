@@ -1,11 +1,14 @@
 #include "project_codegen.h"
 #include "utf8_path.h"
+#include "win_file_io.h"
 #include "peripheral_contribution.h"
 #include "contribution_utils.h"
 #include "gpio_contribution.h"
 #include "uart_contribution.h"
 #include "timer16_contribution.h"
 #include "i2c_contribution.h"
+#include "timer32_contribution.h"
+#include "spi_contribution.h"
 #include "user_code_markers.h"
 #include <algorithm>
 #include <filesystem>
@@ -74,6 +77,24 @@ namespace
         "    PCC_OscInit.RTCClockSelection = PCC_RTC_CLOCK_SOURCE_AUTO;\n"
         "    PCC_OscInit.RTCClockCPUSelection = PCC_CPU_RTC_CLOCK_SOURCE_OSC32K;\n"
         "    HAL_PCC_Config(&PCC_OscInit);\n"
+        "}\n";
+
+    // Единственный на весь проект DMA_Init — DMA_CONFIG физически один
+    // блок с 4 общими каналами (dma_config.h, DMA_CHANNEL_COUNT), а не
+    // по одному на периферию, поэтому вызывается один раз, аналогично
+    // SystemClock_Config. По образцу docs/examples/mik32-examples/
+    // HAL_USART_DMA/src/main.c, функция DMA_Init (строки 103-116):
+    // CurrentValue=ENABLE — читать текущее состояние канала, а не значения
+    // настройки (иначе HAL_DMA_GetChannelReadyStatus давал бы неактуальные
+    // данные). Генерируется, только если хотя бы один блок uart запросил
+    // dma — иначе #include "mik32_hal_dma.h" и неиспользуемый глобал
+    // были бы мёртвым кодом.
+    const char* kDmaInitFunctionText =
+        "void DMA_Init(void)\n"
+        "{\n"
+        "    hdma.Instance = DMA_CONFIG;\n"
+        "    hdma.CurrentValue = DMA_CURRENT_VALUE_ENABLE;\n"
+        "    HAL_DMA_Init(&hdma);\n"
         "}\n";
 
     ParseResult<GeneratedProjectFirmware> makeError(const std::string& message)
@@ -166,6 +187,20 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
 {
     std::vector<PeripheralContribution> contributions;
 
+    // ТЗ §3.1.3.3: DMA настраивается на блоках uart, но сам DMA_CONFIG —
+    // один физический блок на весь МК (4 общих канала), поэтому его
+    // инициализация не делегируется contribution-у конкретного блока (см.
+    // kDmaInitFunctionText ниже).
+    bool any_uart_dma = false;
+    for (const UartConfig& block : config.uart_blocks)
+    {
+        if (!block.dma.empty())
+        {
+            any_uart_dma = true;
+            break;
+        }
+    }
+
     // --- GPIO: блоки группируются по instance -------------------------------
     // Обоснование группировки — codegen/project/gpio_contribution.h: несколько
     // блоков на один порт задают разным пинам разные режимы, и все они должны
@@ -214,8 +249,20 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         contributions.push_back(*result.config);
     }
 
-    // --- I2C ----------------------------------------------------------------
+    // --- SPI ------------------------------------------------------------
     const bool console_available = (console_index >= 0);
+    for (const SpiConfig& block : config.spi_blocks)
+    {
+        ParseResult<PeripheralContribution> result =
+            buildSpiContribution(block, knowledge.spi, console_available, emit_demo_loops);
+        if (!result.success)
+        {
+            return makeError(result.error);
+        }
+        contributions.push_back(*result.config);
+    }
+
+    // --- I2C ----------------------------------------------------------------
     for (const I2cConfig& block : config.i2c_blocks)
     {
         ParseResult<PeripheralContribution> result =
@@ -232,6 +279,18 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     {
         ParseResult<PeripheralContribution> result =
             buildTimer16Contribution(block, knowledge.timer16);
+        if (!result.success)
+        {
+            return makeError(result.error);
+        }
+        contributions.push_back(*result.config);
+    }
+
+    // --- Timer32 ------------------------------------------------------------
+    for (const Timer32Config& block : config.timer32_blocks)
+    {
+        ParseResult<PeripheralContribution> result =
+            buildTimer32Contribution(block, knowledge.timer32);
         if (!result.success)
         {
             return makeError(result.error);
@@ -259,6 +318,10 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     init_h << "#ifndef MIK32_INIT_H\n"
               "#define MIK32_INIT_H\n"
               "\n";
+    if (any_uart_dma)
+    {
+        init_h << "void DMA_Init(void);\n";
+    }
     for (const PeripheralContribution& contribution : contributions)
     {
         for (const std::string& prototype : contribution.public_prototypes)
@@ -271,6 +334,10 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
 
     // --- mik32_init.c -------------------------------------------------------
     std::vector<std::string> init_c_includes;
+    if (any_uart_dma)
+    {
+        init_c_includes.push_back("mik32_hal_dma.h");
+    }
     for (const PeripheralContribution& contribution : contributions)
     {
         appendUnique(init_c_includes, contribution.init_c_includes);
@@ -302,6 +369,13 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     // Глобальные хендлы — единым блоком перед функциями, как во всех
     // вендорных примерах (docs/examples/mik32-examples/*/src/main.c).
     std::ostringstream globals;
+    if (any_uart_dma)
+    {
+        // Объявлен раньше per-contribution хендлов: DMA_ChannelHandleTypeDef
+        // блоков uart (codegen/project/uart_contribution.cpp) ссылается на
+        // &hdma в своём global_definitions, а C транслирует файл сверху вниз.
+        globals << "DMA_InitTypeDef hdma;\n";
+    }
     for (const PeripheralContribution& contribution : contributions)
     {
         globals << contribution.global_definitions;
@@ -309,6 +383,11 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     if (!globals.str().empty())
     {
         init_c << globals.str() << "\n";
+    }
+
+    if (any_uart_dma)
+    {
+        init_c << kDmaInitFunctionText << "\n";
     }
 
     for (size_t i = 0; i < contributions.size(); ++i)
@@ -375,6 +454,12 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
               "{\n"
               "    SystemClock_Config();\n"
               "\n";
+    if (any_uart_dma)
+    {
+        // До UART_x_Init: HAL_DMA_Init(&hdma) должен отработать раньше, чем
+        // любой контроллер начнёт ссылаться на &hdma в своём канале.
+        main_c << "    DMA_Init();\n";
+    }
     for (const PeripheralContribution& contribution : contributions)
     {
         main_c << "    " << contribution.init_function_name << "();\n";
@@ -442,10 +527,11 @@ CodegenWriteResult writeGeneratedProject(
     const fs::path main_c_path = src_dir / "main.c";
     if (fs::exists(main_c_path))
     {
-        std::ifstream existing(main_c_path, std::ios::binary);
-        std::ostringstream existing_buffer;
-        existing_buffer << existing.rdbuf();
-        main_c_to_write = mergeUserCodeSections(firmware.main_c, existing_buffer.str());
+        const FileReadOutcome existing = readUtf8PathFile(main_c_path.u8string());
+        if (existing.success)
+        {
+            main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content);
+        }
     }
 
     const std::pair<const char*, const std::string*> files_to_write[] = {
@@ -456,19 +542,19 @@ CodegenWriteResult writeGeneratedProject(
 
     for (const auto& [file_name, content] : files_to_write)
     {
-        // std::ios::binary обязателен: без него на Windows текстовый режим
-        // разворачивает каждый '\n' в CRLF, и один и тот же конфиг даёт на
-        // Windows и на Linux побайтово разные mik32_init.c/main.c (проверено
-        // сравнением выводов двух сборок — расходились ровно переводы строк).
-        // Кодогенератор обязан быть детерминированным относительно платформы:
-        // golden-фикстуры tests/fixtures/expected_*.c хранятся с LF, а
-        // сгенерированный проект пользователь кладёт под контроль версий.
-        std::ofstream out(src_dir / file_name, std::ios::trunc | std::ios::binary);
-        if (!out.is_open())
+        // Запись всегда бинарная (см. writeUtf8PathFile/readUtf8PathFile):
+        // текстовый режим на Windows разворачивает каждый '\n' в CRLF, и один
+        // и тот же конфиг даёт на Windows и на Linux побайтово разные
+        // mik32_init.c/main.c (проверено сравнением выводов двух сборок —
+        // расходились ровно переводы строк). Кодогенератор обязан быть
+        // детерминированным относительно платформы: golden-фикстуры
+        // tests/fixtures/expected_*.c хранятся с LF, а сгенерированный проект
+        // пользователь кладёт под контроль версий.
+        const FileWriteOutcome write_result = writeUtf8PathFile((src_dir / file_name).u8string(), *content);
+        if (!write_result.success)
         {
-            return CodegenWriteResult{false, std::string("Не удалось записать файл src/") + file_name};
+            return CodegenWriteResult{false, std::string("Не удалось записать файл src/") + file_name + write_result.diagnostic};
         }
-        out << *content;
     }
 
     return CodegenWriteResult{true, ""};

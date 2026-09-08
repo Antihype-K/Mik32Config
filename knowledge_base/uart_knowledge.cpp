@@ -1,7 +1,6 @@
 #include "uart_knowledge.h"
-#include "utf8_path.h"
+#include "win_file_io.h"
 #include "json.hpp"
-#include <fstream>
 
 namespace
 {
@@ -18,16 +17,16 @@ namespace
 
 ParseResult<UartKnowledge> loadUartKnowledge(const std::string& file_path)
 {
-    std::ifstream input_file(utf8Path(file_path));
-    if (!input_file.is_open())
+    const FileReadOutcome file = readUtf8PathFile(file_path);
+    if (!file.success)
     {
-        return ParseResult<UartKnowledge>{false, "Не удалось открыть knowledge_base: " + file_path, std::nullopt};
+        return ParseResult<UartKnowledge>{false, "Не удалось открыть knowledge_base: " + file_path + file.diagnostic, std::nullopt};
     }
 
     nlohmann::json root;
     try
     {
-        input_file >> root;
+        root = nlohmann::json::parse(file.content);
     }
     catch (const nlohmann::json::parse_error& parse_error)
     {
@@ -74,6 +73,22 @@ ParseResult<UartKnowledge> loadUartKnowledge(const std::string& file_path)
             pins.rts = readFixedPin(it.value().at("rts"));
             pins.cts = readFixedPin(it.value().at("cts"));
             knowledge.instance_fixed_pins[std::stoi(it.key())] = pins;
+        }
+
+        for (auto it = root.at("dma_request_enum").begin();
+             it != root.at("dma_request_enum").end(); ++it)
+        {
+            knowledge.dma_request_enum[std::stoi(it.key())] = it.value().get<std::string>();
+        }
+        for (auto it = root.at("dma_channel_hal_enum").begin();
+             it != root.at("dma_channel_hal_enum").end(); ++it)
+        {
+            knowledge.dma_channel_hal_enum[it.key()] = it.value().get<std::string>();
+        }
+        for (auto it = root.at("dma_element_size_hal_enum").begin();
+             it != root.at("dma_element_size_hal_enum").end(); ++it)
+        {
+            knowledge.dma_element_size_hal_enum[it.key()] = it.value().get<std::string>();
         }
     }
     catch (const nlohmann::json::exception& structure_error)

@@ -22,6 +22,8 @@
 #include "uart_knowledge.h"
 #include "timer16_knowledge.h"
 #include "i2c_knowledge.h"
+#include "timer32_knowledge.h"
+#include "spi_knowledge.h"
 
 struct PinConflict
 {
@@ -56,11 +58,28 @@ struct CrossModuleValidationResult
 // или demo — в отличие от UART (зависит от direction/flow_control) и Timer16
 // (зависит от mode_waveform_enable), у I2C нет режима, не использующего обе
 // линии (см. knowledge_base/i2c.json, instance_fixed_pins).
+// timer32_knowledge — пятый источник заявок: в отличие от Timer16 (один
+// фиксированный ШИМ-вывод на instance), у Timer32_1/2 своя фиксированная
+// пара (gpio_instance, pin) НА КАЖДЫЙ из 4 каналов (instance_channel_fixed_pin),
+// и заявка возникает для каждого сконфигурированного канала независимо от
+// его mode (pwm/capture/compare) — mik32_hal_timer32.c,
+// HAL_TIMER32_Channel_MspInit мультиплексирует вывод на любой Channel_Init
+// безусловно, до проверки режима. Timer32_0 никогда не заявляет пин (у него
+// нет каналов — ТЗ §3.1.5).
+// spi_knowledge — шестой источник заявок: как и I2C, SPI занимает несколько
+// пинов сразу (SCK/MOSI/MISO/SS_IN — 4 штуки, instance_fixed_pins), но, в
+// отличие от I2C, не при любом mode — плюс ОДИН дополнительный CS-пин, ТОЛЬКО
+// когда mode=master (instance_chip_select_pin[instance][chip_select]) —
+// см. knowledge_base/spi.json, _comment_instance_chip_select_pin: у slave
+// поле Init.ChipSelect в реальном HAL остаётся не заполненным, и HAL_GPIO_Init
+// в HAL_SPI_MspInit вызывается с пустой маской.
 CrossModuleValidationResult validatePinConflicts(
     const std::string& config_path,
     const UartKnowledge& uart_knowledge,
     const Timer16Knowledge& timer16_knowledge,
-    const I2cKnowledge& i2c_knowledge);
+    const I2cKnowledge& i2c_knowledge,
+    const Timer32Knowledge& timer32_knowledge,
+    const SpiKnowledge& spi_knowledge);
 
 // Документная перегрузка — по той же причине, что и parseProjectDocument
 // (codegen/project/project_config.h): GUI обязан показывать конфликты выводов
@@ -70,6 +89,8 @@ CrossModuleValidationResult validatePinConflictsInDocument(
     const nlohmann::json& root,
     const UartKnowledge& uart_knowledge,
     const Timer16Knowledge& timer16_knowledge,
-    const I2cKnowledge& i2c_knowledge);
+    const I2cKnowledge& i2c_knowledge,
+    const Timer32Knowledge& timer32_knowledge,
+    const SpiKnowledge& spi_knowledge);
 
 #endif //MIK32_CONFIGURATOR_CROSS_MODULE_VALIDATOR_H

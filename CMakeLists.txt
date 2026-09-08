@@ -28,6 +28,7 @@ set(CORE_SOURCES
         parser/timing/timing_parser.cpp
         parser/USART/usart_parser.cpp
         parser/timer16/timer16_parser.cpp
+        parser/timer32/timer32_parser.cpp
 
         # База знаний МИК32: аппаратные факты из даташита и errata
         knowledge_base/gpio_knowledge.cpp
@@ -35,6 +36,8 @@ set(CORE_SOURCES
         knowledge_base/timer16_knowledge.cpp
         knowledge_base/i2c_knowledge.cpp
         knowledge_base/package_knowledge.cpp
+        knowledge_base/timer32_knowledge.cpp
+        knowledge_base/spi_knowledge.cpp
 
         # Кросс-модульная валидация (ТЗ §3.1.6)
         validation/cross_module_validator.cpp
@@ -46,6 +49,8 @@ set(CORE_SOURCES
         codegen/project/uart_contribution.cpp
         codegen/project/timer16_contribution.cpp
         codegen/project/i2c_contribution.cpp
+        codegen/project/timer32_contribution.cpp
+        codegen/project/spi_contribution.cpp
         codegen/project/project_codegen.cpp
         codegen/user_code_markers.cpp
 )
@@ -62,6 +67,8 @@ target_include_directories(mik32-core
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/USART
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/timer16
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/i2c
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/timer32
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/spi
         ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/project
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen
@@ -89,7 +96,40 @@ if(BUILD_GUI)
         # для них генерируется код moc'ом на этапе сборки.
         set(CMAKE_AUTOMOC ON)
 
-        add_executable(MIK32-Configurator-GUI
+        # Кросс-компиляция под Windows (MinGW-тулчейн + Qt6 для Windows):
+        # moc/uic/rcc, которые ставит сам Qt6-пакет, — это moc.exe и т.п.,
+        # PE-бинарники, которые на Linux-хосте напрямую не запустить. CMake
+        # тестово вызывает их при конфигурации и падает с "permission denied".
+        # QT_HOST_PATH (штатный механизм Qt6 для этого случая) здесь не
+        # сработал на этой связке версий Qt, поэтому тот же исполняемый PE
+        # запускается через wine — не подменяется другой версией инструмента,
+        # только способ его запуска.
+        if(CMAKE_CROSSCOMPILING AND WIN32)
+            find_program(WINE_EXECUTABLE wine)
+            if(WINE_EXECUTABLE)
+                foreach(qt_tool moc uic rcc)
+                    if(TARGET Qt6::${qt_tool})
+                        get_target_property(_qt_tool_exe Qt6::${qt_tool} IMPORTED_LOCATION)
+                        if(_qt_tool_exe MATCHES "\\.exe$")
+                            set(_wrapper "${CMAKE_BINARY_DIR}/qt-wine-wrappers/${qt_tool}")
+                            file(WRITE "${_wrapper}" "#!/bin/sh\nexec \"${WINE_EXECUTABLE}\" \"${_qt_tool_exe}\" \"$@\"\n")
+                            file(CHMOD "${_wrapper}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+                            set_target_properties(Qt6::${qt_tool} PROPERTIES IMPORTED_LOCATION "${_wrapper}")
+                        endif()
+                    endif()
+                endforeach()
+            else()
+                message(WARNING "Кросс-сборка под Windows: wine не найден — moc/uic/rcc (PE-бинарники Qt6) не запустятся на конфигурации.")
+            endif()
+        endif()
+
+        # WIN32 здесь — не заглушка "для вида": без него в MinGW-сборке
+        # исполняемый файл линкуется как консольная подсистема, и двойной
+        # клик по .exe на Windows открывает GUI за окном чёрной консоли
+        # (воспроизведено пользователем на реальной машине). CMake сам
+        # игнорирует WIN32 на остальных платформах (Linux/macOS) — здесь он
+        # не нужен и не мешает.
+        add_executable(MIK32-Configurator-GUI WIN32
                 gui/gui_main.cpp
                 gui/main_window.cpp
                 gui/main_window.h
@@ -103,6 +143,16 @@ if(BUILD_GUI)
                 gui/properties_panel.h
                 gui/diagnostics_panel.cpp
                 gui/diagnostics_panel.h
+                gui/screen_navigator.cpp
+                gui/screen_navigator.h
+                gui/home_screen.cpp
+                gui/home_screen.h
+                gui/new_project_screen.cpp
+                gui/new_project_screen.h
+                gui/project_manager_screen.cpp
+                gui/project_manager_screen.h
+                gui/code_preview_screen.cpp
+                gui/code_preview_screen.h
         )
 
         target_include_directories(MIK32-Configurator-GUI

@@ -2,6 +2,23 @@
 #include "contribution_utils.h"
 #include <iomanip>
 #include <sstream>
+#include <utility>
+#include <vector>
+
+namespace
+{
+    const UartDmaConfig* findDmaConfig(const UartConfig& config, const std::string& direction)
+    {
+        for (const UartDmaConfig& dma : config.dma)
+        {
+            if (dma.direction == direction)
+            {
+                return &dma;
+            }
+        }
+        return nullptr;
+    }
+}
 
 ParseResult<PeripheralContribution> buildUartContribution(
     const UartConfig& config,
@@ -23,6 +40,8 @@ ParseResult<PeripheralContribution> buildUartContribution(
     }
 
     const std::string handle_name = "husart_" + std::to_string(config.instance);
+    const UartDmaConfig* dma_tx = findDmaConfig(config, "tx");
+    const UartDmaConfig* dma_rx = findDmaConfig(config, "rx");
 
     PeripheralContribution contribution;
     contribution.label = "UART_" + std::to_string(config.instance);
@@ -34,6 +53,14 @@ ParseResult<PeripheralContribution> buildUartContribution(
     // безвреден (в SDK везде include guard'ы), но замусоривал бы вывод.
     contribution.init_c_includes = {"mik32_hal_usart.h"};
     contribution.public_prototypes = {"void " + contribution.init_function_name + "(void);"};
+    if (dma_tx)
+    {
+        contribution.public_prototypes.push_back("void " + contribution.label + "_DMA_TX_Start(void);");
+    }
+    if (dma_rx)
+    {
+        contribution.public_prototypes.push_back("void " + contribution.label + "_DMA_RX_Start(void);");
+    }
     contribution.global_definitions = "USART_HandleTypeDef " + handle_name + ";\n";
 
     // ТЗ §3.1.3: direction управляет тем, какие направления включены;
@@ -81,8 +108,8 @@ ParseResult<PeripheralContribution> buildUartContribution(
               "    " << handle_name << ".last_byte_clock = Disable;\n"
               "    " << handle_name << ".overwrite = Disable;\n"
               "    " << handle_name << ".rts_mode = AlwaysEnable_mode;\n"
-              "    " << handle_name << ".dma_tx_request = Disable;\n"
-              "    " << handle_name << ".dma_rx_request = Disable;\n"
+              "    " << handle_name << ".dma_tx_request = " << (dma_tx ? "Enable" : "Disable") << ";\n"
+              "    " << handle_name << ".dma_rx_request = " << (dma_rx ? "Enable" : "Disable") << ";\n"
               "    " << handle_name << ".channel_mode = Duplex_Mode;\n"
               "    " << handle_name << ".tx_break_mode = Disable;\n"
               "    " << handle_name << ".Interrupt.ctsie = Disable;\n"
@@ -102,9 +129,93 @@ ParseResult<PeripheralContribution> buildUartContribution(
               "    " << handle_name << ".Modem.ddis = Disable;\n"
               "    " << handle_name << ".baudrate = " << config.baud_rate << ";\n"
               "\n"
-              "    HAL_USART_Init(&" << handle_name << ");\n"
-              "}\n";
+              "    HAL_USART_Init(&" << handle_name << ");\n";
+
+    // ТЗ §3.1.3.3: конфигурация DMA-канала — по образцу
+    // docs/examples/mik32-examples/HAL_USART_DMA/src/main.c, DMA_CH0_Init
+    // (строки 80-101). Настраивается здесь (после HAL_USART_Init, но в той
+    // же функции), а не в отдельном init — DMA_Init() уже отработал раньше
+    // из main() (см. project_codegen.cpp, any_uart_dma) и заполнил hdma,
+    // на которую этот канал ссылается через ChannelInit-независимое поле .dma.
+    std::vector<std::pair<const UartDmaConfig*, std::string>> dma_configs;
+    if (dma_tx) dma_configs.push_back({dma_tx, "tx"});
+    if (dma_rx) dma_configs.push_back({dma_rx, "rx"});
+
+    std::ostringstream dma_globals;
+    std::ostringstream dma_helpers;
+    std::ostringstream dma_extern_declarations;
+    for (const auto& [dma, direction] : dma_configs)
+    {
+        const std::string* channel_enum = findOrNull(knowledge.dma_channel_hal_enum, std::to_string(dma->channel));
+        const std::string* request_enum = findOrNull(knowledge.dma_request_enum, config.instance);
+        const std::string* size_enum = findOrNull(knowledge.dma_element_size_hal_enum, dma->element_size);
+        if (!channel_enum || !request_enum || !size_enum)
+        {
+            return ParseResult<PeripheralContribution>{
+                false,
+                "UartDmaConfig ссылается на channel/instance/element_size, отсутствующий в knowledge_base/uart.json",
+                std::nullopt};
+        }
+
+        const std::string channel_handle = "hdma_" + handle_name + "_" + direction;
+        const std::string buffer_name = handle_name + "_" + direction + "_dma_buffer";
+        const bool is_tx = (direction == "tx");
+        const std::string inc_enum = dma->increment ? "DMA_CHANNEL_INC_ENABLE" : "DMA_CHANNEL_INC_DISABLE";
+
+        dma_globals << "DMA_ChannelHandleTypeDef " << channel_handle << ";\n"
+                    << "uint8_t " << buffer_name << "[" << dma->buffer_size_bytes << "];\n";
+        // extern в main.c — иначе прикладной код не сможет ни заполнить TX-
+        // буфер данными для отправки, ни прочитать RX-буфер после приёма:
+        // сам буфер объявлен в mik32_init.c и снаружи не виден без этого.
+        dma_extern_declarations << "extern uint8_t " << buffer_name << "[" << dma->buffer_size_bytes << "];\n";
+
+        // TX: память (буфер, инкремент по настройке) -> периферия (TXDATA,
+        // без инкремента — адрес регистра фиксирован). RX: наоборот.
+        init_c << "\n"
+                  "    " << channel_handle << ".dma = &hdma;\n"
+                  "    " << channel_handle << ".ChannelInit.Channel = " << *channel_enum << ";\n"
+                  "    " << channel_handle << ".ChannelInit.Priority = DMA_CHANNEL_PRIORITY_VERY_HIGH;\n"
+                  "    " << channel_handle << ".ChannelInit.ReadMode = " << (is_tx ? "DMA_CHANNEL_MODE_MEMORY" : "DMA_CHANNEL_MODE_PERIPHERY") << ";\n"
+                  "    " << channel_handle << ".ChannelInit.ReadInc = " << (is_tx ? inc_enum : "DMA_CHANNEL_INC_DISABLE") << ";\n"
+                  "    " << channel_handle << ".ChannelInit.ReadSize = " << *size_enum << ";\n"
+                  "    " << channel_handle << ".ChannelInit.ReadBurstSize = 0;\n"
+                  "    " << channel_handle << ".ChannelInit.ReadRequest = " << *request_enum << ";\n"
+                  "    " << channel_handle << ".ChannelInit.ReadAck = " << (is_tx ? "DMA_CHANNEL_ACK_DISABLE" : "DMA_CHANNEL_ACK_ENABLE") << ";\n"
+                  "    " << channel_handle << ".ChannelInit.WriteMode = " << (is_tx ? "DMA_CHANNEL_MODE_PERIPHERY" : "DMA_CHANNEL_MODE_MEMORY") << ";\n"
+                  "    " << channel_handle << ".ChannelInit.WriteInc = " << (is_tx ? "DMA_CHANNEL_INC_DISABLE" : inc_enum) << ";\n"
+                  "    " << channel_handle << ".ChannelInit.WriteSize = " << *size_enum << ";\n"
+                  "    " << channel_handle << ".ChannelInit.WriteBurstSize = 0;\n"
+                  "    " << channel_handle << ".ChannelInit.WriteRequest = " << *request_enum << ";\n"
+                  "    " << channel_handle << ".ChannelInit.WriteAck = " << (is_tx ? "DMA_CHANNEL_ACK_ENABLE" : "DMA_CHANNEL_ACK_DISABLE") << ";\n";
+
+        dma_helpers << "/*\n"
+                       " * buffer_type=" << dma->buffer_type << ".";
+        if (dma->buffer_type == "circular")
+        {
+            dma_helpers << " ТЗ §3.1.3.3 просит кольцевой буфер, но HAL не умеет\n"
+                           " * зацикливать передачу сам (HAL_DMA_Start — всегда одноразовая пересылка,\n"
+                           " * см. knowledge_base/uart.json, not_covered_by_this_codegen.dma_circular_buffer) —\n"
+                           " * вызвать эту функцию снова нужно из обработчика прерывания DMA (HAL_DMA_LocalIRQEnable\n"
+                           " * + HAL_DMA_GetChannelIrq), это не реализовано автоматически.\n";
+        }
+        else
+        {
+            dma_helpers << " Одноразовая передача — вызвать функцию снова для следующей.\n";
+        }
+        dma_helpers << " */\n"
+                       "void " << contribution.label << "_DMA_" << (is_tx ? "TX" : "RX") << "_Start(void)\n"
+                       "{\n"
+                       "    HAL_DMA_Start(&" << channel_handle << ", "
+                    << (is_tx ? ("(void*)" + buffer_name) : ("(void*)&" + *uart_handle + "->RXDATA"))
+                    << ", "
+                    << (is_tx ? ("(void*)&" + *uart_handle + "->TXDATA") : ("(void*)" + buffer_name))
+                    << ", " << dma->buffer_size_bytes << ");\n"
+                       "}\n\n";
+    }
+    init_c << "}\n";
     contribution.init_function_text = init_c.str();
+    contribution.global_definitions += dma_globals.str();
+    contribution.extern_declarations += dma_extern_declarations.str();
 
     // Сильная (переопределяющая слабую) реализация xputc — обоснование в
     // uart_contribution.h. Прототип в mik32_init.h не выносится: xputc
@@ -122,8 +233,9 @@ ParseResult<PeripheralContribution> buildUartContribution(
                    "{\n"
                    "    HAL_USART_Transmit(&" << handle_name << ", c, USART_TIMEOUT_DEFAULT);\n"
                    "}\n";
-        contribution.helper_functions_text = helpers.str();
+        contribution.helper_functions_text += helpers.str();
     }
+    contribution.helper_functions_text += dma_helpers.str();
 
     // Демо-логика: периодический текстовый лог. Только если передача вообще
     // включена — при direction="rx" HAL_USART_Print писал бы в выключенный
@@ -136,7 +248,7 @@ ParseResult<PeripheralContribution> buildUartContribution(
         contribution.loop_body = loop.str();
         contribution.wants_loop_delay = true;
         contribution.main_c_includes = {"mik32_hal_usart.h"};
-        contribution.extern_declarations = "extern USART_HandleTypeDef " + handle_name + ";\n";
+        contribution.extern_declarations += "extern USART_HandleTypeDef " + handle_name + ";\n";
     }
 
     return ParseResult<PeripheralContribution>{true, "", contribution};
