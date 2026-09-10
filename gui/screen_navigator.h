@@ -49,6 +49,17 @@ struct NavState
     // навигатор его не пересчитывает, только хранит последнее значение.
     int diagnosticErrors = 0;
 
+    // Импортированный (не наш собственный, см. MainWindow::onImportProject/
+    // reverse_import.h) проект — для него "Сгенерировать код" не полная
+    // кодогенерация, а точечное применение правок обратно в чужие файлы
+    // (MainWindow::applyReverseImportChanges). Ошибки диагностики здесь —
+    // это конфликты в САМОМ импортированном проекте (например, один физический
+    // вывод одновременно занят GPIO и Timer32-каналом в исходнике) — они не
+    // мешают точечному патчу конкретного изменённого поля и не должны
+    // блокировать кнопку, как это оправданно происходит для полной
+    // кодогенерации своего проекта (ТЗ §3.1.6.3).
+    bool reverseImportActive = false;
+
     // Для breadcrumb. Пусто, пока файл не открыт/не создан.
     QString activeProjectName;
 };
@@ -78,6 +89,7 @@ public:
 
     void goTo(Screen screen);
     void setDiagnosticErrors(int count);
+    void setReverseImportActive(bool value);
     void setGeneratedOnce(bool value);
     void setActiveProjectName(const QString& name);
 

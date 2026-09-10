@@ -1,0 +1,63 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Cargo Build",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "build",
+                "--release"
+            ],
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "Cargo Objcopy",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "objcopy",
+                "--release",
+                "--",
+                "-O",
+                "ihex",
+                "app.hex"
+            ],
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "Flash Mik32",
+            "type": "shell",
+            "command": "python3",
+            "args": [
+                "${HOME}/.platformio/packages/tool-mik32-uploader/mik32_upload.py",
+                "--run-openocd",
+                "--openocd-exec",
+                "/usr/bin/openocd",
+                "--openocd-scripts",
+                "${HOME}/.platformio/packages/tool-mik32-uploader/openocd-scripts/",
+                "app.hex",
+            ],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Build and Flash",
+            "dependsOn": [
+                "Cargo Build",
+                "Cargo Objcopy",
+                "Flash Mik32"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+        
+    ]
+}

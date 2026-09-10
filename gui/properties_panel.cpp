@@ -25,6 +25,8 @@
 #include <QVBoxLayout>
 
 #include <functional>
+#include <limits>
+#include <set>
 
 namespace
 {
@@ -131,6 +133,35 @@ namespace
     const std::vector<std::pair<const char*, const char*>> kSpiChipSelects = {
         {"CS0", "cs0"}, {"CS1", "cs1"}, {"CS2", "cs2"}, {"CS3", "cs3"},
     };
+
+    // schemas/timer32.json, fields.count_mode; ТЗ §3.1.5 п.2.
+    const std::vector<std::pair<const char*, const char*>> kTimer32CountModes = {
+        {"Прямой (forward)",            "forward"},
+        {"Обратный (reverse)",          "reverse"},
+        {"Двунаправленный (bidirectional)", "bidirectional"},
+    };
+
+    // schemas/timer32.json, item_fields.mode (внутри channels).
+    const std::vector<std::pair<const char*, const char*>> kTimer32ChannelModes = {
+        {"ШИМ (pwm)",         "pwm"},
+        {"Захват (capture)",  "capture"},
+        {"Сравнение (compare)", "compare"},
+    };
+
+    // schemas/timer32.json, item_fields.capture_edge.
+    const std::vector<std::pair<const char*, const char*>> kTimer32CaptureEdges = {
+        {"Нарастающий фронт (rising)",  "rising"},
+        {"Спадающий фронт (falling)",   "falling"},
+    };
+
+    // schemas/timer32.json: prescaler/top/ocr — прямые значения 32-битных
+    // регистров (uint32_t, 0..4294967295), а не HAL-перечисления. QSpinBox
+    // хранит значение в int (Qt API), поэтому верхняя граница здесь —
+    // INT_MAX, а не полный диапазон uint32_t: значения регистра выше 2^31-1
+    // на практике означают предделитель/период, растягивающий счёт на часы,
+    // так что это ограничение виджета не мешает реальному использованию;
+    // расхождение задокументировано в docs/implementations/timer32.md.
+    constexpr int kUint32SpinBoxMax = std::numeric_limits<int>::max();
 
     // --- Мелкие строители виджетов -----------------------------------------
     // Выпадающий список строковых значений. on_change получает уже само
@@ -267,6 +298,7 @@ void PropertiesPanel::refresh()
     else if (type_ == "timer16")  buildTimer16Form(layout, instance_);
     else if (type_ == "i2c")      buildI2cForm(layout, instance_);
     else if (type_ == "spi")      buildSpiForm(layout, instance_);
+    else if (type_ == "timer32")  buildTimer32Form(layout, instance_);
 }
 
 void PropertiesPanel::buildDisabledPlaceholder(QVBoxLayout* layout, int instance)
@@ -1014,4 +1046,380 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
         refresh();
     });
     layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
+{
+    const std::vector<int> indices = document_->blockIndices("timer32", instance);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString("<b>Timer32_%1</b>").arg(instance));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры (ТЗ §3.1.5)"));
+    QFormLayout* form = new QFormLayout(box);
+
+    // Блок, только что включённый через buildDisabledPlaceholder, приходит
+    // без ЭТИХ полей: gui/project_document.cpp, defaultBlock() не содержит
+    // ветки type=="timer32" (расхождение зафиксировано в финальном отчёте
+    // сессии). Поэтому ниже — тот же приём, что уже используется в этом
+    // файле для threshold_tx/own_address/target_address: подставить
+    // разумное значение по умолчанию в виджет и сразу же записать его
+    // обратно в документ через setField, а не просто в конце ждать, что
+    // пользователь тронет каждое поле руками.
+    const std::string count_mode = document_->field(block_index, "count_mode").is_string()
+        ? document_->field(block_index, "count_mode").get<std::string>() : "forward";
+    form->addRow(QString::fromUtf8("Режим счёта:"), stringCombo(
+        kTimer32CountModes, count_mode,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "count_mode", value);
+            emit documentChanged();
+        }));
+    document_->setField(block_index, "count_mode", count_mode);
+
+    QSpinBox* prescaler = new QSpinBox();
+    // mik32_hal_timer32.h, TIMER32_ClockConfigTypeDef.Prescaler: прямое
+    // значение регистра (uint32_t), не HAL-перечисление. Верхняя граница
+    // виджета — kUint32SpinBoxMax (см. комментарий у константы выше).
+    prescaler->setRange(0, kUint32SpinBoxMax);
+    const nlohmann::json prescaler_value = document_->field(block_index, "prescaler");
+    // 31 — предделитель из ручного прогона, зафиксированного в
+    // docs/implementations/timer32.md, «Собрано и прогнано» (не произвольное
+    // число).
+    prescaler->setValue(prescaler_value.is_number_integer() ? prescaler_value.get<int>() : 31);
+    connect(prescaler, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    {
+        document_->setField(block_index, "prescaler", value);
+        emit documentChanged();
+    });
+    form->addRow(QString::fromUtf8("Предделитель (PRESCALER):"), prescaler);
+    document_->setField(block_index, "prescaler", prescaler->value());
+
+    QSpinBox* top = new QSpinBox();
+    // mik32_hal_timer32.h, TIMER32_HandleTypeDef.Top: 32-битный регистр TOP.
+    top->setRange(0, kUint32SpinBoxMax);
+    const nlohmann::json top_value = document_->field(block_index, "top");
+    top->setValue(top_value.is_number_integer() ? top_value.get<int>() : 999);
+    connect(top, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    {
+        document_->setField(block_index, "top", value);
+        emit documentChanged();
+    });
+    form->addRow(QString::fromUtf8("Верхняя граница счёта (TOP):"), top);
+    document_->setField(block_index, "top", top->value());
+    layout->addWidget(box);
+
+    // Наблюдаемая частота счёта — mik32_hal_timer32.h: «Частота делится на
+    // Prescaler + 1» (ТЗ §3.1.8: HSI 32 МГц, knowledge_->timer32.sys_clk_hz).
+    const long sys_clk_hz = knowledge_->timer32.sys_clk_hz > 0
+        ? knowledge_->timer32.sys_clk_hz : 32000000;
+    const double frequency = static_cast<double>(sys_clk_hz) / (prescaler->value() + 1.0);
+    QLabel* summary = new QLabel(QString::fromUtf8("Частота счёта ≈ %1 Гц")
+        .arg(frequency, 0, 'f', 1));
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+
+    if (instance == 0)
+    {
+        // ТЗ §3.1.5: «для Timer32_0 – только настройку счётчика» — без
+        // каналов ШИМ/захвата/сравнения.
+        QLabel* note = new QLabel(QString::fromUtf8(
+            "Timer32_0 — базовый счётчик без каналов ШИМ/захвата/сравнения "
+            "(ТЗ §3.1.5). Каналы доступны только у Timer32_1 и Timer32_2."));
+        note->setWordWrap(true);
+        note->setEnabled(false);
+        layout->addWidget(note);
+    }
+    else
+    {
+        QGroupBox* channels_box = new QGroupBox(QString::fromUtf8(
+            "Каналы (0-4, ШИМ / захват / сравнение)"));
+        QVBoxLayout* channels_layout = new QVBoxLayout(channels_box);
+
+        nlohmann::json channels = document_->field(block_index, "channels");
+        if (!channels.is_array())
+        {
+            channels = nlohmann::json::array();
+        }
+
+        for (size_t i = 0; i < channels.size(); ++i)
+        {
+            buildTimer32ChannelRow(channels_layout, block_index, static_cast<int>(i), channels[i], instance);
+        }
+
+        QPushButton* add_channel = new QPushButton(QString::fromUtf8("Добавить канал"));
+        // schemas/timer32.json, channels.max_length=4 — у Timer32_1/2 ровно
+        // 4 канала (index 0-3), пятый добавлять некуда.
+        add_channel->setEnabled(channels.size() < 4);
+        connect(add_channel, &QPushButton::clicked, this, [this, block_index]()
+        {
+            nlohmann::json current = document_->field(block_index, "channels");
+            if (!current.is_array())
+            {
+                current = nlohmann::json::array();
+            }
+            std::set<int> used;
+            for (const auto& existing_channel : current)
+            {
+                if (existing_channel.contains("index") && existing_channel["index"].is_number_integer())
+                {
+                    used.insert(existing_channel["index"].get<int>());
+                }
+            }
+            int next_index = -1;
+            for (int candidate = 0; candidate <= 3; ++candidate)
+            {
+                if (!used.count(candidate))
+                {
+                    next_index = candidate;
+                    break;
+                }
+            }
+            if (next_index < 0)
+            {
+                return;  // кнопка задизейблена при 4 каналах — сюда попасть нельзя
+            }
+            nlohmann::json new_channel;
+            new_channel["index"] = next_index;
+            new_channel["mode"] = "pwm";
+            new_channel["ocr"] = 0;
+            new_channel["pwm_invert"] = false;
+            current.push_back(new_channel);
+            document_->setField(block_index, "channels", current);
+            emit documentChanged();
+            refresh();
+        });
+        channels_layout->addWidget(add_channel);
+        layout->addWidget(channels_box);
+
+        if (!channels.empty())
+        {
+            // Errata MIK32V2 v1.0.1 §9.1 уже покрыта кодогеном
+            // (codegen/project/timer32_contribution.cpp генерирует
+            // TIMER32_<N>_IRQHandler_Template со сбросом флага первой
+            // инструкцией) — здесь только справка, в том же
+            // информационном формате, что и предупреждение Errata §7.1 у
+            // SPI выше в этом файле.
+            QLabel* errata = new QLabel(QString::fromUtf8(
+                "ⓘ Errata п. 9.1: включение канала запускает его через "
+                "_IT-вариант HAL (другого пути нет), поэтому кодоген "
+                "обязательно генерирует шаблон обработчика прерывания со "
+                "сбросом флага первой инструкцией тела (см. "
+                "docs/implementations/timer32.md)."));
+            errata->setWordWrap(true);
+            layout->addWidget(errata);
+        }
+    }
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this, instance]()
+    {
+        document_->removeBlocks("timer32", instance);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildTimer32ChannelRow(QVBoxLayout* channels_layout, int block_index,
+                                             int channel_position, const nlohmann::json& channel,
+                                             int instance)
+{
+    const int channel_index = (channel.contains("index") && channel["index"].is_number_integer())
+        ? channel["index"].get<int>() : channel_position;
+    const std::string mode = (channel.contains("mode") && channel["mode"].is_string())
+        ? channel["mode"].get<std::string>() : "pwm";
+
+    QGroupBox* row_box = new QGroupBox(QString::fromUtf8("Канал (индекс %1)").arg(channel_index));
+    QVBoxLayout* row_layout = new QVBoxLayout(row_box);
+
+    QHBoxLayout* header_row = new QHBoxLayout();
+    header_row->addWidget(new QLabel(QString::fromUtf8("Аппаратный индекс:")));
+
+    // schemas/timer32.json, item_fields.index: 0-3, уникален внутри массива
+    // "channels" (проверяется парсером, см. tests/fixtures/
+    // timer32_duplicate_channel_index.json). GUI намеренно не запрещает
+    // дубликат заранее — как и у GPIO (buildGpioForm выше), диагностика
+    // ядра сообщит об ошибке после ввода, а не дублирует правило парсера
+    // своей копией.
+    const std::vector<int> kChannelIndices = {0, 1, 2, 3};
+    header_row->addWidget(intCombo(kChannelIndices, QString(), channel_index,
+        [this, block_index, channel_position](int value)
+        {
+            nlohmann::json channels = document_->field(block_index, "channels");
+            if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+            {
+                channels[channel_position]["index"] = value;
+                document_->setField(block_index, "channels", channels);
+                emit documentChanged();
+                refresh();  // фиксированный вывод (knowledge_->timer32) зависит от индекса
+            }
+        }));
+
+    QPushButton* remove = new QPushButton(QString::fromUtf8("Удалить канал"));
+    connect(remove, &QPushButton::clicked, this, [this, block_index, channel_position]()
+    {
+        nlohmann::json channels = document_->field(block_index, "channels");
+        if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+        {
+            channels.erase(channels.begin() + channel_position);
+            document_->setField(block_index, "channels", channels);
+            emit documentChanged();
+            refresh();
+        }
+    });
+    header_row->addWidget(remove);
+    row_layout->addLayout(header_row);
+
+    QFormLayout* form = new QFormLayout();
+    form->addRow(QString::fromUtf8("Режим канала:"), stringCombo(
+        kTimer32ChannelModes, mode,
+        [this, block_index, channel_position](const std::string& value)
+        {
+            nlohmann::json channels = document_->field(block_index, "channels");
+            if (!channels.is_array() || channel_position >= static_cast<int>(channels.size()))
+            {
+                return;
+            }
+            channels[channel_position]["mode"] = value;
+            // Подставляем минимально обязательные поля нового режима сразу
+            // при смене — тот же приём, что у buildI2cForm при смене mode
+            // (см. выше): иначе блок валиден на экране, но не в схеме, до
+            // первой ручной правки нового поля.
+            if (value == "pwm" || value == "compare")
+            {
+                if (!channels[channel_position].contains("ocr")
+                    || !channels[channel_position]["ocr"].is_number_integer())
+                {
+                    channels[channel_position]["ocr"] = 0;
+                }
+                if (value == "pwm" && !channels[channel_position].contains("pwm_invert"))
+                {
+                    channels[channel_position]["pwm_invert"] = false;
+                }
+            }
+            else if (value == "capture")
+            {
+                if (!channels[channel_position].contains("capture_edge")
+                    || !channels[channel_position]["capture_edge"].is_string())
+                {
+                    channels[channel_position]["capture_edge"] = "rising";
+                }
+                if (!channels[channel_position].contains("noise_filter"))
+                {
+                    channels[channel_position]["noise_filter"] = false;
+                }
+            }
+            document_->setField(block_index, "channels", channels);
+            emit documentChanged();
+            refresh();  // набор полей ниже зависит от режима именно этого канала
+        }));
+
+    if (mode == "pwm" || mode == "compare")
+    {
+        QSpinBox* ocr = new QSpinBox();
+        ocr->setRange(0, kUint32SpinBoxMax);
+        const nlohmann::json ocr_field = channel.contains("ocr") ? channel["ocr"] : nlohmann::json();
+        ocr->setValue(ocr_field.is_number_integer() ? ocr_field.get<int>() : 0);
+        connect(ocr, &QSpinBox::valueChanged, this, [this, block_index, channel_position](int value)
+        {
+            nlohmann::json channels = document_->field(block_index, "channels");
+            if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+            {
+                channels[channel_position]["ocr"] = value;
+                document_->setField(block_index, "channels", channels);
+                emit documentChanged();
+            }
+        });
+        form->addRow(QString::fromUtf8("OCR (сравнение/скважность):"), ocr);
+
+        // Бэкфилл, как и у top-level полей: свежедобавленный канал не
+        // должен оставаться без обязательного поля до первой ручной правки.
+        if (!ocr_field.is_number_integer())
+        {
+            nlohmann::json channels = document_->field(block_index, "channels");
+            if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+            {
+                channels[channel_position]["ocr"] = ocr->value();
+                document_->setField(block_index, "channels", channels);
+            }
+        }
+    }
+
+    if (mode == "pwm")
+    {
+        QCheckBox* invert = new QCheckBox(QString::fromUtf8("Инвертировать ШИМ"));
+        invert->setChecked(channel.contains("pwm_invert") && channel["pwm_invert"].is_boolean()
+            && channel["pwm_invert"].get<bool>());
+        connect(invert, &QCheckBox::toggled, this, [this, block_index, channel_position](bool checked)
+        {
+            nlohmann::json channels = document_->field(block_index, "channels");
+            if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+            {
+                channels[channel_position]["pwm_invert"] = checked;
+                document_->setField(block_index, "channels", channels);
+                emit documentChanged();
+            }
+        });
+        form->addRow(QString(), invert);
+    }
+
+    if (mode == "capture")
+    {
+        const std::string capture_edge = (channel.contains("capture_edge") && channel["capture_edge"].is_string())
+            ? channel["capture_edge"].get<std::string>() : "rising";
+        form->addRow(QString::fromUtf8("Фронт захвата:"), stringCombo(
+            kTimer32CaptureEdges, capture_edge,
+            [this, block_index, channel_position](const std::string& value)
+            {
+                nlohmann::json channels = document_->field(block_index, "channels");
+                if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+                {
+                    channels[channel_position]["capture_edge"] = value;
+                    document_->setField(block_index, "channels", channels);
+                    emit documentChanged();
+                }
+            }));
+
+        QCheckBox* noise = new QCheckBox(QString::fromUtf8("Фильтр помех"));
+        noise->setChecked(channel.contains("noise_filter") && channel["noise_filter"].is_boolean()
+            && channel["noise_filter"].get<bool>());
+        connect(noise, &QCheckBox::toggled, this, [this, block_index, channel_position](bool checked)
+        {
+            nlohmann::json channels = document_->field(block_index, "channels");
+            if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+            {
+                channels[channel_position]["noise_filter"] = checked;
+                document_->setField(block_index, "channels", channels);
+                emit documentChanged();
+            }
+        });
+        form->addRow(QString(), noise);
+    }
+    row_layout->addLayout(form);
+
+    // Вывод фиксирован датащитом на весь канал независимо от режима —
+    // knowledge_base/timer32.json, instance_channel_fixed_pin (см.
+    // docs/implementations/timer32.md, «Расхождения между буквой ТЗ и
+    // реальным железом», п.1).
+    auto per_instance = knowledge_->timer32.instance_channel_fixed_pin.find(instance);
+    if (per_instance != knowledge_->timer32.instance_channel_fixed_pin.end())
+    {
+        auto per_channel = per_instance->second.find(channel_index);
+        if (per_channel != per_instance->second.end())
+        {
+            QLabel* pin = new QLabel(QString::fromUtf8("Вывод (фиксирован аппаратно): GPIO_%1.%2")
+                .arg(per_channel->second.gpio_instance).arg(per_channel->second.pin));
+            pin->setWordWrap(true);
+            pin->setEnabled(false);
+            row_layout->addWidget(pin);
+        }
+    }
+
+    channels_layout->addWidget(row_box);
 }

@@ -297,3 +297,67 @@ CrossModuleValidationResult validatePinConflictsInDocument(
 
     return result;
 }
+
+namespace
+{
+    // MVP-классификация (см. cross_module_validator.h, комментарий у
+    // ClassifiedPinConflict::errata_note, и docs/implementations/
+    // cross_module_validation.md, раздел "MVP-ограничение классификации"):
+    // ни knowledge_base, ни PinConflict сейчас не несут структурного
+    // признака "этот конфликт — известная errata-совместимая ситуация".
+    // Единственный задокументированный кандидат на Warning — SPI Errata
+    // п.7.1 (instance=0, mode=master, manual_cs=false, chip_select=cs3,
+    // см. codegen/project/spi_contribution.cpp) — не порождает коллизию
+    // (gpio_instance, pin) в принципе на текущих данных knowledge_base/
+    // spi.json (cs2 и cs3 у instance=0 — разные физические пины), поэтому
+    // честная реализация без выдуманной эвристики — классифицировать
+    // ВСЕ найденные конфликты как Error. Как только в knowledge_base
+    // появится явный маркер вида "errata_compatible_conflict": true на
+    // конкретной комбинации параметров, эту функцию нужно будет расширить
+    // веткой Warning, читающей этот маркер — не гадать по побочным полям.
+    ClassifiedPinConflict classifyConflict(const PinConflict& conflict)
+    {
+        ClassifiedPinConflict classified;
+        classified.gpio_instance = conflict.gpio_instance;
+        classified.pin = conflict.pin;
+        classified.conflicting_owners = conflict.conflicting_owners;
+        classified.severity = ConflictSeverity::Error;
+        classified.errata_note = "";
+        return classified;
+    }
+
+    ClassifiedCrossModuleValidationResult classifyResult(const CrossModuleValidationResult& raw)
+    {
+        ClassifiedCrossModuleValidationResult classified{raw.success, raw.error, {}};
+        classified.conflicts.reserve(raw.conflicts.size());
+        for (const PinConflict& conflict : raw.conflicts)
+        {
+            classified.conflicts.push_back(classifyConflict(conflict));
+        }
+        return classified;
+    }
+}
+
+ClassifiedCrossModuleValidationResult classifyPinConflicts(
+    const std::string& config_path,
+    const UartKnowledge& uart_knowledge,
+    const Timer16Knowledge& timer16_knowledge,
+    const I2cKnowledge& i2c_knowledge,
+    const Timer32Knowledge& timer32_knowledge,
+    const SpiKnowledge& spi_knowledge)
+{
+    return classifyResult(validatePinConflicts(
+        config_path, uart_knowledge, timer16_knowledge, i2c_knowledge, timer32_knowledge, spi_knowledge));
+}
+
+ClassifiedCrossModuleValidationResult classifyPinConflictsInDocument(
+    const nlohmann::json& root,
+    const UartKnowledge& uart_knowledge,
+    const Timer16Knowledge& timer16_knowledge,
+    const I2cKnowledge& i2c_knowledge,
+    const Timer32Knowledge& timer32_knowledge,
+    const SpiKnowledge& spi_knowledge)
+{
+    return classifyResult(validatePinConflictsInDocument(
+        root, uart_knowledge, timer16_knowledge, i2c_knowledge, timer32_knowledge, spi_knowledge));
+}

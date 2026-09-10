@@ -3,6 +3,11 @@ build/
 build-win64/
 *.o
 generated_projects/
+# Cargo build output внутри вендоренного Rust-снэпшота (templates/
+# mik32_rust_hal_snapshot/{hal,pac,rt}/target) и внутри templates/
+# cargo_skeleton при локальных cargo check/build — не артефакт для коммита,
+# как и build/ выше для CMake (см. docs/implementations/rust_codegen.md).
+templates/**/target/
 packaging/windows/out/
 docs/
 CLAUDE.md

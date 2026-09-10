@@ -174,6 +174,7 @@ ParseResult<PeripheralContribution> buildGpioContribution(
         }
         irq_template << "}\n";
         contribution.helper_functions_text = irq_template.str();
+        contribution.irq_handler_function_name = irqHandlerFunctionName(instance);
     }
 
     // Демо-логика: переключение только тех пинов, что настроены на выход —

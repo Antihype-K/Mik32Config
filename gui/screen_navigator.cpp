@@ -15,6 +15,11 @@ void ScreenNavigator::setDiagnosticErrors(int count)
     state_.diagnosticErrors = count;
 }
 
+void ScreenNavigator::setReverseImportActive(bool value)
+{
+    state_.reverseImportActive = value;
+}
+
 void ScreenNavigator::setGeneratedOnce(bool value)
 {
     state_.hasGeneratedOnce = value;
@@ -49,7 +54,7 @@ NavViewModel ScreenNavigator::viewModel() const
     vm.topBarVisible = in_workspace;
     vm.tabStripVisible = in_workspace;
     vm.generateButtonVisible = in_workspace;
-    vm.generateButtonEnabled = in_workspace && state_.diagnosticErrors == 0;
+    vm.generateButtonEnabled = in_workspace && (state_.diagnosticErrors == 0 || state_.reverseImportActive);
     vm.codeTabEnabled = state_.hasGeneratedOnce;
 
     switch (state_.screen)

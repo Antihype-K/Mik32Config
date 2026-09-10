@@ -17,8 +17,12 @@
 #include <iostream>
 #include "utf8_arguments.h"
 #include <vector>
+#include <fstream>
+#include <sstream>
 #include "project_config.h"
 #include "project_codegen.h"
+#include "cmake_project_codegen.h"
+#include "rust_project_codegen.h"
 #include "gpio_knowledge.h"
 #include "uart_knowledge.h"
 #include "timer16_knowledge.h"
@@ -176,7 +180,45 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // 4. Сборка одного проекта из вкладов всех блоков.
+    // 4. language=rust уходит по отдельной ветке ДО C-специфичного шага 5
+    // ниже (generateProjectFirmware строит C-код через GpioKnowledge/
+    // UartKnowledge — для Rust-конфига это либо бесполезная работа, либо
+    // расхождение с тем, что реально поддерживает Rust-ветка, см.
+    // docs/implementations/rust_codegen.md). Кросс-модульная валидация пинов
+    // (шаг 3 выше) — общая для обоих языков, она уже отработала.
+    if (config_result.config->language == OutputLanguage::Rust)
+    {
+        ParseResult<GeneratedProjectFirmwareRust> rust_firmware_result =
+            generateProjectFirmwareRust(*config_result.config, emit_demo_loops);
+        if (!rust_firmware_result.success)
+        {
+            std::cerr << "Ошибка кодогенерации (Rust): " << rust_firmware_result.error << "\n";
+            return 1;
+        }
+
+        std::ifstream config_file(config_path);
+        std::stringstream config_stream;
+        config_stream << config_file.rdbuf();
+        const nlohmann::json project_json_copy = nlohmann::json::parse(config_stream.str(), nullptr, false);
+
+        CodegenWriteResult write_result = writeGeneratedRustProject(
+            *rust_firmware_result.config,
+            "templates/cargo_skeleton",
+            "templates/mik32_rust_hal_snapshot",
+            output_dir,
+            *config_result.config,
+            project_json_copy);
+        if (!write_result.success)
+        {
+            std::cerr << "Ошибка записи проекта (Rust): " << write_result.error << "\n";
+            return 1;
+        }
+
+        std::cout << "Проект сгенерирован в " << output_dir << "\n";
+        return 0;
+    }
+
+    // 5. Сборка одного проекта из вкладов всех блоков (C-ветка).
     ParseResult<GeneratedProjectFirmware> firmware_result =
         generateProjectFirmware(*config_result.config, knowledge, emit_demo_loops);
     if (!firmware_result.success)
@@ -185,13 +227,76 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // 5. Запись на диск поверх скелета PlatformIO.
-    CodegenWriteResult write_result =
-        writeGeneratedProject(*firmware_result.config, "templates/pio_skeleton", output_dir);
-    if (!write_result.success)
+    // 6. Запись на диск — тулчейн выбирает поле "toolchain" в самом конфиге
+    // (codegen/project/project_config.h, ToolchainKind), по умолчанию
+    // PlatformIO. CMake-путь (см. codegen/project/cmake_project_codegen.h)
+    // добавлен как второй, независимый способ упаковки — этот код 5 просто
+    // выбирает, какую из двух пар generate*/write* функций вызвать, без
+    // дублирования самой логики генерации.
+    // FreeRTOS v1 — только PlatformIO-путь (grill-сессия 2026-09-10):
+    // cmake_project_codegen.cpp не знает о freertos вовсе, поэтому молчаливая
+    // генерация "как будто без FreeRTOS" при toolchain=cmake была бы тихой
+    // потерей запрошенной пользователем функциональности — вместо этого
+    // явная ошибка, по тому же принципу, что и "тип периферии не поддержан".
+    if (config_result.config->freertos.enabled && config_result.config->toolchain == ToolchainKind::CMake)
     {
-        std::cerr << "Ошибка записи проекта: " << write_result.error << "\n";
+        std::cerr << "Ошибка: freertos.enabled=true пока не поддержан для toolchain=\"cmake\" "
+                     "(FreeRTOS v1 — только PlatformIO), используйте toolchain=\"platformio\" "
+                     "или уберите freertos.enabled\n";
         return 1;
+    }
+
+    if (config_result.config->toolchain == ToolchainKind::CMake)
+    {
+        ParseResult<GeneratedProjectFirmwareCmake> cmake_firmware_result =
+            generateProjectFirmwareCmake(*config_result.config, knowledge, emit_demo_loops);
+        if (!cmake_firmware_result.success)
+        {
+            std::cerr << "Ошибка кодогенерации (CMake): " << cmake_firmware_result.error << "\n";
+            return 1;
+        }
+
+        // project.mik32 в сгенерированном проекте — копия исходного конфига
+        // как есть (ProjectDocument::save в gui/ сериализует так же); проще
+        // перечитать файл заново, чем протаскивать исходный nlohmann::json
+        // через весь ParseResult<ProjectConfig>-пайплайн, который сознательно
+        // отбрасывает JSON после типизации.
+        std::ifstream config_file(config_path);
+        std::stringstream config_stream;
+        config_stream << config_file.rdbuf();
+        const nlohmann::json project_json_copy = nlohmann::json::parse(config_stream.str(), nullptr, false);
+
+        CodegenWriteResult write_result = writeGeneratedCmakeProject(
+            *cmake_firmware_result.config,
+            "templates/cmake_skeleton",
+            "templates/mik32_sdk_snapshot",
+            output_dir,
+            *config_result.config,
+            project_json_copy);
+        if (!write_result.success)
+        {
+            std::cerr << "Ошибка записи проекта (CMake): " << write_result.error << "\n";
+            return 1;
+        }
+    }
+    else
+    {
+        // pio_skeleton_freertos — тот же скелет + три build_flags -I на
+        // FreeRTOS-Kernel (templates/pio_skeleton_freertos/platformio.ini) —
+        // отдельный статический файл, а не подстановка в общий, чтобы
+        // не-FreeRTOS проекты (подавляющее большинство) не получали
+        // заведомо мёртвые -I на несуществующие в их src/ пути.
+        const std::string skeleton_dir = config_result.config->freertos.enabled
+            ? "templates/pio_skeleton_freertos"
+            : "templates/pio_skeleton";
+        CodegenWriteResult write_result = writeGeneratedProject(
+            *firmware_result.config, skeleton_dir, output_dir,
+            config_result.config->freertos, "templates/freertos_kernel_snapshot");
+        if (!write_result.success)
+        {
+            std::cerr << "Ошибка записи проекта: " << write_result.error << "\n";
+            return 1;
+        }
     }
 
     std::cout << "Проект сгенерирован в " << output_dir << "\n";

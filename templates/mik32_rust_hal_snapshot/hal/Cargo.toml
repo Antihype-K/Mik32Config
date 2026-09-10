@@ -1,0 +1,34 @@
+[package]
+name = "mik32v2-hal"
+version = "0.1.0"
+edition = "2024"
+
+# Путь-зависимости на pac/rt, а не git/crates.io-версии из исходного
+# mik32-hal-main/Cargo.toml — это Bundled-снэпшот (templates/mik32_rust_hal_snapshot),
+# который обязан собираться офлайн; "../pac" и "../rt" — соседние каталоги
+# внутри этого же снэпшота (см. docs/implementations/rust_codegen.md).
+[dependencies]
+mik32v2-pac = { path = "../pac" }
+mik32-rt = { path = "../rt" }
+
+# embedded-hal — версия с crates.io вместо непинованного git-репозитория
+# (исходный mik32-hal-main/Cargo.toml тянул его через
+# {git = "https://github.com/rust-embedded/embedded-hal.git"} без rev/tag —
+# несовместимо с офлайн-сборкой и невоспроизводимо). embedded-hal 1.0 —
+# стабильный релиз, тот же мажор, что уже используют embedded-hal-nb 1.0/
+# nb 1.1 ниже (были на crates.io и в исходном Cargo.toml без изменений).
+# riscv/critical-section из исходного Cargo.toml исключены: ни один из
+# вендоренных модулей (gpio.rs/serial.rs/rcc.rs/peripheral.rs/time.rs) их не
+# использует напрямую — были нужны только main.rs (демо-бинарник, не входит
+# в этот снэпшот, см. rust_codegen.md).
+embedded-hal = "1.0"
+embedded-hal-nb = "1.0.0"
+nb = "1.1.0"
+
+[profile.dev]
+panic = "abort"
+debug = true
+
+[profile.release]
+panic = "abort"
+debug = true

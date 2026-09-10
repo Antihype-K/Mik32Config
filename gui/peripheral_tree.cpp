@@ -57,8 +57,10 @@ PeripheralTree::PeripheralTree(QWidget* parent)
     }
     for (int instance = 0; instance <= 2; ++instance)
     {
-        // Timer32 требуется ТЗ §3.1.1, но парсера и кодогенерации для него ещё нет.
-        addLeaf(timers, QString("Timer32_%1").arg(instance), QString(), -1, false);
+        // ТЗ §3.1.1/§3.1.5 — парсер, кодоген (parser/timer32,
+        // codegen/project/timer32_contribution) и редактор свойств
+        // (buildTimer32Form) готовы, см. docs/implementations/timer32.md.
+        addLeaf(timers, QString("Timer32_%1").arg(instance), "timer32", instance, true);
     }
 
     auto* connectivity = new QTreeWidgetItem(tree_, QStringList("Connectivity"));

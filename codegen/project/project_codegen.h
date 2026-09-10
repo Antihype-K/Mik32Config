@@ -39,6 +39,7 @@
 #include "i2c_knowledge.h"
 #include "timer32_knowledge.h"
 #include "spi_knowledge.h"
+#include "freertos_parser.h"
 #include "parse_result.h"
 #include "codegen_result.h"
 
@@ -61,6 +62,12 @@ struct GeneratedProjectFirmware
     std::string mik32_init_h;
     std::string mik32_init_c;
     std::string main_c;
+
+    // Непусто, только если config.freertos.enabled — содержимое
+    // src/FreeRTOSConfig.h (codegen/project/freertos_codegen.h). mik32_init.h/.c
+    // FreeRTOS не меняет вовсе (см. project_codegen.cpp) — только main.c и
+    // этот новый файл.
+    std::string freertos_config_h;
 };
 
 // emit_demo_loops — генерировать ли в теле while(1) наблюдаемую демо-логику
@@ -89,9 +96,18 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
 // mergeUserCodeSections: содержимое между /* USER CODE BEGIN <ID> */ и
 // /* USER CODE END <ID> */ берётся из существующего файла (ТЗ §3.1.7.3).
 // mik32_init.{h,c} маркеров не имеют и переписываются целиком.
+// freertos_config/freertos_kernel_snapshot_dir — по умолчанию FreeRTOS
+// выключен (существующие вызовы из gui/main_window.cpp, src/main.cpp и
+// тестов не меняются вовсе). Когда freertos_config.enabled: дополнительно
+// пишет src/FreeRTOSConfig.h (той же транзакцией, что mik32_init.h/.c/main.c)
+// и копирует FreeRTOS-Kernel в src/FreeRTOS-Kernel/ (см. freertos_codegen.h) —
+// отдельным, не транзакционным шагом, тем же принципом skip_existing, что и
+// копирование skeleton_dir.
 CodegenWriteResult writeGeneratedProject(
     const GeneratedProjectFirmware& firmware,
     const std::string& skeleton_dir,
-    const std::string& output_project_dir);
+    const std::string& output_project_dir,
+    const FreeRtosConfig& freertos_config = FreeRtosConfig{},
+    const std::string& freertos_kernel_snapshot_dir = "templates/freertos_kernel_snapshot");
 
 #endif //MIK32_CONFIGURATOR_PROJECT_CODEGEN_H

@@ -1,0 +1,48 @@
+#
+# Этот файл генерируется только один раз и не перезаписывается при
+# повторных запусках генератора (см. writeGeneratedCargoProject,
+# codegen/project/rust_project_codegen.h) — пользователь может свободно
+# менять его, при регенерации трогаться не будет, если уже существует
+# в целевом каталоге. По тому же контракту, что templates/cmake_skeleton/
+# CMakeLists.txt и templates/pio_skeleton/platformio.ini.
+#
+[package]
+name = "mik32-firmware"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Три строки ниже подставляются генератором по значению
+# "rust_hal_source_mode" (project_config.h, HalSourceMode) — bundled/
+# network/local_path, тот же контракт, что hal_source_mode у CMake-ветки.
+# mik32v2-hal у upstream нет публичного репозитория, поэтому при ЛЮБОМ
+# режиме она берётся путём (см. docs/implementations/rust_codegen.md,
+# раздел «Что изменено относительно апстрима»).
+# MIK32_CONFIGURATOR: DEPENDENCIES
+
+# Нужны любому проекту, использующему mik32v2_hal::serial (Tx/Rx реализуют
+# трейты embedded-hal-nb, не голые методы) — версии те же, что в
+# templates/mik32_rust_hal_snapshot/hal/Cargo.toml.
+embedded-hal-nb = "1.0.0"
+nb = "1.1.0"
+
+# critical-section-single-hart регистрирует реализацию критической секции
+# (`critical_section::set_impl!`, см. riscv-0.12.1/src/critical_section.rs) —
+# без неё линковка падает с "undefined symbol: _critical_section_1_0_acquire",
+# потому что mik32v2-pac по умолчанию включает критическую секцию
+# (mik32v2-pac/Cargo.toml: `default = ["critical-section"]`), но сама её не
+# реализует — только объявляет зависимость. Версия "0.12" — та же, что уже
+# тянет mik32v2-pac (mik32v2-pac/Cargo.toml: `riscv = "0.12"`) — чтобы Cargo
+# унифицировал в один экземпляр крейта, а не слинковал два разных riscv.
+# Найдено настоящей линковкой, не по документации — см.
+# docs/implementations/rust_codegen.md.
+riscv = { version = "0.12", features = ["critical-section-single-hart"] }
+
+[profile.dev]
+panic = "abort"
+debug = true
+
+[profile.release]
+panic = "abort"
+debug = true
+opt-level = "s"

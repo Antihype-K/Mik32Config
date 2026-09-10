@@ -1,0 +1,12 @@
+# Копия конфигурации из mik32-rt/examples/.cargo/config.toml и
+# mik32-hal-main/.cargo/config.toml (docs/implementations/rust_codegen.md) —
+# оба независимо сходятся к одному и тому же таргету/rustflags, ничего не
+# меняется под конфигуратор.
+[build]
+target = "riscv32imc-unknown-none-elf"
+
+[target.riscv32imc-unknown-none-elf]
+rustflags = [
+    "-C",
+    "link-arg=-Tlink.x",
+]

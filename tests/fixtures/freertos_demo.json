@@ -1,0 +1,52 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "peripherals": [
+    {
+      "type": "gpio",
+      "instance": 2,
+      "pins": [6],
+      "mode": "output",
+      "pull": "none",
+      "drive_strength": "4mA"
+    },
+    {
+      "type": "gpio",
+      "instance": 1,
+      "pins": [3],
+      "mode": "output",
+      "pull": "none",
+      "drive_strength": "4mA"
+    },
+    {
+      "type": "gpio",
+      "instance": 0,
+      "pins": [8],
+      "mode": "input",
+      "pull": "none",
+      "drive_strength": "4mA",
+      "interrupts": [
+        {"pin": 8, "line": 0, "trigger": "falling"}
+      ]
+    }
+  ],
+  "freertos": {
+    "enabled": true,
+    "os_config": {
+      "tick_rate_hz": 100,
+      "max_priorities": 7,
+      "minimal_stack_size_words": 256,
+      "total_heap_size_bytes": 10240,
+      "use_preemption": true,
+      "stack_overflow_check": 0,
+      "heap_scheme": "heap_4"
+    },
+    "tasks": [
+      {"name": "LedBlinkTask", "priority": 1, "stack_size_words": 128},
+      {"name": "ButtonWatchTask", "priority": 2, "stack_size_words": 128}
+    ],
+    "semaphores": [
+      {"name": "ButtonSemaphore", "kind": "binary"}
+    ]
+  }
+}

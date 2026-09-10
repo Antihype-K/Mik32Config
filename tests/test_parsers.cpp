@@ -17,12 +17,16 @@
 #include <spi_knowledge.h>
 #include <project_config.h>
 #include <project_codegen.h>
+#include <cmake_project_codegen.h>
 
 #include "parse_result.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+
+namespace fs = std::filesystem;
 
 TEST(GpioParse, ParsesValidConfig)
 {
@@ -950,3 +954,434 @@ TEST(ProjectCodegen, SpiEmitsErrataCommentForAutoCsThreeOnInstanceZero)
 
     EXPECT_TRUE(contains(firmware_result.config->mik32_init_c, "Errata п. 7.1"));
 }
+
+// ===========================================================================
+// Часть 1/2: CMake-тулчейн (codegen/project/cmake_project_codegen.h) —
+// второй, независимый от PlatformIO способ упаковки проекта.
+// ===========================================================================
+namespace
+{
+    // generated_projects/ гитигнорится на уровне репозитория (CLAUDE.md,
+    // "Generated firmware projects stay private") — тестовые каталоги живут
+    // там же, по тому же принципу: build-мусор, а не источник.
+    fs::path scratchDirFor(const std::string& name)
+    {
+        return fs::path("../generated_projects") / ("test_cmake_" + name);
+    }
+
+    // Каталог-заглушка с той же структурой, что и
+    // ~/.platformio/packages/framework-mik32v2-sdk (hal/<модуль>/Include|Source,
+    // shared/<модуль>) — минимальный, но реальный на диске набор файлов,
+    // достаточный для проверки обхода ФС в writeGeneratedCmakeProject.
+    fs::path makeLocalHalDir(const std::string& name, bool with_hal_subdir)
+    {
+        const fs::path dir = scratchDirFor(name);
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        if (with_hal_subdir)
+        {
+            fs::create_directories(dir / "hal" / "core" / "Include", ec);
+            fs::create_directories(dir / "hal" / "core" / "Source", ec);
+            fs::create_directories(dir / "shared" / "periphery", ec);
+            std::ofstream(dir / "hal" / "core" / "Source" / "stub.c") << "/* stub */\n";
+            std::ofstream(dir / "hal" / "core" / "Include" / "stub.h") << "#pragma once\n";
+            std::ofstream(dir / "shared" / "periphery" / "stub.h") << "#pragma once\n";
+        }
+        return dir;
+    }
+
+    nlohmann::json readJsonFixture(const std::string& path)
+    {
+        return nlohmann::json::parse(readFileToString(path));
+    }
+}
+
+TEST(ProjectConfigParse, KeepsToolchainDefaultsWhenFieldsAbsent)
+{
+    // fixtures/project_all_peripherals.json не содержит ни одного из пяти
+    // новых полей — старые фикстуры обязаны продолжать парситься с дефолтами
+    // struct ProjectConfig, без единой правки самой фикстуры.
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_all_peripherals.json");
+    ASSERT_TRUE(result.success) << result.error;
+
+    EXPECT_EQ(result.config->toolchain, ToolchainKind::PlatformIO);
+    EXPECT_EQ(result.config->hal_source_mode, HalSourceMode::Bundled);
+    EXPECT_FALSE(result.config->per_type_files);
+    EXPECT_TRUE(result.config->hal_source_local_path.empty());
+    EXPECT_TRUE(result.config->compiler_path.empty());
+}
+
+TEST(ProjectConfigParse, ParsesCmakeToolchainFields)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_cmake_bundled.json");
+    ASSERT_TRUE(result.success) << result.error;
+
+    EXPECT_EQ(result.config->toolchain, ToolchainKind::CMake);
+    EXPECT_EQ(result.config->hal_source_mode, HalSourceMode::Bundled);
+    EXPECT_TRUE(result.config->per_type_files);
+}
+
+TEST(ProjectConfigParse, RejectsInvalidToolchainValue)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_invalid_toolchain.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(CmakeProjectCodegen, SplitsInitFilesPerPeripheralTypeWhenRequested)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_cmake_bundled.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ASSERT_TRUE(config_result.config->per_type_files);
+
+    ParseResult<GeneratedProjectFirmwareCmake> firmware_result =
+        generateProjectFirmwareCmake(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    std::vector<std::string> names;
+    for (const GeneratedFile& file : firmware_result.config->init_files)
+    {
+        names.push_back(file.relative_path);
+    }
+
+    EXPECT_NE(std::find(names.begin(), names.end(), "mik32_gpio_init.c"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "mik32_gpio_init.h"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "mik32_usart_init.c"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "mik32_usart_init.h"), names.end());
+    // Фикстура не запрашивает DMA — общего "остатка" быть не должно вовсе.
+    EXPECT_EQ(std::find(names.begin(), names.end(), "mik32_init.c"), names.end())
+        << "per_type_files=true без DMA не должен порождать общий mik32_init.c";
+
+    // Тот же конфиг с per_type_files=false — ровно та же пара файлов, что и
+    // в PlatformIO-пути (project_codegen.h).
+    ParseResult<ProjectConfig> combined_config_result = parseProjectConfig("fixtures/project_cmake_bundled.json");
+    ASSERT_TRUE(combined_config_result.success) << combined_config_result.error;
+    ProjectConfig combined_config = *combined_config_result.config;
+    combined_config.per_type_files = false;
+
+    ParseResult<GeneratedProjectFirmwareCmake> combined_firmware =
+        generateProjectFirmwareCmake(combined_config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(combined_firmware.success) << combined_firmware.error;
+    ASSERT_EQ(combined_firmware.config->init_files.size(), 2u);
+    EXPECT_EQ(combined_firmware.config->init_files[0].relative_path, "mik32_init.h");
+    EXPECT_EQ(combined_firmware.config->init_files[1].relative_path, "mik32_init.c");
+}
+
+TEST(CmakeProjectCodegen, RejectsNonexistentLocalHalPathWithoutCreatingOutputDir)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_cmake_bundled.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.hal_source_mode = HalSourceMode::LocalPath;
+    config.hal_source_local_path = "fixtures/this_path_does_not_exist_at_all";
+
+    ParseResult<GeneratedProjectFirmwareCmake> firmware_result =
+        generateProjectFirmwareCmake(config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const fs::path output_dir = scratchDirFor("no_output_created");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+    ASSERT_FALSE(fs::exists(output_dir));
+
+    const nlohmann::json project_json = readJsonFixture("fixtures/project_cmake_bundled.json");
+
+    CodegenWriteResult write_result = writeGeneratedCmakeProject(
+        *firmware_result.config,
+        "../templates/cmake_skeleton",
+        "../templates/mik32_sdk_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+
+    EXPECT_FALSE(write_result.success);
+    EXPECT_FALSE(fs::exists(output_dir));
+}
+
+// Транзакционность (ТЗ §3.2.2): ошибка обнаруживается ПОСЛЕ того, как
+// скелет уже скопирован во временный каталог (hal_source_local_path
+// существует, но без hal/ внутри — эта проверка идёт вторым шагом), поэтому
+// тест реально проверяет откат, а не "ничего не успело начаться".
+TEST(CmakeProjectCodegen, TransactionRollsBackOnMidwayFailureWithoutTouchingExistingOutput)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_cmake_bundled.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.hal_source_mode = HalSourceMode::LocalPath;
+
+    const fs::path bad_local = makeLocalHalDir("bad_local_no_hal", /*with_hal_subdir=*/false);
+    config.hal_source_local_path = bad_local.string();
+
+    ParseResult<GeneratedProjectFirmwareCmake> firmware_result =
+        generateProjectFirmwareCmake(config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const fs::path output_dir = scratchDirFor("rollback_output");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+    fs::create_directories(output_dir / "src", ec);
+    {
+        std::ofstream marker(output_dir / "PREEXISTING.txt");
+        marker << "user content, must survive\n";
+    }
+    {
+        std::ofstream existing_main(output_dir / "src" / "main.c");
+        existing_main << "/* old main.c, must survive */\n";
+    }
+
+    const nlohmann::json project_json = readJsonFixture("fixtures/project_cmake_bundled.json");
+
+    CodegenWriteResult write_result = writeGeneratedCmakeProject(
+        *firmware_result.config,
+        "../templates/cmake_skeleton",
+        "../templates/mik32_sdk_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+
+    EXPECT_FALSE(write_result.success);
+
+    // Ничего нового не появилось...
+    EXPECT_FALSE(fs::exists(output_dir / "mik32-sdk"));
+    EXPECT_FALSE(fs::exists(output_dir / "CMakeLists.txt"));
+    EXPECT_FALSE(fs::exists(output_dir / "project.mik32"));
+    // ...а то, что было, осталось побайтово тем же самым.
+    ASSERT_TRUE(fs::exists(output_dir / "PREEXISTING.txt"));
+    ASSERT_TRUE(fs::exists(output_dir / "src" / "main.c"));
+    EXPECT_EQ(readFileToString((output_dir / "PREEXISTING.txt").string()), "user content, must survive\n");
+    EXPECT_EQ(readFileToString((output_dir / "src" / "main.c").string()), "/* old main.c, must survive */\n");
+
+    // Осколка временного каталога рядом не осталось.
+    bool leftover_tmp_found = false;
+    for (const auto& entry : fs::directory_iterator(output_dir.parent_path()))
+    {
+        if (entry.path().filename().string().rfind(output_dir.filename().string() + ".tmp-generating-", 0) == 0)
+        {
+            leftover_tmp_found = true;
+        }
+    }
+    EXPECT_FALSE(leftover_tmp_found);
+
+    fs::remove_all(output_dir, ec);
+    fs::remove_all(bad_local, ec);
+}
+
+// Не входит в обязательный список из 6 сценариев спецификации, но проверяет
+// то, ради чего вся транзакция затевалась: успешная запись — маркеры
+// CMakeLists.txt реально заполняются реальным (не выдуманным) списком
+// файлов, найденных обходом только что скопированного mik32-sdk/.
+TEST(CmakeProjectCodegen, WritesProjectSuccessfullyAndFillsCMakeMarkersFromRealFileTree)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_cmake_bundled.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.hal_source_mode = HalSourceMode::LocalPath;
+
+    const fs::path local_hal = makeLocalHalDir("good_local_hal", /*with_hal_subdir=*/true);
+    config.hal_source_local_path = local_hal.string();
+    config.compiler_path = "/opt/riscv/bin/riscv32-unknown-elf-gcc";
+
+    ParseResult<GeneratedProjectFirmwareCmake> firmware_result =
+        generateProjectFirmwareCmake(config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const fs::path output_dir = scratchDirFor("write_success");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    const nlohmann::json project_json = readJsonFixture("fixtures/project_cmake_bundled.json");
+
+    CodegenWriteResult write_result = writeGeneratedCmakeProject(
+        *firmware_result.config,
+        "../templates/cmake_skeleton",
+        "../templates/mik32_sdk_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    EXPECT_TRUE(fs::exists(output_dir / "CMakeLists.txt"));
+    EXPECT_TRUE(fs::exists(output_dir / "cmake" / "mik32-riscv-toolchain.cmake"));
+    EXPECT_TRUE(fs::exists(output_dir / "mik32-sdk" / "hal" / "core" / "Source" / "stub.c"));
+    EXPECT_TRUE(fs::exists(output_dir / "mik32-sdk" / "shared" / "periphery" / "stub.h"));
+    EXPECT_TRUE(fs::exists(output_dir / "src" / "mik32_gpio_init.c"));
+    EXPECT_TRUE(fs::exists(output_dir / "src" / "main.c"));
+    EXPECT_TRUE(fs::exists(output_dir / "project.mik32"));
+
+    const std::string cmakelists = readFileToString((output_dir / "CMakeLists.txt").string());
+    EXPECT_TRUE(contains(cmakelists, "src/mik32_gpio_init.c"));
+    EXPECT_TRUE(contains(cmakelists, "src/main.c"));
+    EXPECT_TRUE(contains(cmakelists, "mik32-sdk/hal/core/Source/stub.c"));
+    EXPECT_TRUE(contains(cmakelists, "mik32-sdk/hal/core/Include"));
+    EXPECT_TRUE(contains(cmakelists, "mik32-sdk/shared/periphery"));
+    EXPECT_TRUE(contains(cmakelists, "set(MIK32_COMPILER_PATH \"/opt/riscv/bin/riscv32-unknown-elf-gcc\""));
+
+    fs::remove_all(output_dir, ec);
+    fs::remove_all(local_hal, ec);
+}
+// === НАЧАЛО: временные тесты транзакционности (координатор: перенести этот блок) ===
+//
+// Проверяют транзакционную запись writeGeneratedProject (codegen/project/
+// project_codegen.cpp): mik32_init.h/.c/main.c пишутся во временный
+// каталог-брат src_dir и переносятся в src_dir только при полном успехе;
+// при любой ошибке src_dir остаётся нетронутым. См.
+// docs/implementations/project_codegen.md, раздел "Транзакционная запись
+// writeGeneratedProject".
+#include <filesystem>
+
+namespace
+{
+    namespace test_fs = std::filesystem;
+
+    // Уникальный каталог под системным temp — тесты этого блока не должны
+    // трогать generated_projects/ и не должны видеть друг друга.
+    test_fs::path makeTempTestOutputDir(const std::string& test_name)
+    {
+        const auto now_ns = static_cast<unsigned long long>(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        return test_fs::temp_directory_path() /
+            ("mik32_cfg_transactional_test_" + test_name + "_" + std::to_string(now_ns));
+    }
+
+    std::string readBinaryFileToString(const test_fs::path& path)
+    {
+        std::ifstream file(path, std::ios::binary);
+        std::ostringstream buffer;
+        buffer << file.rdbuf();
+        return buffer.str();
+    }
+}
+
+// Случай 1: успешная генерация в пустой каталог — файлы на диске побайтово
+// совпадают с тем, что вернул generateProjectFirmware (то же самое, что
+// писала прежняя, нетранзакционная версия writeGeneratedProject, для случая
+// без существующего main.c для слияния).
+TEST(ProjectCodegenWriteTransactional, SuccessfulWriteMatchesGeneratedFirmwareByteForByte)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/gpio_codegen_output.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const test_fs::path output_dir = makeTempTestOutputDir("success");
+    std::error_code cleanup_error;
+    test_fs::remove_all(output_dir, cleanup_error);
+
+    const CodegenWriteResult write_result =
+        writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string());
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const test_fs::path src_dir = output_dir / "src";
+    EXPECT_EQ(readBinaryFileToString(src_dir / "mik32_init.h"), firmware_result.config->mik32_init_h);
+    EXPECT_EQ(readBinaryFileToString(src_dir / "mik32_init.c"), firmware_result.config->mik32_init_c);
+    EXPECT_EQ(readBinaryFileToString(src_dir / "main.c"), firmware_result.config->main_c);
+    // Скелет тоже должен был скопироваться (вне транзакции, но частью того
+    // же вызова) — platformio.ini как маркер того, что копирование прошло.
+    EXPECT_TRUE(test_fs::exists(output_dir / "platformio.ini"));
+
+    test_fs::remove_all(output_dir, cleanup_error);
+}
+
+// Случай 2: сбой на середине — output_project_dir/src существует как обычный
+// файл, а не каталог, поэтому перенос из временного каталога в src_dir
+// гарантированно проваливается на шаге create_directories(src_dir). Ожидание:
+// writeGeneratedProject возвращает success=false, "src" остаётся ровно тем
+// же обычным файлом (не превращается в каталог, не приобретает потерянных
+// mik32_init.h/.c/main.c), и никакого временного каталога-брата не остаётся.
+TEST(ProjectCodegenWriteTransactional, MidTransactionFailureLeavesOutputDirUntouched)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/gpio_codegen_output.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const test_fs::path output_dir = makeTempTestOutputDir("midfailure");
+    std::error_code cleanup_error;
+    test_fs::remove_all(output_dir, cleanup_error);
+    test_fs::create_directories(output_dir);
+
+    // "src" — обычный файл, не каталог: любая попытка создать/писать внутрь
+    // src_dir гарантированно проваливается.
+    const test_fs::path bogus_src_path = output_dir / "src";
+    {
+        std::ofstream bogus_src_file(bogus_src_path, std::ios::binary);
+        bogus_src_file << "не каталог";
+    }
+    ASSERT_TRUE(test_fs::exists(bogus_src_path));
+    ASSERT_FALSE(test_fs::is_directory(bogus_src_path));
+
+    const CodegenWriteResult write_result =
+        writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string());
+
+    EXPECT_FALSE(write_result.success);
+    // "src" остаётся ровно тем же обычным файлом.
+    ASSERT_TRUE(test_fs::exists(bogus_src_path));
+    EXPECT_FALSE(test_fs::is_directory(bogus_src_path));
+    EXPECT_EQ(readBinaryFileToString(bogus_src_path), "не каталог");
+
+    // Никаких временных каталогов-братьев (src_tmp_*) не осталось валяться.
+    bool leftover_temp_dir_found = false;
+    for (const auto& entry : test_fs::directory_iterator(output_dir))
+    {
+        if (entry.path().filename().u8string().rfind("src_tmp_", 0) == 0)
+        {
+            leftover_temp_dir_found = true;
+        }
+    }
+    EXPECT_FALSE(leftover_temp_dir_found);
+
+    test_fs::remove_all(output_dir, cleanup_error);
+}
+
+// Случай 3: повторная генерация поверх существующего main.c с ручной правкой
+// внутри USER CODE-секции — правка обязана пережить транзакционную обёртку
+// точно так же, как переживала прежнюю прямую запись.
+TEST(ProjectCodegenWriteTransactional, PreservesUserCodeAcrossRegeneration)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_all_peripherals.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const test_fs::path output_dir = makeTempTestOutputDir("usercode");
+    std::error_code cleanup_error;
+    test_fs::remove_all(output_dir, cleanup_error);
+
+    const CodegenWriteResult first_write =
+        writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string());
+    ASSERT_TRUE(first_write.success) << first_write.error;
+
+    const test_fs::path main_c_path = output_dir / "src" / "main.c";
+    std::string main_c_on_disk = readBinaryFileToString(main_c_path);
+    ASSERT_NE(main_c_on_disk.find("/* USER CODE BEGIN Loop */"), std::string::npos);
+
+    // Пользователь вручную вставляет строку внутрь USER CODE-секции Loop.
+    const std::string marker_begin = "/* USER CODE BEGIN Loop */";
+    const size_t insert_at = main_c_on_disk.find(marker_begin) + marker_begin.size();
+    const std::string user_marker_line = "\n        MY_HAND_WRITTEN_MARKER_CALL();";
+    main_c_on_disk.insert(insert_at, user_marker_line);
+    {
+        std::ofstream edited_file(main_c_path, std::ios::binary | std::ios::trunc);
+        edited_file << main_c_on_disk;
+    }
+
+    // Регенерация той же прошивки поверх уже существующего проекта.
+    const CodegenWriteResult second_write =
+        writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string());
+    ASSERT_TRUE(second_write.success) << second_write.error;
+
+    const std::string main_c_after_regeneration = readBinaryFileToString(main_c_path);
+    EXPECT_NE(main_c_after_regeneration.find("MY_HAND_WRITTEN_MARKER_CALL();"), std::string::npos);
+    // mik32_init.h/.c маркеров не имеют и должны совпасть со свежей генерацией.
+    EXPECT_EQ(readBinaryFileToString(output_dir / "src" / "mik32_init.c"), firmware_result.config->mik32_init_c);
+
+    test_fs::remove_all(output_dir, cleanup_error);
+}
+// === КОНЕЦ: временные тесты транзакционности ===

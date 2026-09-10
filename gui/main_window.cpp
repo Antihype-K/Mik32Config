@@ -9,8 +9,10 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QHBoxLayout>
+#include <QCursor>
 #include <QInputDialog>
 #include <QLabel>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
@@ -24,6 +26,7 @@
 #include <QTextStream>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <map>
 #include <vector>
 
@@ -31,6 +34,9 @@
 #include "properties_panel.h"
 #include "diagnostics_panel.h"
 #include "project_config.h"
+#include "cmake_project_codegen.h"
+#include "rust_project_codegen.h"
+#include "reverse_import_apply.h"
 #include "home_screen.h"
 #include "new_project_screen.h"
 #include "project_manager_screen.h"
@@ -61,7 +67,7 @@ namespace
     // Совпадает с набором листьев дерева, помеченных supported=true
     // (gui/peripheral_tree.cpp), и с диспетчером parseProjectDocument.
     const std::vector<std::pair<const char*, int>> kSupportedBlocks = {
-        {"gpio", 3}, {"uart", 2}, {"timer16", 3}, {"i2c", 2}, {"spi", 2},
+        {"gpio", 3}, {"uart", 2}, {"timer16", 3}, {"i2c", 2}, {"spi", 2}, {"timer32", 3},
     };
 }
 
@@ -78,6 +84,7 @@ MainWindow::MainWindow(const ProjectKnowledge& knowledge,
     buildLayout();
 
     properties_->setContext(&document_, &knowledge_);
+    project_manager_screen_->setContext(&document_);
     package_view_->setPackage(package_);
 
     loadRecentProjects();
@@ -98,6 +105,15 @@ void MainWindow::buildMenus()
     QAction* open_action = file_menu->addAction(QString::fromUtf8("&Открыть..."));
     open_action->setShortcut(QKeySequence::Open);
     connect(open_action, &QAction::triggered, this, [this]() { onOpen(); });
+
+    // ТЗ на эту фичу не заведён отдельным пунктом — решение из /grill-me:
+    // "вычленить периферию" из ЧУЖОГО, не сгенерированного этим конфигуратором
+    // проекта (docs/implementations/reverse_import.md). Отдельный пункт
+    // меню, а не подмешано в "Открыть...", потому что результат — другого
+    // происхождения документ (reverse_import_active_=true), который "Сгенерировать
+    // код" обрабатывает иначе (см. onGenerate/applyReverseImportChanges).
+    QAction* import_action = file_menu->addAction(QString::fromUtf8("&Импортировать проект..."));
+    connect(import_action, &QAction::triggered, this, &MainWindow::onImportProject);
 
     QAction* save_action = file_menu->addAction(QString::fromUtf8("&Сохранить"));
     save_action->setShortcut(QKeySequence::Save);
@@ -190,6 +206,8 @@ void MainWindow::buildLayout()
     connect(home_screen_, &HomeScreen::recentProjectChosen, this, &MainWindow::onHomeRecentProjectChosen);
     connect(new_project_screen_, &NewProjectScreen::createRequested,
             this, &MainWindow::onNewProjectCreateRequested);
+    connect(project_manager_screen_, &ProjectManagerScreen::documentChanged,
+            this, &MainWindow::onDocumentChanged);
 
     screens_stack_ = new QStackedWidget();
     // Порядок добавления обязан совпадать с NavViewModel::stackIndex
@@ -365,6 +383,11 @@ bool MainWindow::openPath(const QString& path)
                               QString::fromStdString(error));
         return false;
     }
+    // Открытие обычного project.json завершает режим импорта, если он был
+    // активен (см. onImportProject) — иначе "Сгенерировать код" попытался бы
+    // точечно патчить файлы ПРЕЖНЕГО импортированного проекта данными
+    // только что открытого, не имеющего с ним ничего общего, документа.
+    reverse_import_active_ = false;
     properties_->showPeripheral(QString(), -1);
     refreshEverything();
 
@@ -376,6 +399,125 @@ bool MainWindow::openPath(const QString& path)
     navigator_.goTo(Screen::Config);
     applyViewModel();
     return true;
+}
+
+void MainWindow::onImportProject()
+{
+    if (!confirmDiscardChanges())
+    {
+        return;
+    }
+
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, QString::fromUtf8("Импортировать проект — выберите каталог с исходниками"));
+    if (dir.isEmpty())
+    {
+        return;
+    }
+
+    reverse_import::ImportedProject imported = reverse_import::importProjectFromDirectory(dir.toStdString());
+
+    if (imported.document["peripherals"].empty())
+    {
+        QString message = QString::fromUtf8(
+            "В каталоге \"%1\" не найдено ни одной распознаваемой периферии (UART/I2C/"
+            "Timer32/GPIO).").arg(dir);
+        if (!imported.notes.empty())
+        {
+            message += QString::fromUtf8("\n\nПодробности:\n- ") +
+                QString::fromStdString(imported.notes.front());
+        }
+        QMessageBox::warning(this, QString::fromUtf8("Периферия не найдена"), message);
+        return;
+    }
+
+    document_.loadFromDocument(imported.document);
+    reverse_import_root_ = dir;
+    imported_project_ = imported;
+    reverse_import_active_ = true;
+
+    properties_->showPeripheral(QString(), -1);
+    refreshEverything();
+    navigator_.goTo(Screen::Config);
+    applyViewModel();
+
+    statusBar()->showMessage(
+        QString::fromUtf8("Импортировано блоков: %1 из %2")
+            .arg(imported.document["peripherals"].size())
+            .arg(dir), 8000);
+
+    // Пользователь должен видеть, что НЕ распознано, а не только то, что
+    // распознано — цель фичи. Полный список может быть длинным (десятки
+    // файлов), поэтому в диалог — а не в statusBar на несколько секунд.
+    if (!imported.notes.empty())
+    {
+        QString details;
+        for (const std::string& note : imported.notes)
+        {
+            details += QString::fromStdString(note) + "\n\n";
+        }
+        QMessageBox::information(this, QString::fromUtf8("Импорт: %1 предупреждени(е/я/й)")
+                                            .arg(imported.notes.size()),
+                                  details.trimmed());
+    }
+}
+
+void MainWindow::applyReverseImportChanges()
+{
+    const reverse_import::ApplyReport report = reverse_import::applyImportedChanges(
+        imported_project_.document["peripherals"], document_.document()["peripherals"],
+        imported_project_.block_provenance);
+
+    int success_count = 0;
+    QString failures;
+    for (const reverse_import::PatchResult& result : report.patch_results)
+    {
+        if (result.success)
+        {
+            ++success_count;
+        }
+        else
+        {
+            failures += QString::fromStdString(result.error) + "\n";
+        }
+    }
+
+    QString unpatchable_text;
+    for (const reverse_import::UnpatchableChange& change : report.unpatchable)
+    {
+        unpatchable_text += QString::fromUtf8("Блок #%1, поле \"%2\": %3\n")
+            .arg(change.block_index)
+            .arg(QString::fromStdString(change.field_name))
+            .arg(QString::fromStdString(change.reason));
+    }
+
+    // Переимпорт с диска, а не ручная сборка нового "снимка ДО": строки,
+    // которые applyImportedChanges успешно переписал, теперь на диске другие,
+    // а те, что не удалось (unpatchable) — остались как были ДО правки в GUI.
+    // Документ после этого обязан отражать РЕАЛЬНОЕ содержимое файлов, а не
+    // то, что пользователь временно видел в PropertiesPanel — иначе GUI
+    // соврёт о том, что действительно сохранено (см. reverse_import_apply.h).
+    reverse_import::ImportedProject reimported =
+        reverse_import::importProjectFromDirectory(reverse_import_root_.toStdString());
+    document_.loadFromDocument(reimported.document);
+    imported_project_ = reimported;
+    refreshEverything();
+
+    QString summary = QString::fromUtf8("Применено строк: %1.").arg(success_count);
+    if (!failures.isEmpty())
+    {
+        summary += QString::fromUtf8("\n\nНе удалось записать (изменилось на диске с момента "
+                                     "импорта?):\n") + failures;
+    }
+    if (!unpatchable_text.isEmpty())
+    {
+        summary += QString::fromUtf8("\n\nЭти поля изменены в GUI, но НЕ записаны обратно в "
+                                     "исходник (нет строки-источника или значение "
+                                     "нередактируемое) — значение в GUI сброшено на то, что "
+                                     "реально лежит на диске:\n") + unpatchable_text;
+    }
+
+    QMessageBox::information(this, QString::fromUtf8("Применение изменений к исходникам"), summary);
 }
 
 bool MainWindow::onSave()
@@ -440,6 +582,48 @@ void MainWindow::onGenerate()
     // тот, который требует ТЗ §3.1.6: сначала per-module валидация, затем
     // кросс-модульная, и только потом генерация. Ошибки уже посчитаны панелью
     // диагностики — второй раз их не проверяем, а спрашиваем у неё.
+    //
+    // Импортированный (не наш собственный) проект — исключение из этого
+    // порядка: кнопка "Сгенерировать код" здесь означает не полную
+    // кодогенерацию по шаблону, а точечное применение правок обратно в
+    // чужие файлы (см. onImportProject/applyReverseImportChanges) — ровно
+    // так, как это было описано изначально: "меняем бодрейт — он меняется
+    // просто в переменной, остальное не трогается". Полная schema-валидация
+    // (parseProjectDocument) здесь неприменима буквально — часть значений в
+    // чужом проекте намеренно не приводится к нашим enum'ам (см.
+    // uart_reverse_mapper: "нестандартный baud_rate сохраняется как есть, а
+    // не подгоняется"), а диагностические "Ошибки" здесь обычно означают
+    // конфликты, УЖЕ существующие в исходном коде проекта (например, один
+    // физический вывод одновременно занят GPIO и Timer32-каналом или I2C) —
+    // точечная правка изменённого поля их не создаёт и не устраняет.
+    // Кнопка (см. ScreenNavigator::viewModel — generateButtonEnabled) для
+    // такого проекта остаётся включённой при ошибках, но нажатие требует
+    // ЯВНОГО подтверждения "игнорировать и продолжить" — тот же принцип
+    // explicit acknowledgment, что уже применяется ниже к предупреждениям
+    // для обычных проектов (userflow.drawio, ЭТАП 4), а не молчаливый обход.
+    if (reverse_import_active_)
+    {
+        if (diagnostics_->errorCount() > 0)
+        {
+            const QMessageBox::StandardButton answer = QMessageBox::warning(
+                this, QString::fromUtf8("В импортированном проекте есть ошибки"),
+                QString::fromUtf8(
+                    "Диагностика нашла %1 ошибк(у/и) — как правило, это конфликты, уже "
+                    "существующие в исходном коде самого проекта (например, один вывод "
+                    "занят сразу двумя периферийными блоками), а не что-то, что вносит "
+                    "точечное применение правки. Игнорировать и всё равно применить "
+                    "изменённые поля?")
+                    .arg(diagnostics_->errorCount()),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (answer != QMessageBox::Yes)
+            {
+                return;
+            }
+        }
+        applyReverseImportChanges();
+        return;
+    }
+
     if (diagnostics_->errorCount() > 0)
     {
         QMessageBox::critical(this, QString::fromUtf8("Генерация невозможна"),
@@ -482,17 +666,94 @@ void MainWindow::onGenerate()
         return;
     }
 
-    ParseResult<GeneratedProjectFirmware> firmware = generateProjectFirmware(
-        *parsed.config, knowledge_, demo_loops_action_->isChecked());
-    if (!firmware.success)
+    // FreeRTOS v1 — только PlatformIO (см. src/main.cpp, тот же явный отказ
+    // вместо молчаливой генерации без FreeRTOS при toolchain=cmake).
+    if (parsed.config->freertos.enabled && parsed.config->toolchain == ToolchainKind::CMake)
     {
-        QMessageBox::critical(this, QString::fromUtf8("Ошибка кодогенерации"),
-                              QString::fromStdString(firmware.error));
+        QMessageBox::critical(this, QString::fromUtf8("Несовместимые настройки"),
+            QString::fromUtf8("FreeRTOS пока не поддержан для тулчейна CMake (только PlatformIO). "
+                              "Выберите тулчейн PlatformIO во вкладке «Настройки генерации» или "
+                              "отключите FreeRTOS."));
         return;
     }
 
-    CodegenWriteResult written = writeGeneratedProject(
-        *firmware.config, paths_.skeleton_dir, output_dir.toStdString());
+    // language=rust уходит по отдельной ветке ДО C-специфичного пути ниже —
+    // тот же порядок, что в src/main.cpp (CLI), и то же обоснование
+    // (generateProjectFirmware — C-специфичный пайплайн, не должен звать
+    // Rust-конфиг вовсе, см. docs/implementations/rust_codegen.md).
+    if (parsed.config->language == OutputLanguage::Rust)
+    {
+        ParseResult<GeneratedProjectFirmwareRust> rust_firmware = generateProjectFirmwareRust(
+            *parsed.config, demo_loops_action_->isChecked());
+        if (!rust_firmware.success)
+        {
+            QMessageBox::critical(this, QString::fromUtf8("Ошибка кодогенерации"),
+                                  QString::fromStdString(rust_firmware.error));
+            return;
+        }
+
+        CodegenWriteResult rust_written = writeGeneratedRustProject(
+            *rust_firmware.config, paths_.cargo_skeleton_dir, paths_.rust_hal_snapshot_dir,
+            output_dir.toStdString(), *parsed.config, document_.document());
+        if (!rust_written.success)
+        {
+            QMessageBox::critical(this, QString::fromUtf8("Ошибка записи проекта"),
+                                  QString::fromStdString(rust_written.error));
+            return;
+        }
+
+        QMessageBox::information(this, QString::fromUtf8("Проект сгенерирован"),
+            QString::fromUtf8("Проект записан в:\n%1\n\nСодержимое между маркерами "
+                              "USER CODE BEGIN/END в src/main.rs сохранено.")
+                .arg(output_dir));
+        statusBar()->showMessage(QString::fromUtf8("Сгенерировано: %1").arg(output_dir), 5000);
+
+        code_preview_screen_->setContentsRust(
+            readFileUtf8(output_dir + "/src/main.rs"),
+            readFileUtf8(output_dir + "/Cargo.toml"));
+        navigator_.setGeneratedOnce(true);
+        navigator_.goTo(Screen::CodePreview);
+        applyViewModel();
+        return;
+    }
+
+    // Тулчейн выбирает поле "toolchain" в самом конфиге (project_config.h,
+    // ToolchainKind) — тот же switch, что и в src/main.cpp (CLI), иначе GUI
+    // молча игнорирует выбор в ProjectManagerScreen и всегда пишет PlatformIO.
+    CodegenWriteResult written;
+    if (parsed.config->toolchain == ToolchainKind::CMake)
+    {
+        ParseResult<GeneratedProjectFirmwareCmake> firmware = generateProjectFirmwareCmake(
+            *parsed.config, knowledge_, demo_loops_action_->isChecked());
+        if (!firmware.success)
+        {
+            QMessageBox::critical(this, QString::fromUtf8("Ошибка кодогенерации"),
+                                  QString::fromStdString(firmware.error));
+            return;
+        }
+
+        written = writeGeneratedCmakeProject(
+            *firmware.config, paths_.cmake_skeleton_dir, paths_.sdk_snapshot_dir,
+            output_dir.toStdString(), *parsed.config, document_.document());
+    }
+    else
+    {
+        ParseResult<GeneratedProjectFirmware> firmware = generateProjectFirmware(
+            *parsed.config, knowledge_, demo_loops_action_->isChecked());
+        if (!firmware.success)
+        {
+            QMessageBox::critical(this, QString::fromUtf8("Ошибка кодогенерации"),
+                                  QString::fromStdString(firmware.error));
+            return;
+        }
+
+        const std::string skeleton_dir = parsed.config->freertos.enabled
+            ? paths_.skeleton_dir_freertos
+            : paths_.skeleton_dir;
+        written = writeGeneratedProject(
+            *firmware.config, skeleton_dir, output_dir.toStdString(),
+            parsed.config->freertos, paths_.freertos_kernel_snapshot_dir);
+    }
     if (!written.success)
     {
         QMessageBox::critical(this, QString::fromUtf8("Ошибка записи проекта"),
@@ -737,12 +998,60 @@ void MainWindow::refreshEverything()
     // MAKET_DESIGN_TZ.md — генератор и есть единственный источник счётчика
     // ошибок).
     navigator_.setDiagnosticErrors(diagnostics_->errorCount());
+    navigator_.setReverseImportActive(reverse_import_active_);
     const QString project_name = document_.filePath().empty()
         ? QString::fromUtf8("(без имени)")
         : QFileInfo(QString::fromStdString(document_.filePath())).baseName();
     navigator_.setActiveProjectName(project_name);
     project_manager_screen_->setProjectInfo(
         QString::fromStdString(document_.filePath()), packageSummary());
+
+    // Настройки генерации (CMake-тулчейн, codegen/project/project_config.h):
+    // верхнеуровневые поля документа, отсутствие ключа (старый файл проекта)
+    // читается как null и подставляется дефолт тем же способом, что и ниже
+    // для projectSetting("toolchain") — ProjectDocument::projectSetting не
+    // кидает исключение на отсутствующий ключ, см. её комментарий.
+    const nlohmann::json language_setting = document_.projectSetting("language");
+    const bool is_rust = language_setting.is_string() && language_setting.get<std::string>() == "rust";
+
+    // "rust" — синтетическое значение пункта комбобокса (ProjectManagerScreen),
+    // не значение самого поля JSON "toolchain" (там для Rust лежит "cargo"
+    // или поле вовсе отсутствует, см. project_config.cpp) — см. комментарий
+    // над toolchain_combo_ в project_manager_screen.cpp.
+    const nlohmann::json toolchain_setting = document_.projectSetting("toolchain");
+    // Rust использует ОТДЕЛЬНУЮ пару полей (rust_hal_source_mode/
+    // rust_hal_source_local_path, project_config.h) — общий виджет
+    // hal_source_section_ переиспользуется для обоих языков, но пишет и
+    // читает разные ключи документа в зависимости от того, что выбрано.
+    const nlohmann::json hal_source_mode_setting =
+        document_.projectSetting(is_rust ? "rust_hal_source_mode" : "hal_source_mode");
+    const nlohmann::json hal_source_local_path_setting =
+        document_.projectSetting(is_rust ? "rust_hal_source_local_path" : "hal_source_local_path");
+    const nlohmann::json compiler_path_setting = document_.projectSetting("compiler_path");
+    const nlohmann::json per_type_files_setting = document_.projectSetting("per_type_files");
+    project_manager_screen_->setGenerationSettings(
+        is_rust
+            ? QString::fromUtf8("rust")
+            : (toolchain_setting.is_string()
+                ? QString::fromStdString(toolchain_setting.get<std::string>())
+                : QString::fromUtf8("platformio")),
+        hal_source_mode_setting.is_string()
+            ? QString::fromStdString(hal_source_mode_setting.get<std::string>())
+            : QString::fromUtf8("bundled"),
+        hal_source_local_path_setting.is_string()
+            ? QString::fromStdString(hal_source_local_path_setting.get<std::string>())
+            : QString(),
+        compiler_path_setting.is_string()
+            ? QString::fromStdString(compiler_path_setting.get<std::string>())
+            : QString(),
+        per_type_files_setting.is_boolean() && per_type_files_setting.get<bool>());
+
+    // FreeRTOS (parser/freertos/freertos_parser.h): тот же приём, что и
+    // остальные projectSetting выше — отсутствующий ключ читается как JSON
+    // null и передаётся как есть, дефолты подставляет сам виджет
+    // (FreeRtosSettingsWidget::setValue).
+    project_manager_screen_->setFreeRtosSettings(document_.projectSetting("freertos"));
+
     applyViewModel();
 }
 
@@ -853,8 +1162,157 @@ void MainWindow::onPinClicked(int pin_number)
             }
         }
     }
-    statusBar()->showMessage(QString::fromUtf8("Вывод %1 (GPIO_%2.%3) свободен")
-        .arg(pin_number).arg(*pin->gpio_instance).arg(*pin->gpio_pin), 5000);
+    // Вывод свободен: предложить, чем его занять, а не только сообщить об
+    // этом статус-строкой. GPIO применим всегда (любой мультиплексируемый
+    // вывод можно объявить обычным входом/выходом); остальные пункты —
+    // только для периферии, у которой этот КОНКРЕТНЫЙ вывод жёстко закреплён
+    // датащитом (knowledge_base/*_knowledge.h, instance_fixed_pins и
+    // аналоги) и которая ещё не добавлена в документ — предлагать "добавить
+    // I2C_0", когда I2C_0 уже сконфигурирован (пусть даже другими пинами
+    // того же набора), бессмысленно: instance у i2c/uart/spi/timer16 либо
+    // включён целиком, либо нет.
+    const int gpio_instance = *pin->gpio_instance;
+    const int gpio_pin = *pin->gpio_pin;
+
+    struct FixedCandidate { QString type; int instance; };
+    std::vector<FixedCandidate> candidates;
+
+    for (const auto& entry : knowledge_.uart.instance_fixed_pins)
+    {
+        const int instance = entry.first;
+        const auto& fixed = entry.second;
+        const bool matches =
+            (fixed.tx.gpio_instance == gpio_instance && fixed.tx.pin == gpio_pin) ||
+            (fixed.rx.gpio_instance == gpio_instance && fixed.rx.pin == gpio_pin) ||
+            (fixed.rts.gpio_instance == gpio_instance && fixed.rts.pin == gpio_pin) ||
+            (fixed.cts.gpio_instance == gpio_instance && fixed.cts.pin == gpio_pin);
+        if (matches && document_.blockIndices("uart", instance).empty())
+        {
+            candidates.push_back({"uart", instance});
+        }
+    }
+
+    for (const auto& entry : knowledge_.i2c.instance_fixed_pins)
+    {
+        const int instance = entry.first;
+        const bool matches = std::any_of(entry.second.begin(), entry.second.end(),
+            [&](const I2cKnowledge::FixedPin& fp)
+            { return fp.gpio_instance == gpio_instance && fp.pin == gpio_pin; });
+        if (matches && document_.blockIndices("i2c", instance).empty())
+        {
+            candidates.push_back({"i2c", instance});
+        }
+    }
+
+    // SPI: только SCK/MOSI/MISO/SS_IN (instance_fixed_pins) — эти четыре
+    // резервируются при включении instance независимо от режима. Выводы
+    // ручного выбора ведомых (instance_chip_select_pin) сюда намеренно не
+    // включены: конкретный CS-вывод определяется полем "chip_select",
+    // которое блок по умолчанию (ProjectDocument::defaultBlock) всегда
+    // ставит в "cs0" — добавление блока по клику на, например, cs3 создало
+    // бы блок, который этот самый вывод не занимает, то есть меню солгало
+    // бы о том, что произойдёт. Выбор конкретного CS остаётся за панелью
+    // свойств.
+    for (const auto& entry : knowledge_.spi.instance_fixed_pins)
+    {
+        const int instance = entry.first;
+        const bool matches = std::any_of(entry.second.begin(), entry.second.end(),
+            [&](const SpiKnowledge::FixedPin& fp)
+            { return fp.gpio_instance == gpio_instance && fp.pin == gpio_pin; });
+        if (matches && document_.blockIndices("spi", instance).empty())
+        {
+            candidates.push_back({"spi", instance});
+        }
+    }
+
+    for (const auto& entry : knowledge_.timer16.instance_fixed_pwm_pin)
+    {
+        const int instance = entry.first;
+        const auto& fixed = entry.second;
+        if (fixed.gpio_instance == gpio_instance && fixed.pin == gpio_pin
+            && document_.blockIndices("timer16", instance).empty())
+        {
+            candidates.push_back({"timer16", instance});
+        }
+    }
+
+    // Timer32 намеренно исключён: его фиксированные выводы закреплены не за
+    // instance целиком, а за парой (instance, channel_index)
+    // (Timer32Knowledge::instance_channel_fixed_pin), а канал — это часть
+    // конфигурации канала, которую ProjectDocument::defaultBlock для типа
+    // "timer32" не заполняет (в отличие от gpio/uart/timer16/i2c/spi). Кроме
+    // того, "timer32" ещё не входит в kSupportedBlocks этого файла — дерево
+    // блоков его тоже пока не показывает как включаемый. Добавление пункта
+    // меню создавало бы блок, который построением не проходит
+    // schema-валидацию без дополнительной ручной настройки в панели свойств.
+
+    QMenu menu(this);
+    QAction* gpio_action = menu.addAction(QString::fromUtf8("Настроить как GPIO (вход/выход)"));
+
+    std::vector<QAction*> candidate_actions;
+    candidate_actions.reserve(candidates.size());
+    for (const FixedCandidate& candidate : candidates)
+    {
+        candidate_actions.push_back(menu.addAction(
+            QString::fromUtf8("Добавить %1").arg(defaultTitle(candidate.type, candidate.instance))));
+    }
+
+    QAction* chosen = menu.exec(QCursor::pos());
+    if (chosen == nullptr)
+    {
+        return;
+    }
+
+    if (chosen == gpio_action)
+    {
+        // Найти существующий GPIO-блок этого instance (первую из возможных
+        // нескольких групп — см. gui/properties_panel.cpp, buildGpioForm) и
+        // дописать в него этот пин, если его там ещё нет; иначе создать
+        // блок со значениями по умолчанию и сразу подставить именно этот
+        // пин вместо дефолтного [0] (ProjectDocument::defaultBlock).
+        const std::vector<int> indices = document_.blockIndices("gpio", gpio_instance);
+        int block_index;
+        if (indices.empty())
+        {
+            block_index = document_.addBlock("gpio", gpio_instance);
+            document_.setField(block_index, "pins", nlohmann::json::array({gpio_pin}));
+        }
+        else
+        {
+            block_index = indices.front();
+            nlohmann::json pins = document_.field(block_index, "pins");
+            if (!pins.is_array())
+            {
+                pins = nlohmann::json::array();
+            }
+            const bool already_present = std::any_of(pins.begin(), pins.end(),
+                [&](const nlohmann::json& item)
+                { return item.is_number_integer() && item.get<int>() == gpio_pin; });
+            if (!already_present)
+            {
+                pins.push_back(gpio_pin);
+                document_.setField(block_index, "pins", pins);
+            }
+        }
+        tree_->selectPeripheral("gpio", gpio_instance);
+        properties_->showPeripheral("gpio", gpio_instance);
+        refreshEverything();
+        return;
+    }
+
+    for (size_t i = 0; i < candidate_actions.size(); ++i)
+    {
+        if (chosen != candidate_actions[i])
+        {
+            continue;
+        }
+        const FixedCandidate& candidate = candidates[i];
+        document_.addBlock(candidate.type.toStdString(), candidate.instance);
+        tree_->selectPeripheral(candidate.type, candidate.instance);
+        properties_->showPeripheral(candidate.type, candidate.instance);
+        refreshEverything();
+        return;
+    }
 }
 
 void MainWindow::onJumpToBlock(int block_index)
@@ -944,6 +1402,7 @@ void MainWindow::onNewProjectCreateRequested(const NewProjectParams& params)
     }
 
     document_ = std::move(fresh);
+    reverse_import_active_ = false;  // см. openPath — тот же случай, новый проект с нуля
     properties_->setContext(&document_, &knowledge_);
     properties_->showPeripheral(QString(), -1);
     pushRecentProject(target_path);

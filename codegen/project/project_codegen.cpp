@@ -9,8 +9,11 @@
 #include "i2c_contribution.h"
 #include "timer32_contribution.h"
 #include "spi_contribution.h"
+#include "freertos_codegen.h"
 #include "user_code_markers.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
@@ -178,6 +181,134 @@ namespace
 
         return true;
     }
+
+    // Транзакционная запись src/: тот же принцип, что и у нового CMake-пути
+    // (docs/implementations/dma.md, cmake_project_codegen.cpp — пишем во
+    // временный каталог-брат, при успехе переносим, при ошибке удаляем
+    // временный каталог целиком), перенесённый на уже существующий
+    // PlatformIO-путь. До этой правки mik32_init.h/.c/main.c писались
+    // последовательно прямо в src_dir: сбой на третьем файле (main.c) уже
+    // оставлял бы src_dir с двумя перезаписанными файлами и без отката —
+    // нарушение ТЗ §3.2.2 (транзакционность записи).
+
+    // Уникальное имя временного каталога-брата src/ — sibling внутри
+    // output_project_dir, а не подкаталог src/, поэтому его создание не
+    // зависит от того, существует ли (или чем является) сам src_dir на
+    // диске: если src — обычный файл, а не каталог (сценарий "сбой на
+    // середине" в тестах), запись во временный каталог всё равно проходит
+    // успешно, и ошибка проявляется только на шаге переноса в src_dir —
+    // именно там, где она проявилась бы и в реальности.
+    fs::path makeUniqueTempSiblingDir(const fs::path& src_dir)
+    {
+        static std::atomic<unsigned long long> counter{0};
+        const auto now_ns = static_cast<unsigned long long>(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        fs::path candidate;
+        do
+        {
+            const unsigned long long suffix = now_ns ^ (++counter);
+            candidate = src_dir;
+            candidate += ("_tmp_" + std::to_string(suffix));
+        }
+        while (fs::exists(candidate));
+        return candidate;
+    }
+
+    // Пишет mik32_init.h/.c/main.c в temp_dir. При первой же ошибке
+    // возвращает диагностику — вызывающий код удаляет temp_dir целиком, не
+    // трогая src_dir вообще (записи в src_dir на этом шаге ещё не было).
+    CodegenWriteResult writeFilesIntoTempDir(
+        const fs::path& temp_dir,
+        const GeneratedProjectFirmware& firmware,
+        const std::string& main_c_to_write)
+    {
+        std::vector<std::pair<const char*, const std::string*>> files_to_write = {
+            {"mik32_init.h", &firmware.mik32_init_h},
+            {"mik32_init.c", &firmware.mik32_init_c},
+            {"main.c", &main_c_to_write},
+        };
+        // FreeRTOSConfig.h — часть той же транзакции, только когда FreeRTOS
+        // включён (freertos_config_h непусто ровно в этом случае, см.
+        // generateProjectFirmware); без FreeRTOS список остаётся прежним
+        // из трёх файлов, полностью совместимым с golden-тестами PlatformIO-пути.
+        if (!firmware.freertos_config_h.empty())
+        {
+            files_to_write.push_back({"FreeRTOSConfig.h", &firmware.freertos_config_h});
+        }
+
+        for (const auto& [file_name, content] : files_to_write)
+        {
+            // Запись всегда бинарная (см. writeUtf8PathFile/readUtf8PathFile):
+            // текстовый режим на Windows разворачивает каждый '\n' в CRLF, и
+            // один и тот же конфиг даёт на Windows и на Linux побайтово
+            // разные mik32_init.c/main.c (проверено сравнением выводов двух
+            // сборок — расходились ровно переводы строк). Кодогенератор
+            // обязан быть детерминированным относительно платформы:
+            // golden-фикстуры tests/fixtures/expected_*.c хранятся с LF, а
+            // сгенерированный проект пользователь кладёт под контроль версий.
+            const FileWriteOutcome write_result =
+                writeUtf8PathFile((temp_dir / file_name).u8string(), *content);
+            if (!write_result.success)
+            {
+                return CodegenWriteResult{
+                    false, std::string("Не удалось записать файл src/") + file_name + write_result.diagnostic};
+            }
+        }
+
+        return CodegenWriteResult{true, ""};
+    }
+
+    // Переносит уже полностью записанные файлы из temp_dir в src_dir.
+    //
+    // ОГРАНИЧЕНИЕ (та же оговорка, что и у cmake_project_codegen.cpp,
+    // docs/implementations/dma.md): полная атомарность гарантирована только
+    // при первой генерации в новый/пустой src_dir. При регенерации поверх
+    // уже существующих файлов перенос идёт файл за файлом через fs::rename;
+    // если он оборвётся на середине (например, второй файл не переносится
+    // из-за внешнего вмешательства в файловую систему между вызовами), уже
+    // перенесённые файлы останутся перенесёнными — это НЕ облачная
+    // транзакция с откатом уже перемещённого. Что гарантировано в любом
+    // случае: пока сама запись во временный каталог не завершилась успехом
+    // целиком, src_dir не тронут вообще (см. writeFilesIntoTempDir выше).
+    CodegenWriteResult moveTempDirFilesIntoSrcDir(const fs::path& temp_dir, const fs::path& src_dir)
+    {
+        std::error_code fs_error;
+        fs::create_directories(src_dir, fs_error);
+        if (fs_error)
+        {
+            return CodegenWriteResult{false, "Не удалось создать каталог src/: " + fs_error.message()};
+        }
+
+        // Список файлов берётся из содержимого temp_dir (не фиксированным
+        // массивом): FreeRTOSConfig.h присутствует там, только если её
+        // записал writeFilesIntoTempDir (FreeRTOS включён) — этот шаг обязан
+        // перенести ровно то, что реально было записано. Ручной цикл с
+        // it.increment(fs_error), а не range-based for: у второго между
+        // итерациями вызывается бросающий исключение operator++(), а весь
+        // остальной код файла принципиально работает через error_code
+        // (см. copySkeletonInto выше).
+        fs::directory_iterator it(temp_dir, fs_error);
+        if (fs_error)
+        {
+            return CodegenWriteResult{false, "Не удалось перечислить временный каталог: " + fs_error.message()};
+        }
+        for (const fs::directory_iterator end; it != end; it.increment(fs_error))
+        {
+            if (fs_error)
+            {
+                return CodegenWriteResult{false, "Не удалось перечислить временный каталог: " + fs_error.message()};
+            }
+            const fs::path file_name = it->path().filename();
+            fs::rename(it->path(), src_dir / file_name, fs_error);
+            if (fs_error)
+            {
+                return CodegenWriteResult{
+                    false, "Не удалось перенести файл src/" + file_name.u8string() + ": " + fs_error.message()};
+            }
+        }
+
+        return CodegenWriteResult{true, ""};
+    }
 }
 
 ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
@@ -298,7 +429,10 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         contributions.push_back(*result.config);
     }
 
-    if (contributions.empty())
+    // freertos.enabled=true допускает нулевую периферию (см. project_config.cpp)
+    // — тогда contributions пуст на законных основаниях, mik32_init.h/.c
+    // получатся пустыми (безвредно), а main.c соберёт FreeRTOS-ветка ниже.
+    if (contributions.empty() && !config.freertos.enabled)
     {
         return makeError("Нет ни одного блока периферии для генерации");
     }
@@ -420,22 +554,32 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         externs << contribution.extern_declarations;
     }
 
-    bool any_loop_delay = false;
-    std::ostringstream loop_bodies;
-    for (const PeripheralContribution& contribution : contributions)
+    // --- ветка FreeRTOS (grill-сессия 2026-09-10) ---------------------------
+    // buildFreeRtosProjectPieces вызывается ДО принятия решения про
+    // loop_body/wants_loop_delay ниже: FreeRTOS-веткой они не используются
+    // вовсе (demo-цикл через while(1) не генерируется, пока планировщик не
+    // возвращается) — это не отдельный флаг, а прямое следствие того, что
+    // FreeRTOS-ветка main.c просто не читает contribution.loop_body.
+    FreeRtosProjectPieces freertos_pieces;
+    if (config.freertos.enabled)
     {
-        if (contribution.loop_body.empty())
+        std::vector<std::string> gpio_irq_handler_function_names;
+        for (const PeripheralContribution& contribution : contributions)
         {
-            continue;
+            if (!contribution.irq_handler_function_name.empty())
+            {
+                gpio_irq_handler_function_names.push_back(contribution.irq_handler_function_name);
+            }
         }
-        // Своя область видимости на каждый вклад — обоснование в
-        // codegen/project/peripheral_contribution.h (иначе одноимённые
-        // локальные переменные двух demo-логик столкнулись бы).
-        loop_bodies << "        /* " << contribution.label << " */\n"
-                       "        {\n"
-                    << contribution.loop_body
-                    << "        }\n";
-        any_loop_delay = any_loop_delay || contribution.wants_loop_delay;
+        ParseResult<FreeRtosProjectPieces> freertos_result =
+            buildFreeRtosProjectPieces(config.freertos, console_available, gpio_irq_handler_function_names);
+        if (!freertos_result.success)
+        {
+            return makeError(freertos_result.error);
+        }
+        freertos_pieces = *freertos_result.config;
+        firmware.freertos_config_h = freertos_pieces.freertos_config_h;
+        appendUnique(main_c_includes, freertos_pieces.main_c_includes);
     }
 
     std::ostringstream main_c;
@@ -447,6 +591,10 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     if (!externs.str().empty())
     {
         main_c << externs.str() << "\n";
+    }
+    if (config.freertos.enabled)
+    {
+        main_c << freertos_pieces.globals_and_prototypes;
     }
     main_c << "void SystemClock_Config(void);\n"
               "\n"
@@ -467,8 +615,50 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     main_c << "\n"
               "    /* USER CODE BEGIN Init */\n"
               "    /* USER CODE END Init */\n"
-              "\n"
-              "    while (1)\n"
+              "\n";
+
+    if (config.freertos.enabled)
+    {
+        // Ни demo-цикла, ни while(1): vTaskStartScheduler() не возвращается
+        // в штатной работе (grill-решение 2026-09-10) — peripheral
+        // contribution.loop_body здесь сознательно не читается.
+        main_c << freertos_pieces.object_and_task_creation
+               << "\n"
+                  "    vTaskStartScheduler();\n"
+                  "\n"
+                  "    while (1)\n"
+                  "    {\n"
+                  "    }\n"
+                  "}\n"
+                  "\n"
+               << kSystemClockConfigDefinition
+               << "\n"
+               << freertos_pieces.task_and_timer_definitions
+               << "\n"
+               << freertos_pieces.trap_handler_glue;
+        firmware.main_c = main_c.str();
+        return ParseResult<GeneratedProjectFirmware>{true, "", firmware};
+    }
+
+    bool any_loop_delay = false;
+    std::ostringstream loop_bodies;
+    for (const PeripheralContribution& contribution : contributions)
+    {
+        if (contribution.loop_body.empty())
+        {
+            continue;
+        }
+        // Своя область видимости на каждый вклад — обоснование в
+        // codegen/project/peripheral_contribution.h (иначе одноимённые
+        // локальные переменные двух demo-логик столкнулись бы).
+        loop_bodies << "        /* " << contribution.label << " */\n"
+                       "        {\n"
+                    << contribution.loop_body
+                    << "        }\n";
+        any_loop_delay = any_loop_delay || contribution.wants_loop_delay;
+    }
+
+    main_c << "    while (1)\n"
               "    {\n"
               // Маркеры ТЗ §3.1.7.3: всё тело цикла (включая demo-логику)
               // лежит ВНУТРИ секции, чтобы пользователь мог заменить его
@@ -492,7 +682,9 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
 CodegenWriteResult writeGeneratedProject(
     const GeneratedProjectFirmware& firmware,
     const std::string& skeleton_dir,
-    const std::string& output_project_dir)
+    const std::string& output_project_dir,
+    const FreeRtosConfig& freertos_config,
+    const std::string& freertos_kernel_snapshot_dir)
 {
     std::error_code fs_error;
 
@@ -516,13 +708,28 @@ CodegenWriteResult writeGeneratedProject(
         }
     }
 
-    const fs::path src_dir = utf8Path(output_project_dir) / "src";
-    fs::create_directories(src_dir, fs_error);
-    if (fs_error)
+    // FreeRTOS-Kernel — независимая от src/-транзакции копия (как и сам
+    // skeleton_dir выше): идемпотентна по построению (copyDirectoryTreeSkipExisting),
+    // поэтому без внешнего "уже скопировано" guard'а — повторные вызовы либо
+    // ничего не делают (всё уже на месте), либо докатывают то, чего не было.
+    if (freertos_config.enabled)
     {
-        return CodegenWriteResult{false, "Не удалось создать каталог src/: " + fs_error.message()};
+        const CodegenWriteResult kernel_write =
+            writeFreeRtosKernelSource(freertos_config, freertos_kernel_snapshot_dir, output_project_dir);
+        if (!kernel_write.success)
+        {
+            return kernel_write;
+        }
     }
 
+    const fs::path src_dir = utf8Path(output_project_dir) / "src";
+
+    // USER CODE-слияние читает СУЩЕСТВУЮЩИЙ main.c из настоящего src_dir —
+    // это чтение, а не запись, поэтому вне транзакции. Если src_dir ещё не
+    // существует или существует, но не как каталог (например, обычный файл
+    // с этим именем — сценарий сбоя, проверяемый тестами), fs::exists на
+    // составном пути src_dir/main.c просто возвращает false, и слияние
+    // отрабатывает так же, как для первой генерации — исключений нет.
     std::string main_c_to_write = firmware.main_c;
     const fs::path main_c_path = src_dir / "main.c";
     if (fs::exists(main_c_path))
@@ -534,27 +741,34 @@ CodegenWriteResult writeGeneratedProject(
         }
     }
 
-    const std::pair<const char*, const std::string*> files_to_write[] = {
-        {"mik32_init.h", &firmware.mik32_init_h},
-        {"mik32_init.c", &firmware.mik32_init_c},
-        {"main.c", &main_c_to_write},
-    };
-
-    for (const auto& [file_name, content] : files_to_write)
+    // --- Транзакция: временный каталог-брат src/ ---------------------------
+    // 1) пишем все три файла во временный каталог; 2) при любой ошибке —
+    // удаляем временный каталог целиком и выходим, не тронув src_dir; 3) при
+    // полном успехе — переносим файлы во src_dir (создавая его при
+    // необходимости) и убираем временный каталог.
+    const fs::path temp_dir = makeUniqueTempSiblingDir(src_dir);
+    fs::create_directories(temp_dir, fs_error);
+    if (fs_error)
     {
-        // Запись всегда бинарная (см. writeUtf8PathFile/readUtf8PathFile):
-        // текстовый режим на Windows разворачивает каждый '\n' в CRLF, и один
-        // и тот же конфиг даёт на Windows и на Linux побайтово разные
-        // mik32_init.c/main.c (проверено сравнением выводов двух сборок —
-        // расходились ровно переводы строк). Кодогенератор обязан быть
-        // детерминированным относительно платформы: golden-фикстуры
-        // tests/fixtures/expected_*.c хранятся с LF, а сгенерированный проект
-        // пользователь кладёт под контроль версий.
-        const FileWriteOutcome write_result = writeUtf8PathFile((src_dir / file_name).u8string(), *content);
-        if (!write_result.success)
-        {
-            return CodegenWriteResult{false, std::string("Не удалось записать файл src/") + file_name + write_result.diagnostic};
-        }
+        return CodegenWriteResult{false, "Не удалось создать временный каталог для записи src/: " + fs_error.message()};
+    }
+
+    const CodegenWriteResult write_result = writeFilesIntoTempDir(temp_dir, firmware, main_c_to_write);
+    if (!write_result.success)
+    {
+        // Откат: временный каталог не пережил ни одного файла в src_dir —
+        // src_dir остаётся ровно таким, каким был до вызова.
+        std::error_code cleanup_error;
+        fs::remove_all(temp_dir, cleanup_error);
+        return write_result;
+    }
+
+    const CodegenWriteResult move_result = moveTempDirFilesIntoSrcDir(temp_dir, src_dir);
+    std::error_code cleanup_error;
+    fs::remove_all(temp_dir, cleanup_error);
+    if (!move_result.success)
+    {
+        return move_result;
     }
 
     return CodegenWriteResult{true, ""};

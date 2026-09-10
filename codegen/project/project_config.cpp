@@ -66,6 +66,196 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
         project.version = root["version"].get<std::string>();
     }
 
+    // --- toolchain / hal_source_mode / hal_source_local_path /
+    // compiler_path / per_type_files ---------------------------------------
+    // Все пять — необязательные поля верхнего уровня (codegen/project/
+    // cmake_project_codegen.h). Отсутствие поля молча оставляет дефолт из
+    // struct ProjectConfig — это обязано работать на всех существующих
+    // фикстурах tests/fixtures/*.json, ни одна из которых их не содержит
+    // (обратная совместимость, ProjectConfigParse.KeepsDefaultsWhenNewFieldsAbsent).
+    // Если поле ЕСТЬ, но не входит в перечисленный набор строк — это ошибка
+    // парсинга по тому же паттерну, что и enum-строки в parseUartBlock
+    // (parser/USART/usart_parser.cpp, "direction"/"parity"): молчаливый
+    // дефолт при опечатке пользователя ("plarformio" вместо "platformio")
+    // подсунул бы не тот тулчейн без единого сообщения об этом.
+    // --- language ---------------------------------------------------------
+    // Разбирается ДО "toolchain": language=rust однозначно определяет
+    // toolchain=Cargo (см. OutputLanguage в project_config.h), поэтому
+    // порядок важен — иначе пришлось бы откатывать уже разобранный toolchain.
+    if (root.contains("language"))
+    {
+        if (!root["language"].is_string())
+        {
+            return makeError("Поле \"language\" должно быть строкой (\"c\" или \"rust\")");
+        }
+        const std::string language = root["language"].get<std::string>();
+        if (language == "c")
+        {
+            project.language = OutputLanguage::C;
+        }
+        else if (language == "rust")
+        {
+            project.language = OutputLanguage::Rust;
+        }
+        else
+        {
+            return makeError("Поле \"language\" содержит недопустимое значение \"" + language
+                + "\" (разрешено c, rust)");
+        }
+    }
+
+    if (root.contains("toolchain"))
+    {
+        if (!root["toolchain"].is_string())
+        {
+            return makeError("Поле \"toolchain\" должно быть строкой (\"platformio\", \"cmake\" или \"cargo\")");
+        }
+        const std::string toolchain = root["toolchain"].get<std::string>();
+        if (toolchain == "platformio")
+        {
+            project.toolchain = ToolchainKind::PlatformIO;
+        }
+        else if (toolchain == "cmake")
+        {
+            project.toolchain = ToolchainKind::CMake;
+        }
+        else if (toolchain == "cargo")
+        {
+            project.toolchain = ToolchainKind::Cargo;
+        }
+        else
+        {
+            return makeError("Поле \"toolchain\" содержит недопустимое значение \"" + toolchain
+                + "\" (разрешено platformio, cmake, cargo)");
+        }
+
+        // Явное несоответствие toolchain/language — не тихо игнорировать
+        // (иначе пользователь, написавший language=rust, toolchain=cmake,
+        // получил бы C-пайплайн без единого предупреждения, либо наоборот).
+        if (project.language == OutputLanguage::Rust && project.toolchain != ToolchainKind::Cargo)
+        {
+            return makeError("Поле \"toolchain\" содержит \"" + toolchain
+                + "\", но \"language\" установлен в \"rust\" — единственный допустимый toolchain для Rust это cargo"
+                  " (можно просто не указывать поле \"toolchain\" явно)");
+        }
+        if (project.language == OutputLanguage::C && project.toolchain == ToolchainKind::Cargo)
+        {
+            return makeError("Поле \"toolchain\" установлено в \"cargo\", но \"language\" не \"rust\""
+                " (toolchain=cargo допустим только при language=rust)");
+        }
+    }
+    else if (project.language == OutputLanguage::Rust)
+    {
+        // Поле "toolchain" не указано вовсе — обычный случай для Rust-проекта
+        // (пользователь задаёт только "language":"rust"), Cargo подставляется
+        // автоматически, как и решено в /grill-me сессии
+        // (docs/implementations/rust_codegen.md, «Язык → автовыбор toolchain»).
+        project.toolchain = ToolchainKind::Cargo;
+    }
+
+    if (root.contains("rust_hal_source_mode"))
+    {
+        if (!root["rust_hal_source_mode"].is_string())
+        {
+            return makeError("Поле \"rust_hal_source_mode\" должно быть строкой (\"bundled\", \"network\" или \"local_path\")");
+        }
+        const std::string rust_hal_source_mode = root["rust_hal_source_mode"].get<std::string>();
+        if (rust_hal_source_mode == "bundled")
+        {
+            project.rust_hal_source_mode = HalSourceMode::Bundled;
+        }
+        else if (rust_hal_source_mode == "network")
+        {
+            project.rust_hal_source_mode = HalSourceMode::Network;
+        }
+        else if (rust_hal_source_mode == "local_path")
+        {
+            project.rust_hal_source_mode = HalSourceMode::LocalPath;
+        }
+        else
+        {
+            return makeError("Поле \"rust_hal_source_mode\" содержит недопустимое значение \"" + rust_hal_source_mode
+                + "\" (разрешено bundled, network, local_path)");
+        }
+    }
+
+    if (root.contains("rust_hal_source_local_path"))
+    {
+        if (!root["rust_hal_source_local_path"].is_string())
+        {
+            return makeError("Поле \"rust_hal_source_local_path\" должно быть строкой");
+        }
+        project.rust_hal_source_local_path = root["rust_hal_source_local_path"].get<std::string>();
+    }
+
+    if (root.contains("hal_source_mode"))
+    {
+        if (!root["hal_source_mode"].is_string())
+        {
+            return makeError("Поле \"hal_source_mode\" должно быть строкой (\"bundled\", \"network\" или \"local_path\")");
+        }
+        const std::string hal_source_mode = root["hal_source_mode"].get<std::string>();
+        if (hal_source_mode == "bundled")
+        {
+            project.hal_source_mode = HalSourceMode::Bundled;
+        }
+        else if (hal_source_mode == "network")
+        {
+            project.hal_source_mode = HalSourceMode::Network;
+        }
+        else if (hal_source_mode == "local_path")
+        {
+            project.hal_source_mode = HalSourceMode::LocalPath;
+        }
+        else
+        {
+            return makeError("Поле \"hal_source_mode\" содержит недопустимое значение \"" + hal_source_mode
+                + "\" (разрешено bundled, network, local_path)");
+        }
+    }
+
+    if (root.contains("hal_source_local_path"))
+    {
+        if (!root["hal_source_local_path"].is_string())
+        {
+            return makeError("Поле \"hal_source_local_path\" должно быть строкой");
+        }
+        project.hal_source_local_path = root["hal_source_local_path"].get<std::string>();
+    }
+
+    if (root.contains("compiler_path"))
+    {
+        if (!root["compiler_path"].is_string())
+        {
+            return makeError("Поле \"compiler_path\" должно быть строкой");
+        }
+        project.compiler_path = root["compiler_path"].get<std::string>();
+    }
+
+    if (root.contains("per_type_files"))
+    {
+        if (!root["per_type_files"].is_boolean())
+        {
+            return makeError("Поле \"per_type_files\" должно быть булевым значением");
+        }
+        project.per_type_files = root["per_type_files"].get<bool>();
+    }
+
+    // --- freertos ------------------------------------------------------
+    // Объект уровня проекта, не элемент peripherals[] — см. parser/freertos/
+    // freertos_parser.h. parseFreeRtosBlock сама возвращает FreeRtosConfig{}
+    // (enabled=false) без ошибки, если узла нет — здесь достаточно вызвать
+    // её безусловно на root.value("freertos", nlohmann::json::object()).
+    if (root.contains("freertos"))
+    {
+        ParseResult<FreeRtosConfig> freertos_result = parseFreeRtosBlock(root["freertos"]);
+        if (!freertos_result.success)
+        {
+            return makeError(freertos_result.error);
+        }
+        project.freertos = *freertos_result.config;
+    }
+
     // Занятые instance — только для типов, где повторное вхождение
     // бессмысленно физически (см. комментарий к parseProjectConfig в .h).
     std::set<int> used_uart_instances;
@@ -212,7 +402,11 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
         }
     }
 
-    if (project.gpio_blocks.empty() && project.uart_blocks.empty()
+    // freertos.enabled=true — легитимный случай нулевой периферии (проект
+    // из одних задач/очередей без единого аппаратного блока), поэтому пустой
+    // peripherals — ошибка, только если FreeRTOS тоже не сконфигурирован.
+    if (!project.freertos.enabled
+        && project.gpio_blocks.empty() && project.uart_blocks.empty()
         && project.timer16_blocks.empty() && project.i2c_blocks.empty()
         && project.timer32_blocks.empty() && project.spi_blocks.empty())
     {

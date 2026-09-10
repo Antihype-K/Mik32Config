@@ -125,6 +125,12 @@ int main(int argc, char** argv)
     GuiPaths paths;
     paths.skeleton_dir = (root + "/templates/pio_skeleton").toStdString();
     paths.generated_root_dir = (root + "/generated_projects").toStdString();
+    paths.cmake_skeleton_dir = (root + "/templates/cmake_skeleton").toStdString();
+    paths.sdk_snapshot_dir = (root + "/templates/mik32_sdk_snapshot").toStdString();
+    paths.skeleton_dir_freertos = (root + "/templates/pio_skeleton_freertos").toStdString();
+    paths.freertos_kernel_snapshot_dir = (root + "/templates/freertos_kernel_snapshot").toStdString();
+    paths.cargo_skeleton_dir = (root + "/templates/cargo_skeleton").toStdString();
+    paths.rust_hal_snapshot_dir = (root + "/templates/mik32_rust_hal_snapshot").toStdString();
 
     MainWindow window(knowledge, package, paths);
     window.show();

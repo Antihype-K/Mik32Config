@@ -64,6 +64,15 @@ public:
     // --- Файл ---------------------------------------------------------------
     bool load(const std::string& path, std::string& error_out);
 
+    // Заменяет документ уже готовым JSON без файла на диске — единственный
+    // потребитель сейчас MainWindow::onImportProject (parser/reverse_import/
+    // reverse_import.h: importProjectFromDirectory отдаёт JSON той же формы,
+    // что и load() читает из файла, но собранный из чужих .c/.cpp, а не из
+    // project.json). filePath() остаётся пустым — «Сохранить» для такого
+    // документа обязан спросить путь (та же ветка, что у нового проекта, см.
+    // MainWindow::onSave), а не тихо перезаписать что-то несуществующее.
+    void loadFromDocument(const nlohmann::json& document);
+
     // Запись атомарная: сначала во временный файл рядом с целевым, затем
     // переименование поверх. ТЗ §3.2 п.1: «при ошибке записи исходный файл
     // остаётся неизменным» — при простом открытии на запись усечённый файл
@@ -98,6 +107,16 @@ public:
     void setField(int block_index, const std::string& field, const nlohmann::json& value);
 
     nlohmann::json field(int block_index, const std::string& field) const;
+
+    // Поля ВЕРХНЕГО уровня документа (соседи "mcu"/"version"/"peripherals"),
+    // а не внутри блока периферии — например "toolchain", "hal_source_mode"
+    // (CMake-тулчейн, codegen/project/project_config.h::ProjectConfig).
+    // В отличие от field()/setField() индекс блока не нужен: эти настройки
+    // относятся к проекту в целом. Отсутствие ключа — штатный случай (старый
+    // файл проекта, созданный до появления этих полей), а не ошибка: как и
+    // field() выше, при отсутствии ключа возвращается null, а не исключение.
+    nlohmann::json projectSetting(const std::string& key) const;
+    void setProjectSetting(const std::string& key, const nlohmann::json& value);
 
     // --- Проверка -----------------------------------------------------------
     // Полный прогон обеих ядровых проверок: schema-валидация каждого блока

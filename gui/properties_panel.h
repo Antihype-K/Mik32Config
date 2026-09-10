@@ -50,6 +50,15 @@ private:
     void buildTimer16Form(QVBoxLayout* layout, int instance);
     void buildI2cForm(QVBoxLayout* layout, int instance);
     void buildSpiForm(QVBoxLayout* layout, int instance);
+    void buildTimer32Form(QVBoxLayout* layout, int instance);
+    // Один канал внутри динамического списка Timer32 (0-4 элемента, только
+    // instance 1/2). Отдельный метод, а не код прямо в buildTimer32Form:
+    // тело на каждый канал самодостаточно перечитывает/переписывает весь
+    // массив "channels" из документа (см. properties_panel.cpp), и вынесение
+    // его наружу убирает глубокую вложенность лямбд.
+    void buildTimer32ChannelRow(QVBoxLayout* channels_layout, int block_index,
+                                int channel_position, const nlohmann::json& channel,
+                                int instance);
     void buildDisabledPlaceholder(QVBoxLayout* layout, int instance);
 
     void clearForm();

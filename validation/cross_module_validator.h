@@ -93,4 +93,76 @@ CrossModuleValidationResult validatePinConflictsInDocument(
     const Timer32Knowledge& timer32_knowledge,
     const SpiKnowledge& spi_knowledge);
 
+// ============================================================================
+// Классификация Ошибка/Предупреждение — ТЗ §3.1.6.3: конфликты выводов
+// должны делиться на блокирующие кодоген (Ошибка) и неблокирующие
+// (Предупреждение, кодоген продолжается после подтверждения пользователем).
+// Errata-обусловленные ситуации — конкретный пример неблокирующего случая.
+//
+// Отдельный enum вместо gui/project_document.h::DiagnosticSeverity: этот
+// модуль (validation/) — часть ядра, собирается и в консольном приложении,
+// и в тестах, БЕЗ Qt/GUI-заголовков. Использовать DiagnosticSeverity отсюда
+// значило бы завести обратную зависимость ядра на gui/. Сведение двух enum
+// в один — забота GUI-слоя при интеграции, не этого модуля.
+enum class ConflictSeverity
+{
+    Error,
+    Warning
+};
+
+struct ClassifiedPinConflict
+{
+    // Поля 1:1 из PinConflict — набор конфликтующих владельцев одного
+    // и того же (gpio_instance, pin) не меняется классификацией, меняется
+    // только то, как с этим конфликтом поступает пайплайн.
+    int gpio_instance;
+    int pin;
+    std::vector<std::string> conflicting_owners;
+
+    ConflictSeverity severity;
+
+    // Непусто, только если конфликт признан следствием задокументированной
+    // errata-совместимой комбинации — точная цитата в том же формате, что
+    // уже используется в сгенерированном коде (см.
+    // codegen/project/spi_contribution.cpp, комментарий у errata_7_1_applies).
+    // ВАЖНО (см. docs/implementations/cross_module_validation.md, раздел
+    // "MVP-ограничение классификации"): на данный момент это поле у ЛЮБОГО
+    // конфликта всегда пусто, а severity — всегда Error. Ни в
+    // knowledge_base, ни в структуре PinConflict нет структурного признака,
+    // отличающего errata-совместимый конфликт от обычного — единственный
+    // известный кандидат (SPI Errata п.7.1, auto_cs+CS3 на instance=0) по
+    // факту вообще не порождает коллизию ключей (gpio_instance, pin) в
+    // текущей knowledge_base/spi.json (cs2 -> GPIO_1/PIN_15, cs3 ->
+    // GPIO_2/PIN_6 — разные пины), так что Warning-ветка ниже сейчас
+    // недостижима на реальных данных, а не только не подключена.
+    std::string errata_note;
+};
+
+struct ClassifiedCrossModuleValidationResult
+{
+    bool success;
+    std::string error;
+    std::vector<ClassifiedPinConflict> conflicts;
+};
+
+// Оборачивает validatePinConflicts: переиспользует его алгоритм поиска
+// пересечений пинов один в один (не дублирует его), добавляя только
+// классификацию Ошибка/Предупреждение поверх уже найденных конфликтов.
+ClassifiedCrossModuleValidationResult classifyPinConflicts(
+    const std::string& config_path,
+    const UartKnowledge& uart_knowledge,
+    const Timer16Knowledge& timer16_knowledge,
+    const I2cKnowledge& i2c_knowledge,
+    const Timer32Knowledge& timer32_knowledge,
+    const SpiKnowledge& spi_knowledge);
+
+// Документная перегрузка — та же причина, что и у validatePinConflictsInDocument.
+ClassifiedCrossModuleValidationResult classifyPinConflictsInDocument(
+    const nlohmann::json& root,
+    const UartKnowledge& uart_knowledge,
+    const Timer16Knowledge& timer16_knowledge,
+    const I2cKnowledge& i2c_knowledge,
+    const Timer32Knowledge& timer32_knowledge,
+    const SpiKnowledge& spi_knowledge);
+
 #endif //MIK32_CONFIGURATOR_CROSS_MODULE_VALIDATOR_H

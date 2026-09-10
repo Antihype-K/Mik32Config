@@ -105,6 +105,16 @@ struct PeripheralContribution
     // терминале) стало бы невозможно.
     bool wants_loop_delay = false;
 
+    // Имя функции-шаблона обработчика прерывания этого блока без скобок
+    // ("GPIO_0_IRQHandler_Template"), если блок сгенерировал такой шаблон
+    // (см. helper_functions_text у GPIO). Пусто, если у блока нет
+    // прерываний. Используется только сборщиком FreeRTOS-веток
+    // (codegen/project/freertos_codegen.cpp) для авто-связки уже
+    // сгенерированных обработчиков с freertos_risc_v_application_interrupt_handler —
+    // без FreeRTOS это поле не читается никем, подключение к raw_trap_handler
+    // остаётся ручным, как и было (см. gpio_contribution.cpp).
+    std::string irq_handler_function_name;
+
     // Порядок вызова в main(): сборщик сортирует вклады по возрастанию.
     // Не алфавитный и не порядок блоков в JSON — порядок инициализации
     // периферии имеет физический смысл (см. kInitOrder* в

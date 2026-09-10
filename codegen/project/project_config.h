@@ -28,6 +28,40 @@
 #include "i2c_parser.h"
 #include "timer32_parser.h"
 #include "spi_parser.h"
+#include "freertos_parser.h"
+
+// Выбор способа упаковки сгенерированной прошивки — второй, независимый от
+// PlatformIO путь (codegen/project/cmake_project_codegen.h). PlatformIO
+// остаётся дефолтом: поле toolchain отсутствует почти во всех существующих
+// фикстур tests/fixtures/*.json, и они обязаны продолжать парситься как
+// раньше (см. ProjectConfigParse.* в tests/test_parsers.cpp).
+//
+// Cargo — третье значение, появившееся вместе с Rust-веткой (codegen/project/
+// rust_project_codegen.h). В отличие от PlatformIO/CMake, Cargo не выбирается
+// полем "toolchain" напрямую — он следует автоматически из "language":"rust"
+// (см. OutputLanguage ниже и парсинг в project_config.cpp): единственный
+// разумный сборщик для Rust — Cargo, отдельного выбора тут нет и не нужно.
+enum class ToolchainKind { PlatformIO, CMake, Cargo };
+
+// Выходной язык генерируемой прошивки. C — единственный язык, на котором
+// проект живёт с самого начала (все golden-фикстуры, HW-валидация); Rust —
+// второй язык, добавленный поверх mik32-hal-main/mik32-rt/mik32v2-pac
+// (см. docs/implementations/rust_codegen.md). Поле независимо от toolchain
+// исторически (PlatformIO/CMake — оба варианта упаковки C-прошивки), но
+// однозначно определяет его: language=Rust => toolchain=Cargo всегда.
+enum class OutputLanguage { C, Rust };
+
+// Откуда брать исходники HAL SDK при сборке CMake-варианта. Bundled и
+// LocalPath — offline-режимы (снэпшот в templates/mik32_sdk_snapshot/ или
+// каталог пользователя с той же структурой hal/+shared/), Network —
+// единственный режим, реально требующий сети (git clone), см.
+// docs/implementations/cmake_toolchain.md.
+//
+// То же самое трёхзначное деление переиспользуется для источника
+// hal/rt/pac-крейтов в Rust-ветке (rust_hal_source_mode ниже) — те же три
+// сценария (вендоренный снэпшот / git-зависимости как у апстрима / каталог
+// пользователя), см. docs/implementations/rust_codegen.md.
+enum class HalSourceMode { Bundled, Network, LocalPath };
 
 struct ProjectConfig
 {
@@ -44,6 +78,35 @@ struct ProjectConfig
     std::vector<I2cConfig> i2c_blocks;
     std::vector<Timer32Config> timer32_blocks;
     std::vector<SpiConfig> spi_blocks;
+
+    // --- Поля упаковки проекта (codegen/project/cmake_project_codegen.h) ---
+    // Все пять — необязательные поля верхнего уровня JSON-документа, со
+    // значениями по умолчанию ровно такими, как здесь. Дефолт PlatformIO,
+    // а не CMake, потому что PlatformIO-путь уже подтверждён на реальной
+    // плате (golden-фикстуры, см. project_codegen.cpp), а CMake — новый,
+    // ещё не проверенный на железе вариант (CLAUDE.md, hardware validation
+    // gate).
+    ToolchainKind toolchain = ToolchainKind::PlatformIO;
+    HalSourceMode hal_source_mode = HalSourceMode::Bundled;
+    std::string hal_source_local_path;   // используется только если hal_source_mode == LocalPath
+    std::string compiler_path;           // пусто = автоопределение на этапе CMake configure
+    bool per_type_files = false;         // используется только если toolchain == CMake
+
+    // --- Rust-ветка (codegen/project/rust_project_codegen.h) -------------
+    // language=Rust переключает toolchain на Cargo автоматически при
+    // парсинге (project_config.cpp) — дальше по пайплайну читается уже
+    // только toolchain, не language. rust_hal_source_mode/
+    // rust_hal_source_local_path используются только если language == Rust,
+    // по тому же контракту, что hal_source_mode/hal_source_local_path для
+    // CMake-ветки.
+    OutputLanguage language = OutputLanguage::C;
+    HalSourceMode rust_hal_source_mode = HalSourceMode::Bundled;
+    std::string rust_hal_source_local_path;
+
+    // Поле уровня проекта, НЕ элемент peripherals[] — см. обоснование в
+    // parser/freertos/freertos_parser.h. По умолчанию FreeRtosConfig{} —
+    // enabled=false, main() генерируется в прежнем виде (while(1)).
+    FreeRtosConfig freertos;
 };
 
 // Ошибка возвращается, если:

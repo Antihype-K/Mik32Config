@@ -18,6 +18,7 @@
 #include <QString>
 
 class QPlainTextEdit;
+class QTabWidget;
 
 class CodePreviewScreen : public QWidget
 {
@@ -29,7 +30,15 @@ public:
     void setContents(const QString& main_c, const QString& init_c,
                       const QString& init_h, const QString& platformio_ini);
 
+    // Rust-ветка не производит mik32_init.c/.h/platformio.ini (см.
+    // docs/implementations/rust_codegen.md) — переиспользует те же четыре
+    // вкладки (не заводит отдельный виджет ради двух файлов), но
+    // перезаголовливает первые две под main.rs/Cargo.toml и прячет
+    // оставшиеся две, вместо показа C-заголовков с чужим содержимым.
+    void setContentsRust(const QString& main_rs, const QString& cargo_toml);
+
 private:
+    QTabWidget* tabs_ = nullptr;
     QPlainTextEdit* main_c_view_ = nullptr;
     QPlainTextEdit* init_c_view_ = nullptr;
     QPlainTextEdit* init_h_view_ = nullptr;

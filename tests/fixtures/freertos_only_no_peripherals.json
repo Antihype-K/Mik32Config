@@ -1,0 +1,11 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "peripherals": [],
+  "freertos": {
+    "enabled": true,
+    "tasks": [
+      {"name": "WorkerTask", "priority": 1, "stack_size_words": 128}
+    ]
+  }
+}

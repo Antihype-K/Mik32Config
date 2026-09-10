@@ -74,6 +74,19 @@ namespace
             block["decoder"] = false;
             block["chip_select"] = "cs0";
         }
+        else if (type == "timer32")
+        {
+            // forward/prescaler 31/top 999 — та же HW-подтверждённая
+            // конфигурация, что properties_panel.cpp подставляет через
+            // setField при первой отрисовке формы (см. buildTimer32Form);
+            // дублируется здесь, чтобы addBlock() сразу давал валидный
+            // блок и для потребителей вне GUI-формы (например клика по
+            // пину в MainWindow::onPinClicked).
+            block["count_mode"] = "forward";
+            block["prescaler"] = 31;
+            block["top"] = 999;
+            block["channels"] = nlohmann::json::array();
+        }
         return block;
     }
 }
@@ -116,6 +129,13 @@ bool ProjectDocument::load(const std::string& path, std::string& error_out)
     file_path_ = path;
     modified_ = false;
     return true;
+}
+
+void ProjectDocument::loadFromDocument(const nlohmann::json& document)
+{
+    document_ = document;
+    file_path_.clear();
+    modified_ = false;
 }
 
 bool ProjectDocument::save(const std::string& path, std::string& error_out)
@@ -229,6 +249,20 @@ nlohmann::json ProjectDocument::field(int block_index, const std::string& field_
     }
     const nlohmann::json& block = document_["peripherals"][block_index];
     return block.contains(field_name) ? block[field_name] : nlohmann::json();
+}
+
+nlohmann::json ProjectDocument::projectSetting(const std::string& key) const
+{
+    // document_ мог быть загружен из файла, созданного до появления этих
+    // полей (CMake-тулчейн) — contains() возвращает false, а не кидает,
+    // ровно то же соглашение, что и у field() выше для отсутствующего поля.
+    return document_.contains(key) ? document_[key] : nlohmann::json();
+}
+
+void ProjectDocument::setProjectSetting(const std::string& key, const nlohmann::json& value)
+{
+    document_[key] = value;
+    modified_ = true;
 }
 
 std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowledge) const
@@ -427,6 +461,30 @@ std::vector<std::pair<int, int>> ProjectDocument::claimedPins(
             {
                 auto pin_it = cs_it->second.find(block["chip_select"].get<std::string>());
                 if (pin_it != cs_it->second.end())
+                {
+                    pins.emplace_back(pin_it->second.gpio_instance, pin_it->second.pin);
+                }
+            }
+        }
+    }
+    else if (type == "timer32")
+    {
+        // Один жёстко закреплённый вывод на канал (не на весь instance) —
+        // та же карта instance_channel_fixed_pin, что уже использует
+        // cross_module_validator.cpp для поиска конфликтов; поле массива
+        // называется "index", не "channel_index" (см. validatePinConflictsInDocument).
+        auto instance_map_it = knowledge.timer32.instance_channel_fixed_pin.find(instance);
+        if (instance_map_it != knowledge.timer32.instance_channel_fixed_pin.end()
+            && block.contains("channels") && block["channels"].is_array())
+        {
+            for (const auto& channel : block["channels"])
+            {
+                if (!channel.contains("index") || !channel["index"].is_number_integer())
+                {
+                    continue;
+                }
+                auto pin_it = instance_map_it->second.find(channel["index"].get<int>());
+                if (pin_it != instance_map_it->second.end())
                 {
                     pins.emplace_back(pin_it->second.gpio_instance, pin_it->second.pin);
                 }

@@ -29,6 +29,7 @@ set(CORE_SOURCES
         parser/USART/usart_parser.cpp
         parser/timer16/timer16_parser.cpp
         parser/timer32/timer32_parser.cpp
+        parser/freertos/freertos_parser.cpp
 
         # База знаний МИК32: аппаратные факты из даташита и errata
         knowledge_base/gpio_knowledge.cpp
@@ -41,6 +42,9 @@ set(CORE_SOURCES
 
         # Кросс-модульная валидация (ТЗ §3.1.6)
         validation/cross_module_validator.cpp
+        # Валидация "поддерживается ли фича в Rust-ветке вообще" — отдельно
+        # от конфликтов пинов выше (docs/implementations/rust_codegen.md)
+        validation/rust_feature_validator.cpp
 
         # Межмодульная кодогенерация: вклады периферии + единственный сборщик
         codegen/project/project_config.cpp
@@ -51,8 +55,31 @@ set(CORE_SOURCES
         codegen/project/i2c_contribution.cpp
         codegen/project/timer32_contribution.cpp
         codegen/project/spi_contribution.cpp
+        codegen/project/freertos_codegen.cpp
         codegen/project/project_codegen.cpp
+        codegen/project/cmake_project_codegen.cpp
         codegen/user_code_markers.cpp
+
+        # Rust-ветка кодогенерации — второй целевой язык
+        # (docs/implementations/rust_codegen.md)
+        codegen/project/rust_project_codegen.cpp
+        codegen/user_code_markers_rust.cpp
+
+        # Reverse-import: вычленение периферии из произвольной, НЕ сгенерированной
+        # этим конфигуратором прошивки (docs/implementations/reverse_import.md) —
+        # сканер + четыре типовых маппера + точечный патчер исходников + два
+        # оркестрирующих слоя (файлы -> JSON и JSON-правки -> файлы).
+        parser/reverse_import/reverse_import_scanner.cpp
+        parser/reverse_import/uart_reverse_mapper.cpp
+        parser/reverse_import/i2c_reverse_mapper.cpp
+        parser/reverse_import/timer32_reverse_mapper.cpp
+        parser/reverse_import/timer32_channel_reverse_mapper.cpp
+        parser/reverse_import/timer16_reverse_mapper.cpp
+        parser/reverse_import/gpio_reverse_mapper.cpp
+        parser/reverse_import/spi_reverse_mapper.cpp
+        parser/reverse_import/reverse_patch_writer.cpp
+        parser/reverse_import/reverse_import.cpp
+        parser/reverse_import/reverse_import_apply.cpp
 )
 
 add_library(mik32-core STATIC ${CORE_SOURCES})
@@ -69,6 +96,8 @@ target_include_directories(mik32-core
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/i2c
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/timer32
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/spi
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/freertos
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/reverse_import
         ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/project
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen
@@ -151,6 +180,8 @@ if(BUILD_GUI)
                 gui/new_project_screen.h
                 gui/project_manager_screen.cpp
                 gui/project_manager_screen.h
+                gui/freertos_settings_widget.cpp
+                gui/freertos_settings_widget.h
                 gui/code_preview_screen.cpp
                 gui/code_preview_screen.h
         )
@@ -187,7 +218,19 @@ if(BUILD_TESTING)
 
     enable_testing()
 
-    add_executable(MIK32-Parser-Tests tests/test_parsers.cpp)
+    add_executable(MIK32-Parser-Tests
+            tests/test_parsers.cpp
+            tests/test_cross_module_severity_standalone.cpp
+            tests/test_reverse_import_uart_i2c.cpp
+            tests/test_reverse_import_timer32_gpio.cpp
+            tests/test_reverse_patch_writer.cpp
+            tests/test_reverse_import_integration.cpp
+            tests/test_reverse_import_timer16.cpp
+            tests/test_reverse_import_spi.cpp
+            tests/test_reverse_import_timer32_channel.cpp
+            tests/test_freertos.cpp
+            tests/test_rust_project_codegen.cpp
+    )
 
     target_link_libraries(MIK32-Parser-Tests
             PRIVATE

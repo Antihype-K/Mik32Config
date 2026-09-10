@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <system_error>
 #include <vector>
 
 // Порядок вызова init-функций в сгенерированном main(). Значения с шагом 10,
@@ -68,5 +69,22 @@ std::string buildPinMaskExpression(const std::vector<uint8_t>& pins);
 
 // "0, 3, 7" — только для текста комментария в сгенерированном коде.
 std::string buildPinListComment(const std::vector<uint8_t>& pins);
+
+// Рекурсивное копирование дерева каталогов с пропуском уже существующих
+// файлов в месте назначения ("не перезаписывать то, что пользователь мог
+// отредактировать руками" — тот же контракт, что и у skip_existing).
+//
+// Это независимая копия codegen/project/project_codegen.cpp::copySkeletonInto
+// (та же причина существования: fs::copy(..., skip_existing) на каталог
+// назначения ведёт себя по-разному на MinGW GCC 11.2.0 и на Linux GCC —
+// см. комментарий у оригинала), а не рефакторинг с вызовом общей функции.
+// project_codegen.cpp уже проверен HW-подтверждёнными golden-фикстурами
+// PlatformIO-пути, и CLAUDE.md/спецификация этой сессии требуют не менять
+// в нём НИ ОДНОЙ строки — поэтому его private-копию (анонимное пространство
+// имён) нельзя ни экспортировать, ни удалить в пользу этой. Используется
+// только codegen/project/cmake_project_codegen.cpp.
+bool copyDirectoryTreeSkipExisting(const std::string& from_dir,
+                                    const std::string& to_dir,
+                                    std::error_code& fs_error);
 
 #endif //MIK32_CONFIGURATOR_CONTRIBUTION_UTILS_H

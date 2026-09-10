@@ -39,6 +39,7 @@
 #include "peripheral_tree.h"
 #include "screen_navigator.h"
 #include "new_project_screen.h"
+#include "reverse_import.h"
 
 class PackageView;
 class PropertiesPanel;
@@ -60,6 +61,12 @@ struct GuiPaths
 {
     std::string skeleton_dir;         // templates/pio_skeleton
     std::string generated_root_dir;   // generated_projects
+    std::string cmake_skeleton_dir;   // templates/cmake_skeleton
+    std::string sdk_snapshot_dir;     // templates/mik32_sdk_snapshot
+    std::string skeleton_dir_freertos;        // templates/pio_skeleton_freertos
+    std::string freertos_kernel_snapshot_dir; // templates/freertos_kernel_snapshot
+    std::string cargo_skeleton_dir;      // templates/cargo_skeleton
+    std::string rust_hal_snapshot_dir;   // templates/mik32_rust_hal_snapshot
 };
 
 class MainWindow : public QMainWindow
@@ -84,6 +91,7 @@ protected:
 private slots:
     void onNew();
     bool onOpen();
+    void onImportProject();
     bool onSave();
     bool onSaveAs();
     void onGenerate();
@@ -139,6 +147,13 @@ private:
     // тогда прервать и своё действие (открытие файла, выход).
     bool confirmDiscardChanges();
 
+    // Ветка onGenerate() для проектов, открытых через onImportProject: вместо
+    // полной кодогенерации (шаблон + USER CODE) точечно переписывает в чужих
+    // .c/.cpp РОВНО те строки, чьи поля пользователь поменял в PropertiesPanel
+    // — parser/reverse_import/reverse_import_apply.h. См. её же за тем, почему
+    // после применения документ переимпортируется заново с диска.
+    void applyReverseImportChanges();
+
     // Человекочитаемое имя блока для сообщений и подсказок: пользовательское
     // имя, если задано, иначе штатное "USART_0".
     QString blockTitle(const QString& type, int instance) const;
@@ -148,6 +163,16 @@ private:
     PackageKnowledge package_;
     GuiPaths paths_;
     ProjectDocument document_;
+
+    // Заполняются onImportProject, если текущий документ пришёл не из
+    // project.json, а из чужой прошивки на диске (см. reverse_import.h).
+    // reverse_import_active_ — единственный переключатель ветки в onGenerate();
+    // imported_project_.document["peripherals"] служит "снимком ДО правок"
+    // для reverse_import_apply::applyImportedChanges (само окно правки не
+    // отслеживает построчно — только целиком до/после).
+    bool reverse_import_active_ = false;
+    QString reverse_import_root_;
+    reverse_import::ImportedProject imported_project_;
 
     PeripheralTree* tree_ = nullptr;
     PackageView* package_view_ = nullptr;
