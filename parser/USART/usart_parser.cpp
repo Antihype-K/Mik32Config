@@ -46,6 +46,18 @@ namespace
     constexpr int kMinDmaChannel = 0;
     constexpr int kMaxDmaChannel = 3;
 
+    // OVERNIGHT_FIELD_REFERENCE.md — новые необязательные поля этой сессии.
+    // mik32_hal_usart.h, HAL_USART_BitDirection_enum.
+    const std::set<std::string> kValidBitDirection = {"msb_first", "lsb_first"};
+    // mik32_hal_usart.h, HAL_USART_Mode_enum.
+    const std::set<std::string> kValidMode = {"asynchronous", "synchronous"};
+    // mik32_hal_usart.h, HAL_USART_XCK_Mode_enum.
+    const std::set<std::string> kValidXckMode = {"mode0", "mode1", "mode2", "mode3"};
+    // mik32_hal_usart.h, HAL_USART_ChannelMode_enum.
+    const std::set<std::string> kValidChannelMode = {"duplex", "half_duplex"};
+    // mik32_hal_usart.h, HAL_USART_RTS_mode_enum.
+    const std::set<std::string> kValidRtsMode = {"always_enabled", "modem"};
+
     ParseResult<UartConfig> makeError(const std::string& message)
     {
         return ParseResult<UartConfig>{false, message, std::nullopt};
@@ -161,6 +173,143 @@ ParseResult<UartConfig> parseUartBlock(const nlohmann::json& uart)
     config.parity = uart["parity"].get<std::string>();
     config.flow_control = uart["flow_control"].get<bool>();
     config.direction = uart["direction"].get<std::string>();
+
+    // OVERNIGHT_FIELD_REFERENCE.md: bit_direction — необязательное поле,
+    // отсутствие -> lsb_first (HAL default LSB_First=0).
+    if (uart.contains("bit_direction"))
+    {
+        if (!uart["bit_direction"].is_string() || !kValidBitDirection.count(uart["bit_direction"].get<std::string>()))
+        {
+            return makeError("Поле \"bit_direction\" содержит недопустимое значение (разрешено msb_first, lsb_first)");
+        }
+        config.bit_direction = uart["bit_direction"].get<std::string>();
+    }
+
+    // mode/xck_mode/last_byte_clock — синхронный режим. Errata MIK32V2
+    // v1.0.1 §10.1 «Сигнал CK в USART1»: на instance=1 синхронный режим при
+    // выключенном контроле чётности даёт непрекращающийся паразитный сигнал
+    // CK на PORT2_6 без обхода — тот же физический пин, где на 1T Rex Board
+    // распаян встроенный светодиод (см. docs/implementations/uart.md,
+    // раздел 4; docs/implementations/gpio.md, раздел 7). Поэтому
+    // mode="synchronous" на instance=1 запрещён здесь же, в парсере, а не
+    // оставлен на кросс-модульный валидатор пинов — обход буквально
+    // отсутствует в датащите, это не ситуация "предупредить, но разрешить".
+    if (uart.contains("mode"))
+    {
+        if (!uart["mode"].is_string() || !kValidMode.count(uart["mode"].get<std::string>()))
+        {
+            return makeError("Поле \"mode\" содержит недопустимое значение (разрешено asynchronous, synchronous)");
+        }
+        config.mode = uart["mode"].get<std::string>();
+        if (config.mode == "synchronous" && instance == 1)
+        {
+            return makeError("mode=\"synchronous\" запрещён для instance=1 — Errata MIK32V2 v1.0.1 §10.1: "
+                              "паразитный сигнал CK на PORT2_6 без обхода (тот же пин, где на 1T Rex Board светодиод). "
+                              "Используйте instance=0 для синхронного режима.");
+        }
+    }
+    if (uart.contains("xck_mode"))
+    {
+        if (config.mode != "synchronous")
+        {
+            return makeError("Поле \"xck_mode\" имеет смысл только при mode=\"synchronous\"");
+        }
+        if (!uart["xck_mode"].is_string() || !kValidXckMode.count(uart["xck_mode"].get<std::string>()))
+        {
+            return makeError("Поле \"xck_mode\" содержит недопустимое значение (разрешено mode0..mode3)");
+        }
+        config.xck_mode = uart["xck_mode"].get<std::string>();
+    }
+    if (uart.contains("last_byte_clock"))
+    {
+        if (config.mode != "synchronous")
+        {
+            return makeError("Поле \"last_byte_clock\" имеет смысл только при mode=\"synchronous\"");
+        }
+        if (!uart["last_byte_clock"].is_boolean())
+        {
+            return makeError("Поле \"last_byte_clock\" должно быть булевым значением");
+        }
+        config.last_byte_clock = uart["last_byte_clock"].get<bool>();
+    }
+
+    // channel_mode — полудуплекс (однопроводной режим). mik32_hal_usart.h,
+    // HAL_USART_ChannelMode_enum.
+    if (uart.contains("channel_mode"))
+    {
+        if (!uart["channel_mode"].is_string() || !kValidChannelMode.count(uart["channel_mode"].get<std::string>()))
+        {
+            return makeError("Поле \"channel_mode\" содержит недопустимое значение (разрешено duplex, half_duplex)");
+        }
+        config.channel_mode = uart["channel_mode"].get<std::string>();
+    }
+
+    // tx_inversion/rx_inversion/swap — раздельная полярность и обмен TX/RX.
+    if (uart.contains("tx_inversion"))
+    {
+        if (!uart["tx_inversion"].is_boolean())
+        {
+            return makeError("Поле \"tx_inversion\" должно быть булевым значением");
+        }
+        config.tx_inversion = uart["tx_inversion"].get<bool>();
+    }
+    if (uart.contains("rx_inversion"))
+    {
+        if (!uart["rx_inversion"].is_boolean())
+        {
+            return makeError("Поле \"rx_inversion\" должно быть булевым значением");
+        }
+        config.rx_inversion = uart["rx_inversion"].get<bool>();
+    }
+    if (uart.contains("swap"))
+    {
+        if (!uart["swap"].is_boolean())
+        {
+            return makeError("Поле \"swap\" должно быть булевым значением");
+        }
+        config.swap = uart["swap"].get<bool>();
+    }
+
+    // rts_mode — уточняет режим RTS, имеет смысл только при flow_control=true.
+    if (uart.contains("rts_mode"))
+    {
+        if (!config.flow_control)
+        {
+            return makeError("Поле \"rts_mode\" имеет смысл только при flow_control=true");
+        }
+        if (!uart["rts_mode"].is_string() || !kValidRtsMode.count(uart["rts_mode"].get<std::string>()))
+        {
+            return makeError("Поле \"rts_mode\" содержит недопустимое значение (разрешено always_enabled, modem)");
+        }
+        config.rts_mode = uart["rts_mode"].get<std::string>();
+    }
+
+    // modem_signals — отдельные модемные линии RS-232 (RI/DSR/DTR/DDIS/DCD),
+    // независимые от flow_control (который покрывает только RTS/CTS).
+    if (uart.contains("modem_signals"))
+    {
+        if (!uart["modem_signals"].is_object())
+        {
+            return makeError("Поле \"modem_signals\" должно быть объектом");
+        }
+        const nlohmann::json& modem = uart["modem_signals"];
+        for (const char* field : {"ri", "dsr", "dtr", "ddis", "dcd"})
+        {
+            if (modem.contains(field) && !modem[field].is_boolean())
+            {
+                return makeError(std::string("modem_signals.") + field + " должно быть булевым значением");
+            }
+        }
+        config.has_modem_signals = true;
+        config.modem_signals.ri = modem.contains("ri") && modem["ri"].get<bool>();
+        config.modem_signals.dsr = modem.contains("dsr") && modem["dsr"].get<bool>();
+        config.modem_signals.dtr = modem.contains("dtr") && modem["dtr"].get<bool>();
+        config.modem_signals.ddis = modem.contains("ddis") && modem["ddis"].get<bool>();
+        config.modem_signals.dcd = modem.contains("dcd") && modem["dcd"].get<bool>();
+    }
+
+    // parity_bit_inversion НЕ добавляется как отдельное поле — см. обоснование
+    // в parser/USART/usart_parser.h у соответствующего комментария в UartConfig.
 
     // ТЗ §3.1.3.3 — необязательное поле, отсутствие ничего не меняет
     // в поведении блока (обычный случай, как и GPIO "interrupts").

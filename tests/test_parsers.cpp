@@ -171,6 +171,59 @@ TEST(UartParse, RejectsWrongInstance)
     EXPECT_FALSE(result.success);
 }
 
+// OVERNIGHT_FIELD_REFERENCE.md — новые необязательные поля этой сессии.
+TEST(UartParse, ParsesNewOptionalFieldsTogether)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_new_fields_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->bit_direction, "msb_first");
+    EXPECT_EQ(result.config->channel_mode, "half_duplex");
+    EXPECT_TRUE(result.config->tx_inversion);
+    EXPECT_TRUE(result.config->rx_inversion);
+    EXPECT_TRUE(result.config->swap);
+    EXPECT_EQ(result.config->rts_mode, "modem");
+    ASSERT_TRUE(result.config->has_modem_signals);
+    EXPECT_TRUE(result.config->modem_signals.ri);
+    EXPECT_TRUE(result.config->modem_signals.dsr);
+    EXPECT_TRUE(result.config->modem_signals.dtr);
+    EXPECT_TRUE(result.config->modem_signals.ddis);
+    EXPECT_TRUE(result.config->modem_signals.dcd);
+}
+
+TEST(UartParse, AcceptsSynchronousModeOnInstance0)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_sync_mode_instance0_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->mode, "synchronous");
+    EXPECT_EQ(result.config->xck_mode, "mode2");
+    EXPECT_TRUE(result.config->last_byte_clock);
+}
+
+// Errata MIK32V2 v1.0.1 §10.1 — паразитный сигнал CK на PORT2_6 без обхода.
+TEST(UartParse, RejectsSynchronousModeOnInstance1DueToErrata)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_sync_mode_instance1_rejected.json");
+
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.error.find("Errata"), std::string::npos);
+}
+
+TEST(UartParse, RejectsXckModeWithoutSynchronousMode)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_xck_mode_without_sync.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(UartParse, RejectsRtsModeWithoutFlowControl)
+{
+    ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_rts_mode_without_flow_control.json");
+
+    EXPECT_FALSE(result.success);
+}
+
 TEST(UartParse, RejectsInvalidBaudRate)
 {
     ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_invalid_baud_rate.json");

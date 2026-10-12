@@ -69,6 +69,28 @@ ParseResult<PeripheralContribution> buildUartContribution(
     const std::string transmitting = (config.direction == "tx" || config.direction == "duplex") ? "Enable" : "Disable";
     const std::string receiving = (config.direction == "rx" || config.direction == "duplex") ? "Enable" : "Disable";
 
+    // OVERNIGHT_FIELD_REFERENCE.md — новые необязательные поля этой сессии,
+    // 1:1 перевод строковых значений JSON в литералы HAL-перечислений
+    // (mik32_hal_usart.h). Валидатор (parser/USART/usart_parser.cpp) уже
+    // гарантировал допустимость значений и запрет mode=synchronous на instance=1.
+    const std::string bit_direction_literal = (config.bit_direction == "msb_first") ? "MSB_First" : "LSB_First";
+    const std::string mode_literal = (config.mode == "synchronous") ? "Synchronous_Mode" : "Asynchronous_Mode";
+    const std::string xck_mode_literal =
+        (config.xck_mode == "mode1") ? "XCK_Mode1" :
+        (config.xck_mode == "mode2") ? "XCK_Mode2" :
+        (config.xck_mode == "mode3") ? "XCK_Mode3" : "XCK_Mode0";
+    const std::string last_byte_clock_literal = config.last_byte_clock ? "Enable" : "Disable";
+    const std::string channel_mode_literal = (config.channel_mode == "half_duplex") ? "Semiduplex_Mode" : "Duplex_Mode";
+    const std::string tx_inversion_literal = config.tx_inversion ? "Enable" : "Disable";
+    const std::string rx_inversion_literal = config.rx_inversion ? "Enable" : "Disable";
+    const std::string swap_literal = config.swap ? "Enable" : "Disable";
+    const std::string rts_mode_literal = (config.rts_mode == "modem") ? "Modem_mode" : "AlwaysEnable_mode";
+    const std::string modem_dtr_literal = (config.has_modem_signals && config.modem_signals.dtr) ? "Enable" : "Disable";
+    const std::string modem_dcd_literal = (config.has_modem_signals && config.modem_signals.dcd) ? "Enable" : "Disable";
+    const std::string modem_dsr_literal = (config.has_modem_signals && config.modem_signals.dsr) ? "Enable" : "Disable";
+    const std::string modem_ri_literal = (config.has_modem_signals && config.modem_signals.ri) ? "Enable" : "Disable";
+    const std::string modem_ddis_literal = (config.has_modem_signals && config.modem_signals.ddis) ? "Enable" : "Disable";
+
     // ТЗ §3.1.3.2/§3.1.8: фактическая скорость получается делением HSI 32МГц
     // на целочисленный делитель, поэтому запрошенная скорость достижима не
     // точно. Погрешность выводится комментарием — GUI, который показал бы её
@@ -86,7 +108,8 @@ ParseResult<PeripheralContribution> buildUartContribution(
            << ", direction=" << config.direction << ".\n"
               " * Фактическая скорость при HSI=" << knowledge.hsi_hz << "Гц: DIVIDER=" << divider
            << " -> " << actual_baud_rate << " бод, погрешность " << baud_error_percent << "%\n"
-              " * Только Asynchronous_Mode (Errata MIK32V2 v1.0.1, §10.1 — см. knowledge_base/uart.json).\n"
+              " * mode=" << config.mode << ", bit_direction=" << config.bit_direction
+           << ", channel_mode=" << config.channel_mode << ".\n"
               " */\n"
               "void " << contribution.init_function_name << "(void)\n"
               "{\n"
@@ -96,21 +119,21 @@ ParseResult<PeripheralContribution> buildUartContribution(
               "    " << handle_name << ".frame = " << *frame_enum << ";\n"
               "    " << handle_name << ".parity_bit = " << parity_setting->parity_bit << ";\n"
               "    " << handle_name << ".parity_bit_inversion = " << parity_setting->parity_bit_inversion << ";\n"
-              "    " << handle_name << ".bit_direction = LSB_First;\n"
+              "    " << handle_name << ".bit_direction = " << bit_direction_literal << ";\n"
               "    " << handle_name << ".data_inversion = Disable;\n"
-              "    " << handle_name << ".tx_inversion = Disable;\n"
-              "    " << handle_name << ".rx_inversion = Disable;\n"
-              "    " << handle_name << ".swap = Disable;\n"
+              "    " << handle_name << ".tx_inversion = " << tx_inversion_literal << ";\n"
+              "    " << handle_name << ".rx_inversion = " << rx_inversion_literal << ";\n"
+              "    " << handle_name << ".swap = " << swap_literal << ";\n"
               "    " << handle_name << ".lbm = Disable;\n"
               "    " << handle_name << ".stop_bit = " << *stop_bit_enum << ";\n"
-              "    " << handle_name << ".mode = Asynchronous_Mode;\n"
-              "    " << handle_name << ".xck_mode = XCK_Mode3;\n"
-              "    " << handle_name << ".last_byte_clock = Disable;\n"
+              "    " << handle_name << ".mode = " << mode_literal << ";\n"
+              "    " << handle_name << ".xck_mode = " << xck_mode_literal << ";\n"
+              "    " << handle_name << ".last_byte_clock = " << last_byte_clock_literal << ";\n"
               "    " << handle_name << ".overwrite = Disable;\n"
-              "    " << handle_name << ".rts_mode = AlwaysEnable_mode;\n"
+              "    " << handle_name << ".rts_mode = " << rts_mode_literal << ";\n"
               "    " << handle_name << ".dma_tx_request = " << (dma_tx ? "Enable" : "Disable") << ";\n"
               "    " << handle_name << ".dma_rx_request = " << (dma_rx ? "Enable" : "Disable") << ";\n"
-              "    " << handle_name << ".channel_mode = Duplex_Mode;\n"
+              "    " << handle_name << ".channel_mode = " << channel_mode_literal << ";\n"
               "    " << handle_name << ".tx_break_mode = Disable;\n"
               "    " << handle_name << ".Interrupt.ctsie = Disable;\n"
               "    " << handle_name << ".Interrupt.eie = Disable;\n"
@@ -122,11 +145,11 @@ ParseResult<PeripheralContribution> buildUartContribution(
               "    " << handle_name << ".Interrupt.txeie = Disable;\n"
               "    " << handle_name << ".Modem.rts = " << flow << ";\n"
               "    " << handle_name << ".Modem.cts = " << flow << ";\n"
-              "    " << handle_name << ".Modem.dtr = Disable;\n"
-              "    " << handle_name << ".Modem.dcd = Disable;\n"
-              "    " << handle_name << ".Modem.dsr = Disable;\n"
-              "    " << handle_name << ".Modem.ri = Disable;\n"
-              "    " << handle_name << ".Modem.ddis = Disable;\n"
+              "    " << handle_name << ".Modem.dtr = " << modem_dtr_literal << ";\n"
+              "    " << handle_name << ".Modem.dcd = " << modem_dcd_literal << ";\n"
+              "    " << handle_name << ".Modem.dsr = " << modem_dsr_literal << ";\n"
+              "    " << handle_name << ".Modem.ri = " << modem_ri_literal << ";\n"
+              "    " << handle_name << ".Modem.ddis = " << modem_ddis_literal << ";\n"
               "    " << handle_name << ".baudrate = " << config.baud_rate << ";\n"
               "\n"
               "    HAL_USART_Init(&" << handle_name << ");\n";

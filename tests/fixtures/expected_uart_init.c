@@ -11,7 +11,7 @@ USART_HandleTypeDef husart_0;
 /*
  * UART_0: baud_rate=38400, data_bits=8, stop_bits=1, parity=none, flow_control=false, direction=duplex.
  * Фактическая скорость при HSI=32000000Гц: DIVIDER=833 -> 38415.366 бод, погрешность 0.040%
- * Только Asynchronous_Mode (Errata MIK32V2 v1.0.1, §10.1 — см. knowledge_base/uart.json).
+ * mode=asynchronous, bit_direction=lsb_first, channel_mode=duplex.
  */
 void UART_0_Init(void)
 {
@@ -29,7 +29,7 @@ void UART_0_Init(void)
     husart_0.lbm = Disable;
     husart_0.stop_bit = StopBit_1;
     husart_0.mode = Asynchronous_Mode;
-    husart_0.xck_mode = XCK_Mode3;
+    husart_0.xck_mode = XCK_Mode0;
     husart_0.last_byte_clock = Disable;
     husart_0.overwrite = Disable;
     husart_0.rts_mode = AlwaysEnable_mode;

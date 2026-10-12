@@ -9,8 +9,12 @@
 //    переопределение символа на этапе линковки;
 //  - появился флаг is_console (см. ниже).
 //
-// Поддерживается только Asynchronous_Mode — синхронный режим и связанная с ним errata по CK
-// (Errata MIK32V2 v1.0.1, §10.1) вне скоупа, см. docs/implementations/uart.md.
+// Синхронный режим (mode="synchronous") поддерживается с OVERNIGHT-сессии
+// 12->13.10.2026, но ЗАПРЕЩЁН на instance=1 — Errata MIK32V2 v1.0.1 §10.1:
+// паразитный сигнал CK на PORT2_6 без обхода (тот же пин, где на 1T Rex
+// Board светодиод), см. docs/implementations/uart.md раздел 4 и
+// OVERNIGHT_FIELD_REFERENCE.md. Запрет проверяется в
+// parser/USART/usart_parser.cpp, не здесь.
 //
 #ifndef MIK32_CONFIGURATOR_UART_CONTRIBUTION_H
 #define MIK32_CONFIGURATOR_UART_CONTRIBUTION_H

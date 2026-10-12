@@ -31,7 +31,7 @@ docs/ можно после ночной сессии, когда координ
 | JSON-поле | Тип | Значения | HAL-источник | Поведение по умолчанию (поле не задано) |
 |---|---|---|---|---|
 | `bit_direction` | enum | `msb_first`, `lsb_first` | `HAL_USART_BitDirection_enum` (MSB_First=1/LSB_First=0) | `lsb_first` (HAL default 0) |
-| `mode` | enum | `asynchronous`, `synchronous` | `HAL_USART_Mode_enum` | `asynchronous` (0) |
+| `mode` | enum | `asynchronous`, `synchronous` | `HAL_USART_Mode_enum`. **`synchronous` запрещён для `instance=1`** — Errata MIK32V2 v1.0.1 §10.1: паразитный сигнал CK на PORT2_6 без обхода (тот же пин, где на 1T Rex Board светодиод), парсер отклоняет эту комбинацию с явной ошибкой. | `asynchronous` (0) |
 | `xck_mode` | enum | `mode0`..`mode3` | `HAL_USART_XCK_Mode_enum`, только при `mode=synchronous` | `mode0` |
 | `last_byte_clock` | bool | — | поле `last_byte_clock`, только при `mode=synchronous` | `false` (Disable) |
 | `channel_mode` | enum | `duplex`, `half_duplex` | `HAL_USART_ChannelMode_enum` (Duplex_Mode=0/Semiduplex_Mode=1) | `duplex` |
@@ -40,11 +40,16 @@ docs/ можно после ночной сессии, когда координ
 | `swap` | bool | — | поле `swap` (Swap RXD & TXD) | `false` |
 | `rts_mode` | enum | `always_enabled`, `modem` | `HAL_USART_RTS_mode_enum`, только при `flow_control=true` | `always_enabled` |
 | `modem_signals` | object `{ri,dsr,dtr,ddis,dcd: bool}` | — | `HAL_USART_Modem_TypeDef` (без rts/cts — те уже покрыты `flow_control`) | все `false` |
-| `parity_bit_inversion` | bool | — | поле `parity_bit_inversion`, только при `parity != "none"` | `false` |
 
 Существующее поле `flow_control` (bool) **не меняется** — продолжает включать
 `rts`+`cts` с режимом по умолчанию `AlwaysEnable_mode`; `rts_mode` уточняет
 режим RTS только когда `flow_control=true`.
+
+**Отдельного поля `parity_bit_inversion` НЕТ** (вычеркнуто из плана после
+проверки кода): это не самостоятельная фича, а бит PS (чётность/нечётность),
+который уже полностью определяется существующим полем `parity`
+(`none`/`even`/`odd`) через `knowledge_base/uart.json`. Отдельное поле дало
+бы два способа задать одно и то же.
 
 ## Тактирование (PCC) — новый top-level объект `clock`
 

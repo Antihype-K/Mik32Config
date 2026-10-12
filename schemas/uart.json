@@ -75,6 +75,58 @@
           "_comment": "ТЗ §3.1.3.3: «режим инкремента адреса памяти (с инкрементом / без инкремента)». Применяется к стороне MEMORY (для tx — Read*, для rx — Write*); сторона PERIPHERY (регистр TXDATA/RXDATA) всегда без инкремента — адрес регистра фиксирован."
         }
       }
+    },
+    "bit_direction": {
+      "type": "enum",
+      "values": ["msb_first", "lsb_first"],
+      "_comment": "Необязательное поле (OVERNIGHT_FIELD_REFERENCE.md). mik32_hal_usart.h, HAL_USART_BitDirection_enum. Отсутствие -> lsb_first (HAL default LSB_First=0)."
+    },
+    "mode": {
+      "type": "enum",
+      "values": ["asynchronous", "synchronous"],
+      "_comment": "Необязательное поле. mik32_hal_usart.h, HAL_USART_Mode_enum. synchronous ЗАПРЕЩЁН для instance=1 — Errata MIK32V2 v1.0.1 §10.1: паразитный сигнал CK на PORT2_6 (пин светодиода на 1T Rex Board) без обхода, см. docs/implementations/uart.md раздел 4."
+    },
+    "xck_mode": {
+      "type": "enum",
+      "values": ["mode0", "mode1", "mode2", "mode3"],
+      "_comment": "Необязательное поле, имеет смысл только при mode=\"synchronous\". mik32_hal_usart.h, HAL_USART_XCK_Mode_enum."
+    },
+    "last_byte_clock": {
+      "type": "boolean",
+      "_comment": "Необязательное поле, имеет смысл только при mode=\"synchronous\". Поле last_byte_clock структуры USART_HandleTypeDef."
+    },
+    "channel_mode": {
+      "type": "enum",
+      "values": ["duplex", "half_duplex"],
+      "_comment": "Необязательное поле. mik32_hal_usart.h, HAL_USART_ChannelMode_enum (Duplex_Mode/Semiduplex_Mode) — однопроводной полудуплексный режим."
+    },
+    "tx_inversion": {
+      "type": "boolean",
+      "_comment": "Необязательное поле. Поле tx_inversion структуры USART_HandleTypeDef — раздельная инверсия линии TX."
+    },
+    "rx_inversion": {
+      "type": "boolean",
+      "_comment": "Необязательное поле. Поле rx_inversion структуры USART_HandleTypeDef — раздельная инверсия линии RX."
+    },
+    "swap": {
+      "type": "boolean",
+      "_comment": "Необязательное поле. Поле swap структуры USART_HandleTypeDef — обмен местами выводов RXD/TXD."
+    },
+    "rts_mode": {
+      "type": "enum",
+      "values": ["always_enabled", "modem"],
+      "_comment": "Необязательное поле, имеет смысл только при flow_control=true. mik32_hal_usart.h, HAL_USART_RTS_mode_enum."
+    },
+    "modem_signals": {
+      "type": "object",
+      "_comment": "Необязательное поле. HAL_USART_Modem_TypeDef — модемные сигналы RS-232 (RI/DSR/DTR/DDIS/DCD), независимые от flow_control (который покрывает только RTS/CTS).",
+      "item_fields": {
+        "ri": {"type": "boolean"},
+        "dsr": {"type": "boolean"},
+        "dtr": {"type": "boolean"},
+        "ddis": {"type": "boolean"},
+        "dcd": {"type": "boolean"}
+      }
     }
   }
 }
