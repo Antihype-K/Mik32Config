@@ -16,6 +16,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <system_error>
 #include <set>
 #include <sstream>
@@ -448,8 +449,8 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     GeneratedProjectFirmware firmware;
 
     // HAL-заголовки всех использованных блоков. Нужны и mik32_init.c, и
-    // mik32_init.h: заголовок подключает их сам (как main.h в STM32CubeMX),
-    // иначе код пользователя в main.c между маркерами USER CODE не видит
+    // mik32_init.h: заголовок подключает их сам (как main.h в STM32CubeMX)
+    // вместе с mik32_hal.h, иначе код пользователя в main.c между маркерами USER CODE не видит
     // HAL-API — например, HAL_GPIO_TogglePin(GPIO_2, GPIO_PIN_6) не
     // компилируется: в main.c подключены только mik32_hal_pcc.h и mik32_init.h.
     std::vector<std::string> init_c_includes;
@@ -467,10 +468,11 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     init_h << "#ifndef MIK32_INIT_H\n"
               "#define MIK32_INIT_H\n"
               "\n";
-    if (!init_c_includes.empty())
-    {
-        init_h << renderIncludes(init_c_includes) << "\n";
-    }
+    // mik32_hal.h — общий HAL (HAL_DelayMs/HAL_DelayUs и т.п.): код
+    // пользователя в main.c почти всегда ждёт, а сами блоки его не тянут.
+    std::vector<std::string> init_h_includes = {"mik32_hal.h"};
+    appendUnique(init_h_includes, init_c_includes);
+    init_h << renderIncludes(init_h_includes) << "\n";
     if (any_uart_dma)
     {
         init_h << "void DMA_Init(void);\n";
@@ -688,6 +690,38 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     return ParseResult<GeneratedProjectFirmware>{true, "", firmware};
 }
 
+namespace
+{
+    // Порт программатора, на который всегда прошивает сгенерированный проект.
+    const char* const kUploadPort = "/dev/ttyUSB0";
+
+    // Приводит --com=... в upload_command к kUploadPort. Применяется и к
+    // свежескопированному скелету, и к platformio.ini, оставшемуся от прошлой
+    // генерации: иначе старые проекты так и прошивали бы на прежний порт.
+    CodegenWriteResult enforceUploadPort(const std::string& output_project_dir)
+    {
+        const std::string ini_path = (utf8Path(output_project_dir) / "platformio.ini").u8string();
+        const FileReadOutcome ini = readUtf8PathFile(ini_path);
+        if (!ini.success)
+        {
+            return CodegenWriteResult{false, "Не удалось прочитать " + ini_path + ini.diagnostic};
+        }
+        static const std::regex com_option(R"(--com=\S+)");
+        const std::string patched =
+            std::regex_replace(ini.content, com_option, std::string("--com=") + kUploadPort);
+        if (patched == ini.content)
+        {
+            return CodegenWriteResult{true, ""};
+        }
+        const FileWriteOutcome written = writeUtf8PathFile(ini_path, patched);
+        if (!written.success)
+        {
+            return CodegenWriteResult{false, "Не удалось записать " + ini_path + written.diagnostic};
+        }
+        return CodegenWriteResult{true, ""};
+    }
+}
+
 CodegenWriteResult writeGeneratedProject(
     const GeneratedProjectFirmware& firmware,
     const std::string& skeleton_dir,
@@ -715,6 +749,12 @@ CodegenWriteResult writeGeneratedProject(
         {
             return CodegenWriteResult{false, "Не удалось скопировать " + skeleton_dir + ": " + fs_error.message()};
         }
+    }
+
+    const CodegenWriteResult port_result = enforceUploadPort(output_project_dir);
+    if (!port_result.success)
+    {
+        return port_result;
     }
 
     // FreeRTOS-Kernel — независимая от src/-транзакции копия (как и сам

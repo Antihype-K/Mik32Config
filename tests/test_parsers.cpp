@@ -373,6 +373,7 @@ TEST(ProjectCodegen, MergesAllPeripheralsIntoSingleInitHeaderAndMain)
     // mik32_init.h сам подключает HAL-заголовки использованной периферии —
     // иначе код пользователя в main.c (USER CODE) не видит HAL-API, и
     // HAL_GPIO_TogglePin(GPIO_2, GPIO_PIN_6) не компилируется.
+    EXPECT_TRUE(contains(init_h, "#include \"mik32_hal.h\""));
     EXPECT_TRUE(contains(init_h, "#include \"mik32_hal_gpio.h\""));
     EXPECT_TRUE(contains(init_h, "#include \"mik32_hal_usart.h\""));
     EXPECT_TRUE(contains(init_h, "#include \"mik32_hal_i2c.h\""));
@@ -1289,6 +1290,35 @@ TEST(ProjectCodegenWriteTransactional, SuccessfulWriteMatchesGeneratedFirmwareBy
     // Скелет тоже должен был скопироваться (вне транзакции, но частью того
     // же вызова) — platformio.ini как маркер того, что копирование прошло.
     EXPECT_TRUE(test_fs::exists(output_dir / "platformio.ini"));
+
+    test_fs::remove_all(output_dir, cleanup_error);
+}
+
+// Порт прошивки всегда /dev/ttyUSB0 — и в свежем проекте, и в проекте,
+// где platformio.ini остался от прошлой генерации с другим портом.
+TEST(ProjectCodegenWriteTransactional, UploadPortIsAlwaysTtyUsb0)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/gpio_codegen_output.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const test_fs::path output_dir = makeTempTestOutputDir("upload_port");
+    std::error_code cleanup_error;
+    test_fs::remove_all(output_dir, cleanup_error);
+
+    ASSERT_TRUE(writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string()).success);
+    EXPECT_TRUE(contains(readBinaryFileToString(output_dir / "platformio.ini"), "--com=/dev/ttyUSB0"));
+
+    {
+        std::ofstream stale(output_dir / "platformio.ini", std::ios::binary);
+        stale << "upload_command = python3 uploader.py $SOURCE --com=/dev/ttyUSB1\n";
+    }
+    ASSERT_TRUE(writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string()).success);
+    const std::string ini = readBinaryFileToString(output_dir / "platformio.ini");
+    EXPECT_TRUE(contains(ini, "--com=/dev/ttyUSB0"));
+    EXPECT_FALSE(contains(ini, "ttyUSB1"));
 
     test_fs::remove_all(output_dir, cleanup_error);
 }
