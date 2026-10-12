@@ -63,6 +63,27 @@ enum class OutputLanguage { C, Rust };
 // пользователя), см. docs/implementations/rust_codegen.md.
 enum class HalSourceMode { Bundled, Network, LocalPath };
 
+// Ночная сессия 12->13.10.2026 (OVERNIGHT_FIELD_REFERENCE.md) — лайт-версия
+// конфигурации тактирования (backend; GUI-форма — отдельная сессия).
+// Поле уровня проекта, НЕ элемент peripherals[] (PCC — не периферия,
+// назначаемая instance'ом, а единственный блок тактирования всего МК).
+// Источник — mik32_hal_pcc.h, PCC_InitTypeDef. Дефолты здесь воспроизводят
+// значения, которые раньше были жёстко зашиты в kSystemClockConfigDefinition
+// (project_codegen.cpp) — старые конфиги без поля "clock" генерируют
+// побайтово тот же SystemClock_Config(), что и раньше.
+struct ClockConfig
+{
+    // "hsi32m"/"osc32m" -> PCC_OSCILLATORTYPE_HSI32M/OSC32M. osc32m — прежний
+    // хардкод (внешний кварц 32МГц), используется и как OscillatorEnable
+    // (всегда ALL — оба генератора включены для FreqMon), и как
+    // FreqMon.OscillatorSystem (реальный источник тактирования ядра).
+    std::string oscillator_system = "osc32m";
+    // PCC_InitTypeDef: "делитель... число от Min=0 до Max=255".
+    int ahb_divider = 0;
+    int apbm_divider = 0;
+    int apbp_divider = 0;
+};
+
 struct ProjectConfig
 {
     std::string mcu;
@@ -107,6 +128,9 @@ struct ProjectConfig
     // parser/freertos/freertos_parser.h. По умолчанию FreeRtosConfig{} —
     // enabled=false, main() генерируется в прежнем виде (while(1)).
     FreeRtosConfig freertos;
+
+    // Необязательное поле верхнего уровня "clock" — см. ClockConfig выше.
+    ClockConfig clock;
 };
 
 // Ошибка возвращается, если:

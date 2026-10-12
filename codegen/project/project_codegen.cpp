@@ -58,30 +58,40 @@ namespace
         return out.str();
     }
 
-    // SystemClock_Config зашита дефолтным блоком из
-    // docs/examples/mik32-examples/HAL_Blink/src/main.c (строки 27-43):
-    // конфигуратор пока не умеет настраивать PCC как отдельную периферию, а
-    // без HAL_PCC_Config сгенерированный проект не получит корректного
-    // тактирования вообще. До этого модуля один и тот же блок был скопирован
-    // в пять генераторов; теперь он здесь в единственном экземпляре.
-    const char* kSystemClockConfigDefinition =
-        "void SystemClock_Config(void)\n"
-        "{\n"
-        "    PCC_InitTypeDef PCC_OscInit = {0};\n"
-        "\n"
-        "    PCC_OscInit.OscillatorEnable = PCC_OSCILLATORTYPE_ALL;\n"
-        "    PCC_OscInit.FreqMon.OscillatorSystem = PCC_OSCILLATORTYPE_OSC32M;\n"
-        "    PCC_OscInit.FreqMon.ForceOscSys = PCC_FORCE_OSC_SYS_UNFIXED;\n"
-        "    PCC_OscInit.FreqMon.Force32KClk = PCC_FREQ_MONITOR_SOURCE_OSC32K;\n"
-        "    PCC_OscInit.AHBDivider = 0;\n"
-        "    PCC_OscInit.APBMDivider = 0;\n"
-        "    PCC_OscInit.APBPDivider = 0;\n"
-        "    PCC_OscInit.HSI32MCalibrationValue = 128;\n"
-        "    PCC_OscInit.LSI32KCalibrationValue = 8;\n"
-        "    PCC_OscInit.RTCClockSelection = PCC_RTC_CLOCK_SOURCE_AUTO;\n"
-        "    PCC_OscInit.RTCClockCPUSelection = PCC_CPU_RTC_CLOCK_SOURCE_OSC32K;\n"
-        "    HAL_PCC_Config(&PCC_OscInit);\n"
-        "}\n";
+    // SystemClock_Config — изначально зашита дефолтным блоком из
+    // docs/examples/mik32-examples/HAL_Blink/src/main.c (строки 27-43);
+    // с ночной сессии 12->13.10.2026 (OVERNIGHT_FIELD_REFERENCE.md)
+    // OscillatorSystem/делители читаются из ProjectConfig.clock, остальные
+    // поля PCC_InitTypeDef остаются тем же хардкодом (FreqMon.ForceOscSys,
+    // калибровочные значения HSI32M/LSI32K, RTC — вне скоупа этой сессии).
+    // До этого модуля один и тот же блок был скопирован в пять генераторов;
+    // теперь он здесь в единственном экземпляре.
+    std::string renderSystemClockConfig(const ClockConfig& clock)
+    {
+        // mik32_hal_pcc.h, HAL_PCC_OscillatorTypeTypeDef.
+        const std::string oscillator_system_literal =
+            (clock.oscillator_system == "hsi32m") ? "PCC_OSCILLATORTYPE_HSI32M" : "PCC_OSCILLATORTYPE_OSC32M";
+
+        std::ostringstream out;
+        out << "void SystemClock_Config(void)\n"
+               "{\n"
+               "    PCC_InitTypeDef PCC_OscInit = {0};\n"
+               "\n"
+               "    PCC_OscInit.OscillatorEnable = PCC_OSCILLATORTYPE_ALL;\n"
+               "    PCC_OscInit.FreqMon.OscillatorSystem = " << oscillator_system_literal << ";\n"
+               "    PCC_OscInit.FreqMon.ForceOscSys = PCC_FORCE_OSC_SYS_UNFIXED;\n"
+               "    PCC_OscInit.FreqMon.Force32KClk = PCC_FREQ_MONITOR_SOURCE_OSC32K;\n"
+               "    PCC_OscInit.AHBDivider = " << clock.ahb_divider << ";\n"
+               "    PCC_OscInit.APBMDivider = " << clock.apbm_divider << ";\n"
+               "    PCC_OscInit.APBPDivider = " << clock.apbp_divider << ";\n"
+               "    PCC_OscInit.HSI32MCalibrationValue = 128;\n"
+               "    PCC_OscInit.LSI32KCalibrationValue = 8;\n"
+               "    PCC_OscInit.RTCClockSelection = PCC_RTC_CLOCK_SOURCE_AUTO;\n"
+               "    PCC_OscInit.RTCClockCPUSelection = PCC_CPU_RTC_CLOCK_SOURCE_OSC32K;\n"
+               "    HAL_PCC_Config(&PCC_OscInit);\n"
+               "}\n";
+        return out.str();
+    }
 
     // Единственный на весь проект DMA_Init — DMA_CONFIG физически один
     // блок с 4 общими каналами (dma_config.h, DMA_CHANNEL_COUNT), а не
@@ -642,7 +652,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
                   "    }\n"
                   "}\n"
                   "\n"
-               << kSystemClockConfigDefinition
+               << renderSystemClockConfig(config.clock)
                << "\n"
                << freertos_pieces.task_and_timer_definitions
                << "\n"
@@ -684,7 +694,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
               "    }\n"
               "}\n"
               "\n"
-           << kSystemClockConfigDefinition;
+           << renderSystemClockConfig(config.clock);
     firmware.main_c = main_c.str();
 
     return ParseResult<GeneratedProjectFirmware>{true, "", firmware};

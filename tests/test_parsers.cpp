@@ -1084,6 +1084,59 @@ TEST(ProjectConfigParse, ParsesCmakeToolchainFields)
     EXPECT_TRUE(result.config->per_type_files);
 }
 
+// OVERNIGHT_FIELD_REFERENCE.md — лайт-версия конфигурации тактирования.
+TEST(ProjectConfigParse, KeepsClockDefaultsWhenFieldAbsent)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_all_peripherals.json");
+    ASSERT_TRUE(result.success) << result.error;
+
+    EXPECT_EQ(result.config->clock.oscillator_system, "osc32m");
+    EXPECT_EQ(result.config->clock.ahb_divider, 0);
+    EXPECT_EQ(result.config->clock.apbm_divider, 0);
+    EXPECT_EQ(result.config->clock.apbp_divider, 0);
+}
+
+TEST(ProjectConfigParse, ParsesCustomClockFields)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_clock_custom.json");
+    ASSERT_TRUE(result.success) << result.error;
+
+    EXPECT_EQ(result.config->clock.oscillator_system, "hsi32m");
+    EXPECT_EQ(result.config->clock.ahb_divider, 1);
+    EXPECT_EQ(result.config->clock.apbm_divider, 3);
+    EXPECT_EQ(result.config->clock.apbp_divider, 7);
+}
+
+TEST(ProjectConfigParse, RejectsInvalidOscillatorSystem)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_clock_invalid_oscillator.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectConfigParse, RejectsClockDividerOutOfRange)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_clock_divider_out_of_range.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, GeneratedSystemClockConfigReflectsCustomClockFields)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_clock_custom.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& main_c = firmware_result.config->main_c;
+    EXPECT_NE(main_c.find("PCC_OscInit.FreqMon.OscillatorSystem = PCC_OSCILLATORTYPE_HSI32M;"), std::string::npos);
+    EXPECT_NE(main_c.find("PCC_OscInit.AHBDivider = 1;"), std::string::npos);
+    EXPECT_NE(main_c.find("PCC_OscInit.APBMDivider = 3;"), std::string::npos);
+    EXPECT_NE(main_c.find("PCC_OscInit.APBPDivider = 7;"), std::string::npos);
+}
+
 TEST(ProjectConfigParse, RejectsInvalidToolchainValue)
 {
     ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_invalid_toolchain.json");

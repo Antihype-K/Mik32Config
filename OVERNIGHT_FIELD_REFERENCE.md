@@ -53,9 +53,31 @@ docs/ можно после ночной сессии, когда координ
 
 ## Тактирование (PCC) — новый top-level объект `clock`
 
-Сосед `peripherals` в project JSON. Источник — `mik32_hal_pcc.h`,
-`PCC_InitTypeDef`. Статус: см. `OVERNIGHT_CLOCK_CONFIG_FIELDS.md` (создаётся
-вместе с реализацией, может появиться позже этого файла).
+**Готово (backend).** Сосед `peripherals` в project JSON (НЕ элемент
+`peripherals[]` — PCC не привязан к instance). Необязательный объект,
+источник — `mik32_hal_pcc.h`, `PCC_InitTypeDef`.
+
+| JSON-поле | Тип | Значения | HAL-источник | Дефолт (поле/объект не задан) |
+|---|---|---|---|---|
+| `clock.oscillator_system` | enum | `hsi32m`, `osc32m` | `HAL_PCC_OscillatorTypeTypeDef` → `PCC_OscInit.FreqMon.OscillatorSystem` | `osc32m` (воспроизводит прежний хардкод) |
+| `clock.ahb_divider` | int | 0-255 | `PCC_InitTypeDef.AHBDivider` | `0` |
+| `clock.apbm_divider` | int | 0-255 | `PCC_InitTypeDef.APBMDivider` | `0` |
+| `clock.apbp_divider` | int | 0-255 | `PCC_InitTypeDef.APBPDivider` | `0` |
+
+Реализация: `codegen/project/project_config.h/.cpp` (парсинг),
+`codegen/project/project_codegen.cpp` (`renderSystemClockConfig` заменила
+хардкод-константу `kSystemClockConfigDefinition`). Старые конфиги без поля
+`clock` генерируют побайтово тот же `SystemClock_Config()`, что и раньше —
+все 166 существующих тестов прошли без правок golden-файлов.
+
+**GUI-часть (лайт-форма: выпадающий список + делители + вычисляемая частота
+текстом) — делает облачный агент**, см. routine 02:40/08:00 EAT, задача 4.
+Полноценная диаграмма как в CubeMX — отдельная будущая сессия, не сегодня.
+
+Формула для GUI (вычисление итоговой частоты шины для отображения):
+`частота_шины = базовая_частота / (делитель + 1)`, где базовая_частота —
+32МГц (HSI32M или OSC32M — оба 32МГц номинально, отличаются источником:
+внутренний RC-генератор против внешнего кварца).
 
 ## Таймеры — пересчёт частоты/скважности
 

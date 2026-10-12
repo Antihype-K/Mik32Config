@@ -256,6 +256,60 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
         project.freertos = *freertos_result.config;
     }
 
+    // --- clock (OVERNIGHT_FIELD_REFERENCE.md) ---------------------------
+    // Необязательный top-level объект. Источник — mik32_hal_pcc.h,
+    // PCC_InitTypeDef. Отсутствие поля -> ClockConfig{} (дефолты project_config.h),
+    // воспроизводящие прежний хардкод в project_codegen.cpp побайтово.
+    if (root.contains("clock"))
+    {
+        if (!root["clock"].is_object())
+        {
+            return makeError("Поле \"clock\" должно быть объектом");
+        }
+        const nlohmann::json& clock = root["clock"];
+
+        if (clock.contains("oscillator_system"))
+        {
+            if (!clock["oscillator_system"].is_string())
+            {
+                return makeError("Поле \"clock.oscillator_system\" должно быть строкой");
+            }
+            const std::string oscillator_system = clock["oscillator_system"].get<std::string>();
+            if (oscillator_system != "hsi32m" && oscillator_system != "osc32m")
+            {
+                return makeError("Поле \"clock.oscillator_system\" содержит недопустимое значение (разрешено hsi32m, osc32m)");
+            }
+            project.clock.oscillator_system = oscillator_system;
+        }
+
+        // AHB/APB_M/APB_P — делители частоты, PCC_InitTypeDef: "число между
+        // Min = 0 и Max = 255" (mik32_hal_pcc.h, комментарии к AHBDivider/
+        // APBMDivider/APBPDivider).
+        struct DividerField { const char* json_name; int* target; };
+        const DividerField divider_fields[] = {
+            {"ahb_divider", &project.clock.ahb_divider},
+            {"apbm_divider", &project.clock.apbm_divider},
+            {"apbp_divider", &project.clock.apbp_divider},
+        };
+        for (const DividerField& field : divider_fields)
+        {
+            if (!clock.contains(field.json_name))
+            {
+                continue;
+            }
+            if (!clock[field.json_name].is_number_integer())
+            {
+                return makeError(std::string("Поле \"clock.") + field.json_name + "\" должно быть целым числом");
+            }
+            const int value = clock[field.json_name].get<int>();
+            if (value < 0 || value > 255)
+            {
+                return makeError(std::string("Поле \"clock.") + field.json_name + "\" вне диапазона 0-255 (PCC_InitTypeDef)");
+            }
+            *field.target = value;
+        }
+    }
+
     // Занятые instance — только для типов, где повторное вхождение
     // бессмысленно физически (см. комментарий к parseProjectConfig в .h).
     std::set<int> used_uart_instances;
