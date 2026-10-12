@@ -1434,6 +1434,75 @@ TEST(ProjectCodegenWriteTransactional, SuccessfulWriteMatchesGeneratedFirmwareBy
     test_fs::remove_all(output_dir, cleanup_error);
 }
 
+// OVERNIGHT_FIELD_REFERENCE.md — CHANGELOG_GENERATED.md.
+TEST(ProjectCodegenWriteTransactional, ChangelogSaysFirstGenerationOnFreshDir)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/gpio_codegen_output.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const test_fs::path output_dir = makeTempTestOutputDir("changelog_first");
+    std::error_code cleanup_error;
+    test_fs::remove_all(output_dir, cleanup_error);
+
+    ASSERT_TRUE(writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string()).success);
+    EXPECT_TRUE(contains(readBinaryFileToString(output_dir / "CHANGELOG_GENERATED.md"), "Первая генерация"));
+
+    test_fs::remove_all(output_dir, cleanup_error);
+}
+
+TEST(ProjectCodegenWriteTransactional, ChangelogSaysNothingChangedOnIdenticalRegeneration)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/gpio_codegen_output.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const test_fs::path output_dir = makeTempTestOutputDir("changelog_unchanged");
+    std::error_code cleanup_error;
+    test_fs::remove_all(output_dir, cleanup_error);
+
+    ASSERT_TRUE(writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string()).success);
+    ASSERT_TRUE(writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string()).success);
+    EXPECT_TRUE(contains(readBinaryFileToString(output_dir / "CHANGELOG_GENERATED.md"), "ничего не изменилось"));
+
+    test_fs::remove_all(output_dir, cleanup_error);
+}
+
+TEST(ProjectCodegenWriteTransactional, ChangelogShowsDiffWhenConfigChangesBetweenRegenerations)
+{
+    ParseResult<ProjectConfig> first_config = parseProjectConfig("fixtures/gpio_codegen_output.json");
+    ASSERT_TRUE(first_config.success) << first_config.error;
+    ParseResult<GeneratedProjectFirmware> first_firmware =
+        generateProjectFirmware(*first_config.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(first_firmware.success) << first_firmware.error;
+
+    // gpio_duplicate_pins.json — другой instance/pins того же типа periph,
+    // достаточно другой текст mik32_init.c, чтобы дифф был непустым.
+    ParseResult<ProjectConfig> second_config = parseProjectConfig("fixtures/timer16_valid.json");
+    ASSERT_TRUE(second_config.success) << second_config.error;
+    ParseResult<GeneratedProjectFirmware> second_firmware =
+        generateProjectFirmware(*second_config.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(second_firmware.success) << second_firmware.error;
+
+    const test_fs::path output_dir = makeTempTestOutputDir("changelog_diff");
+    std::error_code cleanup_error;
+    test_fs::remove_all(output_dir, cleanup_error);
+
+    ASSERT_TRUE(writeGeneratedProject(*first_firmware.config, "../templates/pio_skeleton", output_dir.u8string()).success);
+    ASSERT_TRUE(writeGeneratedProject(*second_firmware.config, "../templates/pio_skeleton", output_dir.u8string()).success);
+
+    const std::string changelog = readBinaryFileToString(output_dir / "CHANGELOG_GENERATED.md");
+    EXPECT_TRUE(contains(changelog, "mik32_init.c"));
+    EXPECT_TRUE(contains(changelog, "-"));
+    EXPECT_TRUE(contains(changelog, "+"));
+
+    test_fs::remove_all(output_dir, cleanup_error);
+}
+
 // Порт прошивки всегда /dev/ttyUSB0 — и в свежем проекте, и в проекте,
 // где platformio.ini остался от прошлой генерации с другим портом.
 TEST(ProjectCodegenWriteTransactional, UploadPortIsAlwaysTtyUsb0)

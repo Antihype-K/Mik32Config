@@ -225,6 +225,110 @@ namespace
         return candidate;
     }
 
+    // OVERNIGHT_FIELD_REFERENCE.md: простой построчный дифф по общему
+    // префиксу/суффиксу (не полный Myers/LCS — для типичного случая "поменяли
+    // несколько полей конфига" этого достаточно и читается человеком проще,
+    // чем символьный дифф). Возвращает удалённые/добавленные строки средней
+    // несовпадающей части.
+    struct SimpleLineDiff
+    {
+        std::vector<std::string> removed;
+        std::vector<std::string> added;
+    };
+
+    std::vector<std::string> splitLines(const std::string& text)
+    {
+        std::vector<std::string> lines;
+        std::istringstream iss(text);
+        std::string line;
+        while (std::getline(iss, line))
+        {
+            lines.push_back(line);
+        }
+        return lines;
+    }
+
+    SimpleLineDiff computeSimpleLineDiff(const std::string& old_text, const std::string& new_text)
+    {
+        const std::vector<std::string> old_lines = splitLines(old_text);
+        const std::vector<std::string> new_lines = splitLines(new_text);
+
+        size_t prefix = 0;
+        while (prefix < old_lines.size() && prefix < new_lines.size()
+               && old_lines[prefix] == new_lines[prefix])
+        {
+            ++prefix;
+        }
+
+        size_t old_suffix = old_lines.size();
+        size_t new_suffix = new_lines.size();
+        while (old_suffix > prefix && new_suffix > prefix
+               && old_lines[old_suffix - 1] == new_lines[new_suffix - 1])
+        {
+            --old_suffix;
+            --new_suffix;
+        }
+
+        SimpleLineDiff diff;
+        diff.removed.assign(old_lines.begin() + static_cast<long>(prefix), old_lines.begin() + static_cast<long>(old_suffix));
+        diff.added.assign(new_lines.begin() + static_cast<long>(prefix), new_lines.begin() + static_cast<long>(new_suffix));
+        return diff;
+    }
+
+    // Текст CHANGELOG_GENERATED.md — перезаписывается при каждой генерации
+    // (не накопительный лог), отражает только дифф с НЕПОСРЕДСТВЕННО
+    // предыдущей генерацией этого же каталога. first_generation=true, если
+    // mik32_init.c не существовал до этого вызова (обычный файл-маркер
+    // "раньше тут ничего не было", см. вызывающий код).
+    std::string renderChangelog(
+        bool first_generation,
+        const SimpleLineDiff& init_h_diff,
+        const SimpleLineDiff& init_c_diff,
+        const SimpleLineDiff& main_c_diff)
+    {
+        if (first_generation)
+        {
+            return "# CHANGELOG_GENERATED.md\n\nПервая генерация этого проекта — сравнивать не с чем.\n";
+        }
+
+        auto anyChanges = [](const SimpleLineDiff& diff) { return !diff.removed.empty() || !diff.added.empty(); };
+        if (!anyChanges(init_h_diff) && !anyChanges(init_c_diff) && !anyChanges(main_c_diff))
+        {
+            return "# CHANGELOG_GENERATED.md\n\nПо сравнению с предыдущей генерацией ничего не изменилось "
+                   "(конфиг и/или код сгенерировали побайтово тот же результат).\n";
+        }
+
+        std::ostringstream out;
+        out << "# CHANGELOG_GENERATED.md\n\n"
+               "Дифф с непосредственно предыдущей генерацией этого же проекта (не весь"
+               " накопленный лог — только последнее изменение). Автоматический построчный"
+               " дифф по сгенерированным файлам, не по исходному JSON-конфигу.\n\n";
+
+        auto renderFileDiff = [&out](const char* file_name, const SimpleLineDiff& diff)
+        {
+            if (diff.removed.empty() && diff.added.empty())
+            {
+                return;
+            }
+            out << "## " << file_name << "\n\n";
+            for (const std::string& line : diff.removed)
+            {
+                out << "- " << line << "\n";
+            }
+            for (const std::string& line : diff.added)
+            {
+                out << "+ " << line << "\n";
+            }
+            out << "\n";
+        };
+
+        renderFileDiff("mik32_init.h", init_h_diff);
+        renderFileDiff("mik32_init.c", init_c_diff);
+        renderFileDiff("main.c", main_c_diff);
+
+        return out.str();
+    }
+
     // Пишет mik32_init.h/.c/main.c в temp_dir. При первой же ошибке
     // возвращает диагностику — вызывающий код удаляет temp_dir целиком, не
     // трогая src_dir вообще (записи в src_dir на этом шаге ещё не было).
@@ -791,12 +895,40 @@ CodegenWriteResult writeGeneratedProject(
     // отрабатывает так же, как для первой генерации — исключений нет.
     std::string main_c_to_write = firmware.main_c;
     const fs::path main_c_path = src_dir / "main.c";
+    // OVERNIGHT_FIELD_REFERENCE.md: содержимое ДО этой генерации — база для
+    // CHANGELOG_GENERATED.md ниже. Читается тем же readUtf8PathFile, что и
+    // слияние USER CODE чуть выше — отдельное чтение, не переиспользование
+    // "existing", потому что main_c_to_write после слияния — это уже
+    // результат мерджа, а для диффа нужен ИСХОДНЫЙ файл с диска.
+    const bool is_first_generation = !fs::exists(main_c_path);
+    std::string previous_main_c;
+    std::string previous_init_h;
+    std::string previous_init_c;
     if (fs::exists(main_c_path))
     {
         const FileReadOutcome existing = readUtf8PathFile(main_c_path.u8string());
         if (existing.success)
         {
             main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content);
+            previous_main_c = existing.content;
+        }
+    }
+    const fs::path init_h_path = src_dir / "mik32_init.h";
+    if (fs::exists(init_h_path))
+    {
+        const FileReadOutcome existing = readUtf8PathFile(init_h_path.u8string());
+        if (existing.success)
+        {
+            previous_init_h = existing.content;
+        }
+    }
+    const fs::path init_c_path = src_dir / "mik32_init.c";
+    if (fs::exists(init_c_path))
+    {
+        const FileReadOutcome existing = readUtf8PathFile(init_c_path.u8string());
+        if (existing.success)
+        {
+            previous_init_c = existing.content;
         }
     }
 
@@ -829,6 +961,16 @@ CodegenWriteResult writeGeneratedProject(
     {
         return move_result;
     }
+
+    // OVERNIGHT_FIELD_REFERENCE.md: CHANGELOG_GENERATED.md — после каждой
+    // генерации, в корне проекта (сосед src/), не внутри транзакции выше
+    // (это вторичный, не критичный для сборки файл — ошибка его записи не
+    // должна откатывать уже успешно записанный src/).
+    const SimpleLineDiff init_h_diff = computeSimpleLineDiff(previous_init_h, firmware.mik32_init_h);
+    const SimpleLineDiff init_c_diff = computeSimpleLineDiff(previous_init_c, firmware.mik32_init_c);
+    const SimpleLineDiff main_c_diff = computeSimpleLineDiff(previous_main_c, main_c_to_write);
+    const std::string changelog = renderChangelog(is_first_generation, init_h_diff, init_c_diff, main_c_diff);
+    writeUtf8PathFile((utf8Path(output_project_dir) / "CHANGELOG_GENERATED.md").u8string(), changelog);
 
     return CodegenWriteResult{true, ""};
 }
