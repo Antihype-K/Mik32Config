@@ -88,6 +88,16 @@ ParseResult<PeripheralContribution> buildTimer32Contribution(
     freq_comment << " * Расчётная частота счёта при sys_clk=" << knowledge.sys_clk_hz
                  << "Гц, Clock.Source=TIMER32_SOURCE_PRESCALER (ТЗ §3.1.8): "
                     "sys_clk/(prescaler+1) = " << count_freq_hz << " Гц.\n";
+    if (config.has_frequency)
+    {
+        // OVERNIGHT_FIELD_REFERENCE.md: период ШИМ = top+1 тактов (по аналогии
+        // с Timer16 ARR+1) — та же идея "запрошено/получилось", что у UART
+        // baud_rate и Timer16 frequency_hz.
+        const double output_freq_hz = count_freq_hz / (static_cast<double>(config.top) + 1.0);
+        freq_comment << " * Запрошено (frequency_hz): " << config.requested_frequency_hz
+                     << " Гц, получилось (после подбора prescaler=0 и округления TOP): "
+                     << output_freq_hz << " Гц.\n";
+    }
 
     std::ostringstream init_c;
     init_c << "/*\n"

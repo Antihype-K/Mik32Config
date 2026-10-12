@@ -1,0 +1,19 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "timer32",
+      "instance": 1,
+      "count_mode": "forward",
+      "frequency_hz": 1000,
+      "channels": [
+        {
+          "index": 0,
+          "mode": "pwm",
+          "duty_percent": 25
+        }
+      ]
+    }
+  ]
+}

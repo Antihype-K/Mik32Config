@@ -18,6 +18,13 @@ struct Timer32ChannelConfig
     bool pwm_invert;         // только mode=pwm
     std::string capture_edge; // только mode=capture: "rising" | "falling"
     bool noise_filter;        // только mode=capture
+
+    // OVERNIGHT_FIELD_REFERENCE.md: альтернатива ocr для mode=pwm — вместо
+    // прямого регистрового значения задаётся duty_percent, пересчёт в ocr
+    // делает парсер, зная top родительского Timer32Config. Для mode=compare
+    // duty_percent не применим (ocr там порог сравнения, не скважность).
+    bool has_duty_percent = false;
+    double requested_duty_percent = 0.0;
 };
 
 struct Timer32Config
@@ -29,6 +36,12 @@ struct Timer32Config
     uint32_t top;
     // Пусто для instance=0 (ТЗ §3.1.5: Timer32_0 — только счётчик, без каналов).
     std::vector<Timer32ChannelConfig> channels;
+
+    // OVERNIGHT_FIELD_REFERENCE.md: альтернатива prescaler+top — задать
+    // желаемую частоту ШИМ напрямую, парсер сам вычисляет top (при
+    // prescaler=0, максимальное разрешение — см. парсер).
+    bool has_frequency = false;
+    double requested_frequency_hz = 0.0;
 };
 
 ParseResult<Timer32Config> parseTimer32Config(const std::string& file_name_path);

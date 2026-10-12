@@ -2,7 +2,8 @@
   "peripheral_type": "timer32",
   "max_instances": 3,
   "_comment_max_instances": "ТЗ (docs/Приложение_А_Техническое_задание_МИК32.docx, §3.1.5): «МК МИК32 «Амур» содержит 3 модуля Timer32». Подтверждено docs/examples/mik32-hal/peripherals/Include/mik32_hal_timer32.h (TIMER32_0/1/2).",
-  "required_fields": ["type", "instance", "prescaler", "count_mode", "top"],
+  "required_fields": ["type", "instance", "count_mode"],
+  "_comment_required_fields": "prescaler/top были здесь до ночной сессии 12->13.10.2026 (OVERNIGHT_FIELD_REFERENCE.md) — теперь условно обязательны: либо оба (prescaler+top), либо вместо них frequency_hz. См. parser/timer32/timer32_parser.cpp.",
   "fields": {
     "instance": {
       "type": "integer",
@@ -26,6 +27,11 @@
       "max": 4294967295,
       "_comment": "mik32_hal_timer32.h, TIMER32_HandleTypeDef.Top: uint32_t (регистр TOP, 32-битный — в отличие от 16-битных ARR/CMP у Timer16)."
     },
+    "frequency_hz": {
+      "type": "number",
+      "min_exclusive": 0,
+      "_comment": "Необязательное поле (OVERNIGHT_FIELD_REFERENCE.md), альтернатива prescaler+top — взаимоисключающая. Парсер фиксирует prescaler=0 (делитель 1, максимальное разрешение TOP) и считает top = round(32МГц/frequency_hz) - 1. При sys_clk=32МГц и 32-битном TOP достижимы частоты от ~0.0075Гц до 32МГц без перебора делителей."
+    },
     "channels": {
       "type": "array",
       "_comment": "ТЗ §3.1.5 п.2: «для Timer32_1 и Timer32_2 позволять конфигурировать каждый из 4 каналов независимо в режимах: ШИМ, захват, сравнение; для Timer32_0 – только настройку счётчика». Поле допустимо только при instance=1 или instance=2 — эта межполевая проверка не выражается декларативно в этом MVP-формате схемы (см. schemas/i2c.json, где условные поля тоже описаны только текстом) и реализована прямо в parser/timer32/timer32_parser.cpp.",
@@ -47,7 +53,13 @@
           "type": "integer",
           "min": 0,
           "max": 4294967295,
-          "_comment": "Обязательно для mode=pwm и mode=compare (HAL_Timer32_Channel_OCR_Set); для mode=capture кодогеном игнорируется — в этом режиме канал ЧИТАЕТ ICR из сигнала, а не сравнивает со значением, заданным пользователем (mik32_hal_timer32.c, HAL_Timer32_Channel_Init вызывает OCR_Set безусловно значением 0, если поле не задано)."
+          "_comment": "Обязательно для mode=pwm и mode=compare (HAL_Timer32_Channel_OCR_Set), ВЗАИМОИСКЛЮЧАЮЩЕ с duty_percent (только для mode=pwm, см. ниже); для mode=capture кодогеном игнорируется — в этом режиме канал ЧИТАЕТ ICR из сигнала, а не сравнивает со значением, заданным пользователем (mik32_hal_timer32.c, HAL_Timer32_Channel_Init вызывает OCR_Set безусловно значением 0, если поле не задано)."
+        },
+        "duty_percent": {
+          "type": "number",
+          "min": 0,
+          "max": 100,
+          "_comment": "Необязательное поле (OVERNIGHT_FIELD_REFERENCE.md), альтернатива ocr — только для mode=pwm. ocr = round((top+1) * duty_percent / 100), где top — итоговое значение top родительского Timer32Config (в т.ч. если оно само вычислено из frequency_hz)."
         },
         "pwm_invert": {
           "type": "boolean",

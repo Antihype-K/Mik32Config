@@ -100,10 +100,14 @@ timer16_parser.h/.cpp`, `codegen/project/timer16_contribution.cpp`.
 будет неверна (не проверяется, не блокируется). Исправление требует
 протаскивать ClockConfig в парсер каждого таймера — отдельная задача.
 
-**Timer32 — не сделано этой ночью** (нет в тестах, нет реализации). Тот же
-паттерн (frequency_hz/duty_percent -> prescaler/top/ocr для PWM-канала)
-применим напрямую — pattern готов к копированию из Timer16, но Timer32 имеет
-32-битный prescaler (не enum из 8 значений, а прямое число 0-4294967295), то
-есть подбор проще (можно взять prescaler=0 и решить top=round(tick_freq/
-frequency_hz)-1 напрямую, без перебора кандидатов) — но это НЕ реализовано,
-только спроектировано здесь текстом.
+**Timer32 — готово.** `frequency_hz` на уровне таймера (альтернатива
+prescaler+top, фиксирует prescaler=0 для максимального разрешения TOP) +
+`duty_percent` на уровне канала (альтернатива ocr, только mode=pwm — для
+mode=compare duty_percent не применим). Реализация: `parser/timer32/
+timer32_parser.h/.cpp`, `codegen/project/timer32_contribution.cpp`. 7 новых
+тестов, все 176 существующих проходят без изменений golden-файлов.
+
+Выходная частота ШИМ = sys_clk/(prescaler+1)/(top+1). Канал сам узнаёт
+итоговое значение top родительского таймера (даже если оно было вычислено
+из frequency_hz) — порядок парсинга: сначала frequency_hz/prescaler+top,
+потом channels[].

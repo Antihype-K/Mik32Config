@@ -630,6 +630,34 @@ TEST(Timer32Parse, RejectsChannelsOnInstanceZero)
     EXPECT_FALSE(result.success);
 }
 
+// OVERNIGHT_FIELD_REFERENCE.md — Timer32: пересчёт частоты/скважности.
+TEST(Timer32Parse, ComputesPrescalerTopFromFrequencyAndOcrFromDutyPercent)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_frequency_duty_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->has_frequency);
+    EXPECT_EQ(result.config->prescaler, 0u);
+    EXPECT_EQ(result.config->top, 31999u);
+    ASSERT_EQ(result.config->channels.size(), 1u);
+    EXPECT_TRUE(result.config->channels[0].has_duty_percent);
+    EXPECT_EQ(result.config->channels[0].ocr, 8000u);
+}
+
+TEST(Timer32Parse, RejectsFrequencyTogetherWithRawRegisters)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_frequency_and_raw_registers_conflict.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(Timer32Parse, RejectsOcrTogetherWithDutyPercent)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_ocr_and_duty_percent_conflict.json");
+
+    EXPECT_FALSE(result.success);
+}
+
 TEST(Timer32Parse, RejectsMissingOcrForPwm)
 {
     ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_pwm_missing_ocr.json");

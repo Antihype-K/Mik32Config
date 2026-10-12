@@ -1,6 +1,7 @@
 #include "timer32_parser.h"
 #include "win_file_io.h"
 #include "json.hpp"
+#include <cmath>
 #include <set>
 
 // Концепция: как и в parser/timer16/timer16_parser.cpp, правила ниже дословно
@@ -22,6 +23,11 @@ namespace
     constexpr int kMaxChannelIndex = 3;
     constexpr size_t kMaxChannels = 4;
 
+    // OVERNIGHT_FIELD_REFERENCE.md: knowledge_base/timer32.json, sys_clk_hz —
+    // ТЗ §3.1.8, валидно при clock.ahb_divider=0 (см. то же ограничение у
+    // Timer16 — Timer32Config парсится без доступа к top-level "clock").
+    constexpr double kSysClkHz = 32000000.0;
+
     ParseResult<Timer32Config> makeError(const std::string& message)
     {
         return ParseResult<Timer32Config>{false, message, std::nullopt};
@@ -29,7 +35,10 @@ namespace
 
     // Возвращает nullptr при успехе, иначе сообщение об ошибке — вызывающая
     // сторона (parseTimer32Block) знает номер канала для контекста сообщения.
-    std::optional<std::string> parseChannel(const nlohmann::json& channel_node, Timer32ChannelConfig& out)
+    // known_top — итоговое значение top родительского Timer32Config (уже
+    // посчитанное к моменту вызова, в т.ч. из frequency_hz, если он был
+    // задан) — нужно для пересчёта duty_percent -> ocr.
+    std::optional<std::string> parseChannel(const nlohmann::json& channel_node, uint32_t known_top, Timer32ChannelConfig& out)
     {
         for (const char* field : {"index", "mode"})
         {
@@ -56,18 +65,52 @@ namespace
         const std::string mode = channel_node["mode"].get<std::string>();
 
         uint32_t ocr = 0;
+        bool has_duty_percent = false;
+        double requested_duty_percent = 0.0;
         if (mode == "pwm" || mode == "compare")
         {
-            if (!channel_node.contains("ocr") || !channel_node["ocr"].is_number_integer())
+            const bool has_ocr_field = channel_node.contains("ocr");
+            const bool has_duty_field = (mode == "pwm") && channel_node.contains("duty_percent");
+
+            if (has_ocr_field && has_duty_field)
             {
-                return std::string("поле \"ocr\" обязательно и должно быть целым числом для mode=") + mode;
+                return std::string("нельзя одновременно задавать \"ocr\" и \"duty_percent\" — выберите один способ");
             }
-            const int64_t ocr_raw = channel_node["ocr"].get<int64_t>();
-            if (ocr_raw < 0 || static_cast<uint64_t>(ocr_raw) > kMaxRegisterValue)
+
+            if (has_duty_field)
             {
-                return std::string("поле \"ocr\" вне диапазона 0-4294967295 (регистр OCR 32-битный)");
+                if (!channel_node["duty_percent"].is_number())
+                {
+                    return std::string("поле \"duty_percent\" должно быть числом");
+                }
+                requested_duty_percent = channel_node["duty_percent"].get<double>();
+                if (requested_duty_percent < 0.0 || requested_duty_percent > 100.0)
+                {
+                    return std::string("поле \"duty_percent\" вне диапазона 0-100");
+                }
+                // period_ticks = top+1 (по аналогии с Timer16 ARR+1).
+                const double period_ticks = static_cast<double>(known_top) + 1.0;
+                const double ocr_value = std::round(period_ticks * requested_duty_percent / 100.0);
+                ocr = static_cast<uint32_t>(std::min(ocr_value, static_cast<double>(known_top)));
+                has_duty_percent = true;
             }
-            ocr = static_cast<uint32_t>(ocr_raw);
+            else if (has_ocr_field)
+            {
+                if (!channel_node["ocr"].is_number_integer())
+                {
+                    return std::string("поле \"ocr\" должно быть целым числом");
+                }
+                const int64_t ocr_raw = channel_node["ocr"].get<int64_t>();
+                if (ocr_raw < 0 || static_cast<uint64_t>(ocr_raw) > kMaxRegisterValue)
+                {
+                    return std::string("поле \"ocr\" вне диапазона 0-4294967295 (регистр OCR 32-битный)");
+                }
+                ocr = static_cast<uint32_t>(ocr_raw);
+            }
+            else
+            {
+                return std::string("поле \"ocr\" (или \"duty_percent\" для mode=pwm) обязательно для mode=") + mode;
+            }
         }
 
         bool pwm_invert = false;
@@ -107,6 +150,8 @@ namespace
         out.pwm_invert = pwm_invert;
         out.capture_edge = capture_edge;
         out.noise_filter = noise_filter;
+        out.has_duty_percent = has_duty_percent;
+        out.requested_duty_percent = requested_duty_percent;
         return std::nullopt;
     }
 }
@@ -155,7 +200,7 @@ ParseResult<Timer32Config> parseTimer32Config(const std::string& file_name_path)
 
 ParseResult<Timer32Config> parseTimer32Block(const nlohmann::json& timer32)
 {
-    for (const char* field : {"instance", "prescaler", "count_mode", "top"})
+    for (const char* field : {"instance", "count_mode"})
     {
         if (!timer32.contains(field))
         {
@@ -173,37 +218,86 @@ ParseResult<Timer32Config> parseTimer32Block(const nlohmann::json& timer32)
         return makeError("Поле \"instance\" вне диапазона 0-2 (в МИК32 три блока Timer32)");
     }
 
-    if (!timer32["prescaler"].is_number_integer())
-    {
-        return makeError("Поле \"prescaler\" должно быть целым числом");
-    }
-    const int64_t prescaler_raw = timer32["prescaler"].get<int64_t>();
-    if (prescaler_raw < 0 || static_cast<uint64_t>(prescaler_raw) > kMaxRegisterValue)
-    {
-        return makeError("Поле \"prescaler\" вне диапазона 0-4294967295 (регистр PRESCALER 32-битный)");
-    }
-
     if (!timer32["count_mode"].is_string() || !kValidCountModes.count(timer32["count_mode"].get<std::string>()))
     {
         return makeError("Поле \"count_mode\" содержит недопустимое значение (разрешены forward, reverse, bidirectional)");
     }
 
-    if (!timer32["top"].is_number_integer())
-    {
-        return makeError("Поле \"top\" должно быть целым числом");
-    }
-    const int64_t top_raw = timer32["top"].get<int64_t>();
-    if (top_raw < 0 || static_cast<uint64_t>(top_raw) > kMaxRegisterValue)
-    {
-        return makeError("Поле \"top\" вне диапазона 0-4294967295 (регистр TOP 32-битный)");
-    }
-
     Timer32Config config;
     config.type = "timer32";
     config.instance = instance;
-    config.prescaler = static_cast<uint32_t>(prescaler_raw);
     config.count_mode = timer32["count_mode"].get<std::string>();
-    config.top = static_cast<uint32_t>(top_raw);
+
+    // OVERNIGHT_FIELD_REFERENCE.md: frequency_hz — альтернатива prescaler+top,
+    // взаимоисключающая (как у Timer16). prescaler фиксируется в 0 (делитель
+    // 1 — максимальное разрешение TOP); при sys_clk=32МГц диапазон
+    // достижимых частот при prescaler=0 и 32-битном TOP — от ~0.0075Гц до
+    // 32МГц, этого достаточно без перебора других делителей.
+    const bool has_frequency_field = timer32.contains("frequency_hz");
+    const bool has_raw_registers = timer32.contains("prescaler") || timer32.contains("top");
+
+    if (has_frequency_field && has_raw_registers)
+    {
+        return makeError("Нельзя одновременно задавать \"frequency_hz\" и \"prescaler\"/\"top\" — выберите один способ");
+    }
+
+    if (has_frequency_field)
+    {
+        if (!timer32["frequency_hz"].is_number())
+        {
+            return makeError("Поле \"frequency_hz\" должно быть числом");
+        }
+        const double frequency_hz = timer32["frequency_hz"].get<double>();
+        if (frequency_hz <= 0.0)
+        {
+            return makeError("Поле \"frequency_hz\" должно быть положительным");
+        }
+
+        const double period_ticks = std::round(kSysClkHz / frequency_hz);
+        if (period_ticks < 1.0 || period_ticks > static_cast<double>(kMaxRegisterValue) + 1.0)
+        {
+            return makeError("Поле \"frequency_hz\" недостижимо при prescaler=0 "
+                              "(слишком высокая или слишком низкая частота для sys_clk=32МГц и 32-битного TOP)");
+        }
+
+        config.has_frequency = true;
+        config.requested_frequency_hz = frequency_hz;
+        config.prescaler = 0;
+        config.top = static_cast<uint32_t>(period_ticks - 1.0);
+    }
+    else
+    {
+        for (const char* field : {"prescaler", "top"})
+        {
+            if (!timer32.contains(field))
+            {
+                return makeError(std::string("Отсутствует обязательное поле \"") + field + "\"");
+            }
+        }
+
+        if (!timer32["prescaler"].is_number_integer())
+        {
+            return makeError("Поле \"prescaler\" должно быть целым числом");
+        }
+        const int64_t prescaler_raw = timer32["prescaler"].get<int64_t>();
+        if (prescaler_raw < 0 || static_cast<uint64_t>(prescaler_raw) > kMaxRegisterValue)
+        {
+            return makeError("Поле \"prescaler\" вне диапазона 0-4294967295 (регистр PRESCALER 32-битный)");
+        }
+
+        if (!timer32["top"].is_number_integer())
+        {
+            return makeError("Поле \"top\" должно быть целым числом");
+        }
+        const int64_t top_raw = timer32["top"].get<int64_t>();
+        if (top_raw < 0 || static_cast<uint64_t>(top_raw) > kMaxRegisterValue)
+        {
+            return makeError("Поле \"top\" вне диапазона 0-4294967295 (регистр TOP 32-битный)");
+        }
+
+        config.prescaler = static_cast<uint32_t>(prescaler_raw);
+        config.top = static_cast<uint32_t>(top_raw);
+    }
 
     const bool has_channels_field = timer32.contains("channels");
     if (instance == 0)
@@ -240,7 +334,7 @@ ParseResult<Timer32Config> parseTimer32Block(const nlohmann::json& timer32)
     for (size_t i = 0; i < timer32["channels"].size(); ++i)
     {
         Timer32ChannelConfig channel;
-        std::optional<std::string> channel_error = parseChannel(timer32["channels"][i], channel);
+        std::optional<std::string> channel_error = parseChannel(timer32["channels"][i], config.top, channel);
         if (channel_error)
         {
             return makeError("Канал #" + std::to_string(i + 1) + ": " + *channel_error);
