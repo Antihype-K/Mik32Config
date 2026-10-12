@@ -370,6 +370,14 @@ TEST(ProjectCodegen, MergesAllPeripheralsIntoSingleInitHeaderAndMain)
     EXPECT_TRUE(contains(init_h, "void I2C_0_Reset(void);"));
     EXPECT_TRUE(contains(init_h, "void TIMER16_0_Init(void);"));
 
+    // mik32_init.h сам подключает HAL-заголовки использованной периферии —
+    // иначе код пользователя в main.c (USER CODE) не видит HAL-API, и
+    // HAL_GPIO_TogglePin(GPIO_2, GPIO_PIN_6) не компилируется.
+    EXPECT_TRUE(contains(init_h, "#include \"mik32_hal_gpio.h\""));
+    EXPECT_TRUE(contains(init_h, "#include \"mik32_hal_usart.h\""));
+    EXPECT_TRUE(contains(init_h, "#include \"mik32_hal_i2c.h\""));
+    EXPECT_TRUE(contains(init_h, "#include \"mik32_hal_timer16.h\""));
+
     // Порядок вызовов задан kInitOrder* (contribution_utils.h):
     // GPIO -> UART -> I2C -> Timer16.
     const std::string& main_c = firmware_result.config->main_c;

@@ -217,11 +217,29 @@ namespace
         const std::string& extra_globals,
         const std::string& extra_function_text)
     {
+        std::vector<std::string> includes = extra_includes;
+        for (const PeripheralContribution& contribution : contributions)
+        {
+            appendUnique(includes, contribution.init_c_includes);
+        }
+
+        // Заголовок группы сам подключает HAL-заголовки своей периферии —
+        // иначе код пользователя в main.c (между маркерами USER CODE) не видит
+        // HAL-API этой периферии; см. то же решение для mik32_init.h в
+        // project_codegen.cpp.
         std::ostringstream header;
         header << "#ifndef " << guard_macro << "\n"
                   "#define " << guard_macro << "\n"
-                  "\n"
-               << extra_prototype;
+                  "\n";
+        for (const std::string& include : includes)
+        {
+            header << "#include \"" << include << "\"\n";
+        }
+        if (!includes.empty())
+        {
+            header << "\n";
+        }
+        header << extra_prototype;
         for (const PeripheralContribution& contribution : contributions)
         {
             for (const std::string& prototype : contribution.public_prototypes)
@@ -230,12 +248,6 @@ namespace
             }
         }
         header << "\n#endif //" << guard_macro << "\n";
-
-        std::vector<std::string> includes = extra_includes;
-        for (const PeripheralContribution& contribution : contributions)
-        {
-            appendUnique(includes, contribution.init_c_includes);
-        }
 
         std::ostringstream source;
         source << "/*\n"

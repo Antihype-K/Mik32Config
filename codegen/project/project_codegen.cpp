@@ -447,11 +447,30 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
 
     GeneratedProjectFirmware firmware;
 
+    // HAL-заголовки всех использованных блоков. Нужны и mik32_init.c, и
+    // mik32_init.h: заголовок подключает их сам (как main.h в STM32CubeMX),
+    // иначе код пользователя в main.c между маркерами USER CODE не видит
+    // HAL-API — например, HAL_GPIO_TogglePin(GPIO_2, GPIO_PIN_6) не
+    // компилируется: в main.c подключены только mik32_hal_pcc.h и mik32_init.h.
+    std::vector<std::string> init_c_includes;
+    if (any_uart_dma)
+    {
+        init_c_includes.push_back("mik32_hal_dma.h");
+    }
+    for (const PeripheralContribution& contribution : contributions)
+    {
+        appendUnique(init_c_includes, contribution.init_c_includes);
+    }
+
     // --- mik32_init.h -------------------------------------------------------
     std::ostringstream init_h;
     init_h << "#ifndef MIK32_INIT_H\n"
               "#define MIK32_INIT_H\n"
               "\n";
+    if (!init_c_includes.empty())
+    {
+        init_h << renderIncludes(init_c_includes) << "\n";
+    }
     if (any_uart_dma)
     {
         init_h << "void DMA_Init(void);\n";
@@ -467,16 +486,6 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     firmware.mik32_init_h = init_h.str();
 
     // --- mik32_init.c -------------------------------------------------------
-    std::vector<std::string> init_c_includes;
-    if (any_uart_dma)
-    {
-        init_c_includes.push_back("mik32_hal_dma.h");
-    }
-    for (const PeripheralContribution& contribution : contributions)
-    {
-        appendUnique(init_c_includes, contribution.init_c_includes);
-    }
-
     std::ostringstream init_c;
     init_c << "/*\n"
               " * Сгенерировано MIK32-Configurator.\n";
