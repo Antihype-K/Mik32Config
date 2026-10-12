@@ -53,6 +53,14 @@ ParseResult<PeripheralContribution> buildTimer16Contribution(
         freq_comment << std::fixed << std::setprecision(3);
         freq_comment << " * Расчётная частота ШИМ при sys_clk=" << knowledge.sys_clk_hz
                      << "Гц (ТЗ §3.1.8): sys_clk/(prescaler*(ARR+1)) = " << pwm_freq_hz << " Гц.\n";
+        if (config.has_frequency_duty)
+        {
+            const double actual_duty_percent = (static_cast<double>(config.cmp) / (static_cast<double>(config.arr) + 1.0)) * 100.0;
+            freq_comment << " * Запрошено (frequency_hz/duty_percent): " << config.requested_frequency_hz
+                         << " Гц / " << config.requested_duty_percent << "%, получилось (после подбора"
+                            " prescaler и округления ARR/CMP): " << pwm_freq_hz << " Гц / "
+                         << actual_duty_percent << "%.\n";
+        }
     }
     else
     {

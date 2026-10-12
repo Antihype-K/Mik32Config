@@ -17,6 +17,16 @@ struct Timer16Config
     int prescaler;
     uint16_t arr;
     uint16_t cmp;
+
+    // OVERNIGHT_FIELD_REFERENCE.md — пересчёт частоты/скважности. Если
+    // JSON-блок задал "frequency_hz"+"duty_percent" вместо prescaler/arr/cmp,
+    // парсер сам подбирает prescaler и вычисляет arr/cmp (оставляя их выше
+    // заполненными результатом); здесь хранится ЗАПРОШЕННОЕ пользователем
+    // значение — для комментария в сгенерированном коде (запрошено vs
+    // фактически получилось после округления, как у UART baud_rate).
+    bool has_frequency_duty = false;
+    double requested_frequency_hz = 0.0;
+    double requested_duty_percent = 0.0;
 };
 
 ParseResult<Timer16Config> parseTimer16Config(const std::string& file_name_path);

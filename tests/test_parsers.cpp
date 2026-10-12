@@ -224,6 +224,40 @@ TEST(UartParse, RejectsRtsModeWithoutFlowControl)
     EXPECT_FALSE(result.success);
 }
 
+// OVERNIGHT_FIELD_REFERENCE.md — Timer16: пересчёт частоты/скважности.
+TEST(Timer16Parse, ComputesPrescalerArrCmpFromFrequencyAndDuty)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_frequency_duty_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->has_frequency_duty);
+    // 32МГц / prescaler=1 / 1000Гц -> период 32000 тактов -> ARR=31999.
+    EXPECT_EQ(result.config->prescaler, 1);
+    EXPECT_EQ(result.config->arr, 31999);
+    EXPECT_EQ(result.config->cmp, 16000);
+}
+
+TEST(Timer16Parse, RejectsFrequencyWithoutDutyPercent)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_frequency_without_duty.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(Timer16Parse, RejectsFrequencyTogetherWithRawRegisters)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_frequency_and_raw_registers_conflict.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(Timer16Parse, RejectsFrequencyUnreachableByAnyPrescaler)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_frequency_too_low_unreachable.json");
+
+    EXPECT_FALSE(result.success);
+}
+
 TEST(UartParse, RejectsInvalidBaudRate)
 {
     ParseResult<UartConfig> result = parseUsartConfig("fixtures/uart_invalid_baud_rate.json");

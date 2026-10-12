@@ -2,7 +2,8 @@
   "peripheral_type": "timer16",
   "max_instances": 3,
   "_comment_max_instances": "ТЗ (docs/Приложение_А_Техническое_задание_МИК32.docx, §3.1.4): «МК МИК32 «Амур» содержит 3 модуля Timer16: Timer16_0, Timer16_1, Timer16_2» — подтверждено docs/examples/mik32-hal/peripherals/Include/mik32_hal_timer16.h (TIMER16_0/1/2).",
-  "required_fields": ["type", "instance", "mode", "prescaler", "arr", "cmp"],
+  "required_fields": ["type", "instance", "mode"],
+  "_comment_required_fields": "prescaler/arr/cmp были в этом списке до ночной сессии 12->13.10.2026 (OVERNIGHT_FIELD_REFERENCE.md) — теперь они условно обязательны: либо все три (prescaler+arr+cmp), либо вместо них frequency_hz+duty_percent. Условность не выражается декларативно в этом MVP-формате схемы (тот же приём, что у address_mode/own_address в schemas/i2c.json) — реализована в parser/timer16/timer16_parser.cpp.",
   "fields": {
     "instance": {
       "type": "integer",
@@ -31,6 +32,17 @@
       "max": 65535,
       "max_field": "arr",
       "_comment": "ТЗ §3.1.4 п.2: «порог сравнения для ШИМ (CMP, диапазон 0-ARR)» — верхняя граница не фиксированное число, а значение поля arr того же блока (max_field, по аналогии с тем, что item_max_by_instance в schemas/gpio.json завязан на другое поле блока). Поле обязательно для всех режимов по буквальному тексту ТЗ п.2 (единый список полей без оговорок по режимам), но в режиме external_event_count кодогеном игнорируется — реальный вызов HAL_Timer16_Counter_Start(handle, ARR) вообще не принимает Compare (см. docs/implementations/timer16.md)."
+    },
+    "frequency_hz": {
+      "type": "number",
+      "min_exclusive": 0,
+      "_comment": "Необязательное поле (OVERNIGHT_FIELD_REFERENCE.md), альтернатива prescaler+arr+cmp — должно присутствовать вместе с duty_percent, и не присутствовать одновременно с prescaler/arr/cmp. Парсер сам подбирает наименьший (= максимальное разрешение) из 8 аппаратных делителей и вычисляет arr. Формула: tick_freq = 32МГц(sys_clk, knowledge_base/timer16.json) / prescaler; period_ticks = round(tick_freq / frequency_hz); arr = period_ticks - 1. Валидно при top-level clock.ahb_divider=0 (дефолт) — ненулевой делитель не учитывается этой сессией."
+    },
+    "duty_percent": {
+      "type": "number",
+      "min": 0,
+      "max": 100,
+      "_comment": "Необязательное поле, обязано присутствовать вместе с frequency_hz. cmp = round(period_ticks * duty_percent / 100)."
     }
   }
 }

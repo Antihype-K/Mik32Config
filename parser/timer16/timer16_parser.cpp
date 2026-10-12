@@ -1,6 +1,8 @@
 #include "timer16_parser.h"
 #include "win_file_io.h"
 #include "json.hpp"
+#include <algorithm>
+#include <cmath>
 #include <set>
 
 // Концепция: как и в parser/gpio/gpio_parser.cpp и parser/USART/usart_parser.cpp,
@@ -21,6 +23,14 @@ namespace
     // schemas/timer16.json: "arr"/"cmp" — регистры Timer16 16-битные.
     constexpr int kMinRegisterValue = 0;
     constexpr int kMaxRegisterValue = 65535;
+
+    // OVERNIGHT_FIELD_REFERENCE.md: knowledge_base/timer16.json, sys_clk_hz —
+    // ТЗ §3.1.8, HSI 32МГц, валидно при clock.ahb_divider=0 (дефолт). Если
+    // пользователь задаст ненулевой ahb_divider в top-level "clock", эта
+    // формула НЕ учитывает делитель (Timer16Config парсится из одного блока
+    // peripherals[], без доступа к top-level "clock") — известное
+    // ограничение этой сессии, см. OVERNIGHT_FIELD_REFERENCE.md.
+    constexpr double kSysClkHz = 32000000.0;
 
     ParseResult<Timer16Config> makeError(const std::string& message)
     {
@@ -72,8 +82,7 @@ ParseResult<Timer16Config> parseTimer16Config(const std::string& file_name_path)
 
 ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
 {
-
-    for (const char* field : {"instance", "mode", "prescaler", "arr", "cmp"})
+    for (const char* field : {"instance", "mode"})
     {
         if (!timer16.contains(field))
         {
@@ -94,6 +103,99 @@ ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
     if (!timer16["mode"].is_string() || !kValidModes.count(timer16["mode"].get<std::string>()))
     {
         return makeError("Поле \"mode\" содержит недопустимое значение (разрешено period, one_shot, external_event_count)");
+    }
+
+    Timer16Config config;
+    config.type = "timer16";
+    config.instance = instance;
+    config.mode = timer16["mode"].get<std::string>();
+
+    // OVERNIGHT_FIELD_REFERENCE.md: два взаимоисключающих способа задать
+    // период/скважность — либо прямые регистры (prescaler+arr+cmp, как
+    // раньше), либо frequency_hz+duty_percent (парсер сам считает регистры).
+    const bool has_frequency_field = timer16.contains("frequency_hz");
+    const bool has_duty_field = timer16.contains("duty_percent");
+    const bool has_raw_registers = timer16.contains("prescaler") || timer16.contains("arr") || timer16.contains("cmp");
+
+    if (has_frequency_field != has_duty_field)
+    {
+        return makeError("Поля \"frequency_hz\" и \"duty_percent\" обязаны присутствовать вместе");
+    }
+
+    if (has_frequency_field && has_raw_registers)
+    {
+        return makeError("Нельзя одновременно задавать \"frequency_hz\"/\"duty_percent\" и \"prescaler\"/\"arr\"/\"cmp\" — выберите один способ");
+    }
+
+    if (has_frequency_field)
+    {
+        if (!timer16["frequency_hz"].is_number())
+        {
+            return makeError("Поле \"frequency_hz\" должно быть числом");
+        }
+        const double frequency_hz = timer16["frequency_hz"].get<double>();
+        if (frequency_hz <= 0.0)
+        {
+            return makeError("Поле \"frequency_hz\" должно быть положительным");
+        }
+
+        if (!timer16["duty_percent"].is_number())
+        {
+            return makeError("Поле \"duty_percent\" должно быть числом");
+        }
+        const double duty_percent = timer16["duty_percent"].get<double>();
+        if (duty_percent < 0.0 || duty_percent > 100.0)
+        {
+            return makeError("Поле \"duty_percent\" вне диапазона 0-100");
+        }
+
+        // Подбор наименьшего (= максимальное разрешение ARR) делителя из
+        // восьми аппаратных значений, при котором период укладывается в
+        // 16-битный ARR. kSysClkHz — см. комментарий у константы выше.
+        bool found_prescaler = false;
+        int chosen_prescaler = 0;
+        long chosen_period_ticks = 0;
+        for (const int candidate : {1, 2, 4, 8, 16, 32, 64, 128})
+        {
+            const double tick_freq = kSysClkHz / candidate;
+            const long period_ticks = std::lround(tick_freq / frequency_hz);
+            // period_ticks = ARR+1 -> ARR = period_ticks-1, должно попасть в 1..65536.
+            if (period_ticks >= 1 && period_ticks <= 65536)
+            {
+                found_prescaler = true;
+                chosen_prescaler = candidate;
+                chosen_period_ticks = period_ticks;
+                break;
+            }
+        }
+        if (!found_prescaler)
+        {
+            return makeError("Поле \"frequency_hz\" недостижимо ни одним из 8 аппаратных делителей "
+                              "(слишком низкая частота для 16-битного ARR даже при prescaler=128, "
+                              "либо слишком высокая для частоты шины)");
+        }
+
+        const long arr_value = chosen_period_ticks - 1;
+        const long cmp_value = std::lround(static_cast<double>(chosen_period_ticks) * duty_percent / 100.0);
+
+        config.has_frequency_duty = true;
+        config.requested_frequency_hz = frequency_hz;
+        config.requested_duty_percent = duty_percent;
+        config.prescaler = chosen_prescaler;
+        config.arr = static_cast<uint16_t>(arr_value);
+        config.cmp = static_cast<uint16_t>(std::min<long>(cmp_value, arr_value));
+
+        return ParseResult<Timer16Config>{true, "", config};
+    }
+
+    // Путь без frequency_hz/duty_percent — prescaler/arr/cmp обязательны,
+    // поведение идентично версии до этой сессии (обратная совместимость).
+    for (const char* field : {"prescaler", "arr", "cmp"})
+    {
+        if (!timer16.contains(field))
+        {
+            return makeError(std::string("Отсутствует обязательное поле \"") + field + "\"");
+        }
     }
 
     if (!timer16["prescaler"].is_number_integer()
@@ -125,10 +227,6 @@ ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
         return makeError("Поле \"cmp\" вне диапазона 0-ARR для этого блока");
     }
 
-    Timer16Config config;
-    config.type = "timer16";
-    config.instance = instance;
-    config.mode = timer16["mode"].get<std::string>();
     config.prescaler = timer16["prescaler"].get<int>();
     config.arr = static_cast<uint16_t>(arr);
     config.cmp = static_cast<uint16_t>(cmp);

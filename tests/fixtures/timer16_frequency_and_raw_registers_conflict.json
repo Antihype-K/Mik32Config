@@ -1,0 +1,16 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "timer16",
+      "instance": 1,
+      "mode": "period",
+      "frequency_hz": 1000,
+      "duty_percent": 50,
+      "prescaler": 1,
+      "arr": 31999,
+      "cmp": 16000
+    }
+  ]
+}
