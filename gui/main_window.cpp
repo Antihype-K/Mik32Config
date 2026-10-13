@@ -1052,6 +1052,11 @@ void MainWindow::refreshEverything()
     // (FreeRtosSettingsWidget::setValue).
     project_manager_screen_->setFreeRtosSettings(document_.projectSetting("freertos"));
 
+    // Тактирование (codegen/project/project_config.h, ClockConfig) — тот же
+    // приём, что и FreeRTOS выше: отсутствующий ключ "clock" читается как
+    // JSON null, дефолты подставляет сам экран (setClockSettings).
+    project_manager_screen_->setClockSettings(document_.projectSetting("clock"));
+
     applyViewModel();
 }
 

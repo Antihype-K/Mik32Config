@@ -45,6 +45,7 @@ class QRadioButton;
 class QLineEdit;
 class QPushButton;
 class QCheckBox;
+class QSpinBox;
 class QWidget;
 
 class ProjectManagerScreen : public QWidget
@@ -80,6 +81,15 @@ public:
     // ключа ещё нет — см. FreeRtosSettingsWidget::setValue). Тот же вызов из
     // MainWindow::refreshEverything(), что и setGenerationSettings выше.
     void setFreeRtosSettings(const nlohmann::json& freertos_settings);
+
+    // OVERNIGHT_FIELD_REFERENCE.md — лайт-версия конфигурации тактирования
+    // (НЕ диаграмма как в STM32CubeMX — полноценная визуальная диаграмма
+    // сознательно отложена на будущую сессию, см. grill-решение по вопросу 7).
+    // Текущее содержимое document["clock"] (может быть JSON null — тогда
+    // подставляются дефолты codegen/project/project_config.h::ClockConfig,
+    // воспроизводящие прежний хардкод SystemClock_Config). Тот же вызов из
+    // MainWindow::refreshEverything(), что и остальные setXxxSettings выше.
+    void setClockSettings(const nlohmann::json& clock_settings);
 
 signals:
     // Тот же сигнал и тот же маршрут оповещения, что и
@@ -131,6 +141,18 @@ private:
 
     // --- Вкладка «FreeRTOS» --------------------------------------------------
     FreeRtosSettingsWidget* freertos_widget_ = nullptr;
+
+    // --- Вкладка «Тактирование» -----------------------------------------
+    void updateClockFrequencyLabels();
+    void writeClockSetting();
+
+    QComboBox* clock_oscillator_combo_ = nullptr;
+    QSpinBox* clock_ahb_divider_ = nullptr;
+    QSpinBox* clock_apbm_divider_ = nullptr;
+    QSpinBox* clock_apbp_divider_ = nullptr;
+    QLabel* clock_ahb_frequency_label_ = nullptr;
+    QLabel* clock_apbm_frequency_label_ = nullptr;
+    QLabel* clock_apbp_frequency_label_ = nullptr;
 };
 
 #endif //MIK32_CONFIGURATOR_PROJECT_MANAGER_SCREEN_H

@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -165,6 +166,96 @@ ProjectManagerScreen::ProjectManagerScreen(QWidget* parent)
     freertos_widget_ = new FreeRtosSettingsWidget();
     root_freertos->addWidget(freertos_widget_);
     tabs->addTab(freertos_tab, QString::fromUtf8("FreeRTOS"));
+
+    // --- Вкладка «Тактирование» (OVERNIGHT_FIELD_REFERENCE.md) -----------
+    // Лайт-форма: выпадающий список источника + три делителя + вычисляемая
+    // итоговая частота каждой шины текстом. НЕ визуальная диаграмма как в
+    // STM32CubeMX — та сознательно отложена на отдельную будущую сессию
+    // (grill-решение по вопросу 7 той же ночной сессии).
+    QWidget* clock_tab = new QWidget();
+    QVBoxLayout* root_clock = new QVBoxLayout(clock_tab);
+    root_clock->setContentsMargins(40, 26, 40, 26);
+
+    QWidget* clock_card = new QWidget();
+    clock_card->setMaximumWidth(700);
+    QFormLayout* clock_form = new QFormLayout(clock_card);
+
+    // codegen/project/project_config.h, ClockConfig::oscillator_system —
+    // "osc32m"/"hsi32m"; mik32_hal_pcc.h, HAL_PCC_OscillatorTypeTypeDef.
+    clock_oscillator_combo_ = new QComboBox();
+    clock_oscillator_combo_->addItem(
+        QString::fromUtf8("Внешний кварц 32 МГц (OSC32M)"), QString::fromUtf8("osc32m"));
+    clock_oscillator_combo_->addItem(
+        QString::fromUtf8("Внутренний RC-генератор 32 МГц (HSI32M)"), QString::fromUtf8("hsi32m"));
+    clock_form->addRow(QString::fromUtf8("Источник тактирования"), clock_oscillator_combo_);
+
+    // PCC_InitTypeDef: "делитель... число между Min=0 и Max=255"
+    // (mik32_hal_pcc.h) — частота_шины = базовая / (делитель + 1).
+    clock_ahb_divider_ = new QSpinBox();
+    clock_ahb_divider_->setRange(0, 255);
+    clock_apbm_divider_ = new QSpinBox();
+    clock_apbm_divider_->setRange(0, 255);
+    clock_apbp_divider_ = new QSpinBox();
+    clock_apbp_divider_->setRange(0, 255);
+
+    clock_ahb_frequency_label_ = new QLabel();
+    clock_ahb_frequency_label_->setStyleSheet("color: gray;");
+    clock_apbm_frequency_label_ = new QLabel();
+    clock_apbm_frequency_label_->setStyleSheet("color: gray;");
+    clock_apbp_frequency_label_ = new QLabel();
+    clock_apbp_frequency_label_->setStyleSheet("color: gray;");
+
+    auto makeDividerRow = [](QSpinBox* divider, QLabel* frequency_label)
+    {
+        QWidget* row = new QWidget();
+        QHBoxLayout* row_layout = new QHBoxLayout(row);
+        row_layout->setContentsMargins(0, 0, 0, 0);
+        row_layout->addWidget(divider);
+        row_layout->addWidget(frequency_label);
+        row_layout->addStretch();
+        return row;
+    };
+    clock_form->addRow(QString::fromUtf8("Делитель AHB"), makeDividerRow(clock_ahb_divider_, clock_ahb_frequency_label_));
+    clock_form->addRow(QString::fromUtf8("Делитель APB_M"), makeDividerRow(clock_apbm_divider_, clock_apbm_frequency_label_));
+    clock_form->addRow(QString::fromUtf8("Делитель APB_P"), makeDividerRow(clock_apbp_divider_, clock_apbp_frequency_label_));
+
+    root_clock->addWidget(clock_card);
+
+    QLabel* clock_note = new QLabel(QString::fromUtf8(
+        "Полноценная визуальная диаграмма тактового дерева (как в "
+        "STM32CubeMX) — отдельная будущая сессия, здесь только форма: "
+        "источник + делители + вычисляемая частота. Обе частоты HSI32M и "
+        "OSC32M номинально равны 32 МГц, отличие — во внутреннем/внешнем "
+        "источнике сигнала."));
+    clock_note->setWordWrap(true);
+    clock_note->setStyleSheet("color: gray;");
+    root_clock->addSpacing(18);
+    root_clock->addWidget(clock_note);
+    root_clock->addStretch(1);
+
+    tabs->addTab(clock_tab, QString::fromUtf8("Тактирование"));
+
+    connect(clock_oscillator_combo_, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        updateClockFrequencyLabels();
+        writeClockSetting();
+    });
+    connect(clock_ahb_divider_, &QSpinBox::valueChanged, this, [this](int)
+    {
+        updateClockFrequencyLabels();
+        writeClockSetting();
+    });
+    connect(clock_apbm_divider_, &QSpinBox::valueChanged, this, [this](int)
+    {
+        updateClockFrequencyLabels();
+        writeClockSetting();
+    });
+    connect(clock_apbp_divider_, &QSpinBox::valueChanged, this, [this](int)
+    {
+        updateClockFrequencyLabels();
+        writeClockSetting();
+    });
+    updateClockFrequencyLabels();
 
     updateToolchainDependentVisibility();
     updateHalLocalPathEnabled();
@@ -358,6 +449,63 @@ void ProjectManagerScreen::setFreeRtosSettings(const nlohmann::json& freertos_se
     syncing_ = true;
     freertos_widget_->setValue(freertos_settings);
     syncing_ = false;
+}
+
+void ProjectManagerScreen::setClockSettings(const nlohmann::json& clock_settings)
+{
+    syncing_ = true;
+
+    const std::string oscillator_system = (clock_settings.is_object() && clock_settings.contains("oscillator_system")
+        && clock_settings["oscillator_system"].is_string())
+        ? clock_settings["oscillator_system"].get<std::string>() : "osc32m";
+    const int oscillator_index = clock_oscillator_combo_->findData(QString::fromStdString(oscillator_system));
+    clock_oscillator_combo_->setCurrentIndex(oscillator_index >= 0 ? oscillator_index : 0);
+
+    auto readDivider = [&clock_settings](const char* field) -> int
+    {
+        return (clock_settings.is_object() && clock_settings.contains(field) && clock_settings[field].is_number_integer())
+            ? clock_settings[field].get<int>() : 0;
+    };
+    clock_ahb_divider_->setValue(readDivider("ahb_divider"));
+    clock_apbm_divider_->setValue(readDivider("apbm_divider"));
+    clock_apbp_divider_->setValue(readDivider("apbp_divider"));
+
+    syncing_ = false;
+    updateClockFrequencyLabels();
+}
+
+void ProjectManagerScreen::updateClockFrequencyLabels()
+{
+    // codegen/project/project_config.h, ClockConfig — обе базовые частоты
+    // (HSI32M и OSC32M) номинально равны 32 МГц; частота_шины = базовая /
+    // (делитель + 1) (mik32_hal_pcc.h, комментарий к AHBDivider/APBMDivider/
+    // APBPDivider — "Частота делится на Prescaler + 1" у Timer32 это тот же
+    // принцип).
+    constexpr double kBaseHz = 32000000.0;
+    auto formatFrequency = [](double hz)
+    {
+        if (hz >= 1000000.0) return QString::fromUtf8("%1 МГц").arg(hz / 1000000.0, 0, 'f', 3);
+        if (hz >= 1000.0) return QString::fromUtf8("%1 кГц").arg(hz / 1000.0, 0, 'f', 3);
+        return QString::fromUtf8("%1 Гц").arg(hz, 0, 'f', 1);
+    };
+    clock_ahb_frequency_label_->setText(formatFrequency(kBaseHz / (clock_ahb_divider_->value() + 1.0)));
+    clock_apbm_frequency_label_->setText(formatFrequency(kBaseHz / (clock_apbm_divider_->value() + 1.0)));
+    clock_apbp_frequency_label_->setText(formatFrequency(kBaseHz / (clock_apbp_divider_->value() + 1.0)));
+}
+
+void ProjectManagerScreen::writeClockSetting()
+{
+    if (syncing_ || document_ == nullptr)
+    {
+        return;
+    }
+    nlohmann::json clock;
+    clock["oscillator_system"] = clock_oscillator_combo_->currentData().toString().toStdString();
+    clock["ahb_divider"] = clock_ahb_divider_->value();
+    clock["apbm_divider"] = clock_apbm_divider_->value();
+    clock["apbp_divider"] = clock_apbp_divider_->value();
+    document_->setProjectSetting("clock", clock);
+    emit documentChanged();
 }
 
 void ProjectManagerScreen::updateToolchainDependentVisibility()
