@@ -180,6 +180,8 @@ if(BUILD_GUI)
                 gui/new_project_screen.h
                 gui/project_manager_screen.cpp
                 gui/project_manager_screen.h
+                gui/clock_config_screen.cpp
+                gui/clock_config_screen.h
                 gui/freertos_settings_widget.cpp
                 gui/freertos_settings_widget.h
                 gui/code_preview_screen.cpp

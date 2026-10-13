@@ -40,6 +40,7 @@
 #include "home_screen.h"
 #include "new_project_screen.h"
 #include "project_manager_screen.h"
+#include "clock_config_screen.h"
 #include "code_preview_screen.h"
 
 namespace
@@ -85,6 +86,7 @@ MainWindow::MainWindow(const ProjectKnowledge& knowledge,
 
     properties_->setContext(&document_, &knowledge_);
     project_manager_screen_->setContext(&document_);
+    clock_config_screen_->setContext(&document_);
     package_view_->setPackage(package_);
 
     loadRecentProjects();
@@ -198,6 +200,7 @@ void MainWindow::buildLayout()
 
     home_screen_ = new HomeScreen();
     new_project_screen_ = new NewProjectScreen();
+    clock_config_screen_ = new ClockConfigScreen();
     project_manager_screen_ = new ProjectManagerScreen();
     code_preview_screen_ = new CodePreviewScreen();
 
@@ -206,16 +209,19 @@ void MainWindow::buildLayout()
     connect(home_screen_, &HomeScreen::recentProjectChosen, this, &MainWindow::onHomeRecentProjectChosen);
     connect(new_project_screen_, &NewProjectScreen::createRequested,
             this, &MainWindow::onNewProjectCreateRequested);
+    connect(clock_config_screen_, &ClockConfigScreen::documentChanged,
+            this, &MainWindow::onDocumentChanged);
     connect(project_manager_screen_, &ProjectManagerScreen::documentChanged,
             this, &MainWindow::onDocumentChanged);
 
     screens_stack_ = new QStackedWidget();
     // Порядок добавления обязан совпадать с NavViewModel::stackIndex
-    // (screen_navigator.cpp): Home=0, NewProject=1, Config=2,
-    // ProjectManager=3, CodePreview=4.
+    // (screen_navigator.cpp): Home=0, NewProject=1, Config=2, ClockConfig=3,
+    // ProjectManager=4, CodePreview=5.
     screens_stack_->addWidget(home_screen_);
     screens_stack_->addWidget(new_project_screen_);
     screens_stack_->addWidget(vertical);
+    screens_stack_->addWidget(clock_config_screen_);
     screens_stack_->addWidget(project_manager_screen_);
     screens_stack_->addWidget(code_preview_screen_);
 
@@ -248,6 +254,10 @@ void MainWindow::buildChrome(QWidget* central)
 
     tab_strip_ = new QTabBar();
     tab_strip_->addTab(QString::fromUtf8("Pinout & Configuration"));
+    // Порядок как в STM32CubeMX: Pinout & Configuration | Clock Configuration
+    // | Project Manager — Clock Configuration верхнеуровневая вкладка, а не
+    // вложена внутрь Project Manager (по прямому требованию пользователя).
+    tab_strip_->addTab(QString::fromUtf8("Clock Configuration"));
     tab_strip_->addTab(QString::fromUtf8("Project Manager"));
     tab_strip_->addTab(QString::fromUtf8("Просмотр кода"));
     connect(tab_strip_, &QTabBar::currentChanged, this, &MainWindow::onTabStripChanged);
@@ -1054,8 +1064,9 @@ void MainWindow::refreshEverything()
 
     // Тактирование (codegen/project/project_config.h, ClockConfig) — тот же
     // приём, что и FreeRTOS выше: отсутствующий ключ "clock" читается как
-    // JSON null, дефолты подставляет сам экран (setClockSettings).
-    project_manager_screen_->setClockSettings(document_.projectSetting("clock"));
+    // JSON null, дефолты подставляет сам экран (ClockConfigScreen::
+    // setClockSettings). Верхнеуровневая вкладка, не часть Project Manager.
+    clock_config_screen_->setClockSettings(document_.projectSetting("clock"));
 
     applyViewModel();
 }
@@ -1351,8 +1362,9 @@ void MainWindow::onTabStripChanged(int tab_index)
     switch (tab_index)
     {
         case 0: navigator_.goTo(Screen::Config); break;
-        case 1: navigator_.goTo(Screen::ProjectManager); break;
-        case 2: navigator_.goTo(Screen::CodePreview); break;
+        case 1: navigator_.goTo(Screen::ClockConfig); break;
+        case 2: navigator_.goTo(Screen::ProjectManager); break;
+        case 3: navigator_.goTo(Screen::CodePreview); break;
         default: return;
     }
     applyViewModel();

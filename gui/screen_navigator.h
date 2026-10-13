@@ -32,6 +32,12 @@ enum class Screen
     Home,
     NewProject,
     Config,
+    // Верхнеуровневая вкладка «Clock Configuration» (gui/clock_config_screen.h)
+    // — между Config и ProjectManager, тот же порядок, что в STM32CubeMX
+    // (Pinout & Configuration | Clock Configuration | Project Manager).
+    // Вынесена сюда из-под ProjectManagerScreen по прямому требованию
+    // пользователя: в CubeMX это не вложенная вкладка.
+    ClockConfig,
     ProjectManager,
     CodePreview
 };
@@ -73,8 +79,8 @@ struct NavViewModel
     bool generateButtonEnabled = false;
     bool codeTabEnabled = false;
 
-    // Индекс во вкладочной строке (0=Pinout&Config, 1=Project Manager,
-    // 2=Просмотр кода); -1, когда вкладочная строка скрыта.
+    // Индекс во вкладочной строке (0=Pinout&Config, 1=Clock Configuration,
+    // 2=Project Manager, 3=Просмотр кода); -1, когда вкладочная строка скрыта.
     int activeTabIndex = -1;
 
     QString breadcrumbText;

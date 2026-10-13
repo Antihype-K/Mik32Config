@@ -39,15 +39,17 @@ NavViewModel ScreenNavigator::viewModel() const
         case Screen::Home:           vm.stackIndex = 0; break;
         case Screen::NewProject:     vm.stackIndex = 1; break;
         case Screen::Config:         vm.stackIndex = 2; break;
-        case Screen::ProjectManager: vm.stackIndex = 3; break;
-        case Screen::CodePreview:    vm.stackIndex = 4; break;
+        case Screen::ClockConfig:    vm.stackIndex = 3; break;
+        case Screen::ProjectManager: vm.stackIndex = 4; break;
+        case Screen::CodePreview:    vm.stackIndex = 5; break;
     }
 
     // Верхняя строка и вкладки видны только там, где есть открытый проект,
-    // с которым можно работать (Config/ProjectManager/CodePreview) —
-    // на Home и NewProject проекта ещё нет, показывать кнопку «Сгенерировать»
-    // или вкладки было бы нечего.
+    // с которым можно работать (Config/ClockConfig/ProjectManager/
+    // CodePreview) — на Home и NewProject проекта ещё нет, показывать
+    // кнопку «Сгенерировать» или вкладки было бы нечего.
     const bool in_workspace = state_.screen == Screen::Config
+        || state_.screen == Screen::ClockConfig
         || state_.screen == Screen::ProjectManager
         || state_.screen == Screen::CodePreview;
 
@@ -60,8 +62,9 @@ NavViewModel ScreenNavigator::viewModel() const
     switch (state_.screen)
     {
         case Screen::Config:         vm.activeTabIndex = 0; break;
-        case Screen::ProjectManager: vm.activeTabIndex = 1; break;
-        case Screen::CodePreview:    vm.activeTabIndex = 2; break;
+        case Screen::ClockConfig:    vm.activeTabIndex = 1; break;
+        case Screen::ProjectManager: vm.activeTabIndex = 2; break;
+        case Screen::CodePreview:    vm.activeTabIndex = 3; break;
         default:                     vm.activeTabIndex = -1; break;
     }
 
@@ -75,6 +78,10 @@ NavViewModel ScreenNavigator::viewModel() const
             break;
         case Screen::Config:
             vm.breadcrumbText = QString::fromUtf8("Главная › %1 › Pinout & Configuration")
+                .arg(state_.activeProjectName);
+            break;
+        case Screen::ClockConfig:
+            vm.breadcrumbText = QString::fromUtf8("Главная › %1 › Clock Configuration")
                 .arg(state_.activeProjectName);
             break;
         case Screen::ProjectManager:

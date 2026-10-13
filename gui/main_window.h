@@ -47,6 +47,7 @@ class DiagnosticsPanel;
 class HomeScreen;
 class NewProjectScreen;
 class ProjectManagerScreen;
+class ClockConfigScreen;
 class CodePreviewScreen;
 class QAction;
 class QLabel;
@@ -187,10 +188,11 @@ private:
     QWidget* top_bar_ = nullptr;
     QLabel* breadcrumb_label_ = nullptr;
     QPushButton* generate_button_ = nullptr;
-    QTabBar* tab_strip_ = nullptr;               // 0=Config, 1=ProjectManager, 2=CodePreview
+    QTabBar* tab_strip_ = nullptr;               // 0=Config, 1=ClockConfig, 2=ProjectManager, 3=CodePreview
 
     HomeScreen* home_screen_ = nullptr;
     NewProjectScreen* new_project_screen_ = nullptr;
+    ClockConfigScreen* clock_config_screen_ = nullptr;
     ProjectManagerScreen* project_manager_screen_ = nullptr;
     CodePreviewScreen* code_preview_screen_ = nullptr;
 
