@@ -18,6 +18,7 @@
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -586,6 +587,263 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
     form->addRow(QString::fromUtf8("Управление потоком:"), flow);
     layout->addWidget(box);
 
+    // DMA (ТЗ §3.1.3.3) — backend уже полностью реализован (parser/USART/
+    // usart_parser.cpp валидирует массив "dma", codegen/project/
+    // uart_contribution.cpp генерирует реальную привязку канала) с самой
+    // первой сессии до сегодняшней ночи — здесь только GUI-обёртка поверх
+    // уже существующих JSON-полей, без изобретения новых. Направление
+    // (tx требует direction=tx/duplex и т.п.) парсер проверяет сам —
+    // ошибка несовместимости появится в панели диагностики, GUI её не
+    // дублирует.
+    QGroupBox* dma_box = new QGroupBox(QString::fromUtf8("DMA"));
+    QFormLayout* dma_form = new QFormLayout(dma_box);
+
+    auto buildDmaDirectionRow = [this, block_index](const char* label, const std::string& direction, int default_channel) -> QWidget*
+    {
+        const nlohmann::json dma = document_->field(block_index, "dma");
+        int existing_index = -1;
+        if (dma.is_array())
+        {
+            for (size_t i = 0; i < dma.size(); ++i)
+            {
+                if (dma[i].value("direction", std::string()) == direction) { existing_index = static_cast<int>(i); break; }
+            }
+        }
+
+        QWidget* row = new QWidget();
+        QHBoxLayout* row_layout = new QHBoxLayout(row);
+        row_layout->setContentsMargins(0, 0, 0, 0);
+
+        QCheckBox* enable = new QCheckBox(QString::fromUtf8(label));
+        enable->setChecked(existing_index >= 0);
+        row_layout->addWidget(enable);
+
+        QSpinBox* channel = new QSpinBox();
+        channel->setRange(0, 3);  // dma_config.h, DMA_CHANNEL_COUNT=4
+        channel->setPrefix(QString::fromUtf8("канал "));
+        channel->setValue(existing_index >= 0 && dma[existing_index].contains("channel")
+                               ? dma[existing_index]["channel"].get<int>() : default_channel);
+        channel->setEnabled(existing_index >= 0);
+        row_layout->addWidget(channel);
+        row_layout->addStretch();
+
+        QObject::connect(enable, &QCheckBox::toggled, this, [this, block_index, direction, channel](bool on)
+        {
+            nlohmann::json dma_array = document_->field(block_index, "dma");
+            if (!dma_array.is_array())
+            {
+                dma_array = nlohmann::json::array();
+            }
+            for (auto it = dma_array.begin(); it != dma_array.end(); )
+            {
+                if (it->value("direction", std::string()) == direction) it = dma_array.erase(it);
+                else ++it;
+            }
+            if (on)
+            {
+                // Значения buffer_type/buffer_size_bytes/element_size/increment —
+                // безопасные дефолты (linear, 64 байта, byte, с инкрементом) по
+                // образцу docs/examples/mik32-examples/HAL_USART_DMA — пользователь
+                // может их не трогать, но правка требует прямого редактирования
+                // JSON (не выведены отдельными виджетами в этой сессии).
+                nlohmann::json entry;
+                entry["channel"] = channel->value();
+                entry["direction"] = direction;
+                entry["buffer_type"] = "linear";
+                entry["buffer_size_bytes"] = 64;
+                entry["element_size"] = "byte";
+                entry["increment"] = true;
+                dma_array.push_back(entry);
+            }
+            document_->setField(block_index, "dma", dma_array);
+            channel->setEnabled(on);
+            emit documentChanged();
+        });
+
+        QObject::connect(channel, &QSpinBox::valueChanged, this, [this, block_index, direction](int value)
+        {
+            nlohmann::json dma_array = document_->field(block_index, "dma");
+            if (!dma_array.is_array())
+            {
+                return;
+            }
+            for (auto& entry : dma_array)
+            {
+                if (entry.value("direction", std::string()) == direction)
+                {
+                    entry["channel"] = value;
+                }
+            }
+            document_->setField(block_index, "dma", dma_array);
+            emit documentChanged();
+        });
+
+        return row;
+    };
+
+    dma_form->addRow(buildDmaDirectionRow("Передача (TX)", "tx", 0));
+    dma_form->addRow(buildDmaDirectionRow("Приём (RX)", "rx", 1));
+    layout->addWidget(dma_box);
+
+    // OVERNIGHT_FIELD_REFERENCE.md — новые необязательные поля этой сессии.
+    // Все значения по умолчанию здесь (lsb_first/duplex/async/...) совпадают
+    // с HAL-дефолтами — отсутствие поля в JSON ведёт к тому же поведению.
+    QGroupBox* extra_box = new QGroupBox(QString::fromUtf8("Дополнительные параметры"));
+    QFormLayout* extra_form = new QFormLayout(extra_box);
+
+    const std::string bit_direction = document_->field(block_index, "bit_direction").is_string()
+        ? document_->field(block_index, "bit_direction").get<std::string>() : "lsb_first";
+    extra_form->addRow(QString::fromUtf8("Порядок бит:"), stringCombo(
+        {{"LSB первым", "lsb_first"}, {"MSB первым", "msb_first"}}, bit_direction,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "bit_direction", value);
+            emit documentChanged();
+        }));
+
+    const std::string channel_mode = document_->field(block_index, "channel_mode").is_string()
+        ? document_->field(block_index, "channel_mode").get<std::string>() : "duplex";
+    extra_form->addRow(QString::fromUtf8("Режим линии:"), stringCombo(
+        {{"Дуплекс", "duplex"}, {"Однопроводной полудуплекс", "half_duplex"}}, channel_mode,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "channel_mode", value);
+            emit documentChanged();
+        }));
+
+    QWidget* inversion_row = new QWidget();
+    QHBoxLayout* inversion_layout = new QHBoxLayout(inversion_row);
+    inversion_layout->setContentsMargins(0, 0, 0, 0);
+    QCheckBox* tx_inv = new QCheckBox(QString::fromUtf8("Инверсия TX"));
+    tx_inv->setChecked(document_->field(block_index, "tx_inversion").is_boolean()
+                       && document_->field(block_index, "tx_inversion").get<bool>());
+    connect(tx_inv, &QCheckBox::toggled, this, [this, block_index](bool on)
+    {
+        document_->setField(block_index, "tx_inversion", on);
+        emit documentChanged();
+    });
+    QCheckBox* rx_inv = new QCheckBox(QString::fromUtf8("Инверсия RX"));
+    rx_inv->setChecked(document_->field(block_index, "rx_inversion").is_boolean()
+                       && document_->field(block_index, "rx_inversion").get<bool>());
+    connect(rx_inv, &QCheckBox::toggled, this, [this, block_index](bool on)
+    {
+        document_->setField(block_index, "rx_inversion", on);
+        emit documentChanged();
+    });
+    QCheckBox* swap = new QCheckBox(QString::fromUtf8("Swap TX/RX"));
+    swap->setChecked(document_->field(block_index, "swap").is_boolean()
+                     && document_->field(block_index, "swap").get<bool>());
+    connect(swap, &QCheckBox::toggled, this, [this, block_index](bool on)
+    {
+        document_->setField(block_index, "swap", on);
+        emit documentChanged();
+    });
+    inversion_layout->addWidget(tx_inv);
+    inversion_layout->addWidget(rx_inv);
+    inversion_layout->addWidget(swap);
+    inversion_layout->addStretch();
+    extra_form->addRow(QString::fromUtf8("Полярность/обмен линий:"), inversion_row);
+
+    // Синхронный режим: ЗАПРЕЩЁН на instance=1 (Errata MIK32V2 v1.0.1 §10.1 —
+    // паразитный сигнал CK на PORT2_6, тот же пин, где на 1T Rex Board
+    // светодиод; parser/USART/usart_parser.cpp отклоняет эту комбинацию с
+    // явной ошибкой). Если instance=1 — переключатель не показываем вовсе,
+    // чтобы не провоцировать пользователя выбрать заведомо отклоняемую
+    // парсером комбинацию.
+    if (instance != 1)
+    {
+        const bool is_synchronous = document_->field(block_index, "mode").is_string()
+            && document_->field(block_index, "mode").get<std::string>() == "synchronous";
+
+        QCheckBox* sync_check = new QCheckBox(QString::fromUtf8("Синхронный режим (с тактовым выходом)"));
+        sync_check->setChecked(is_synchronous);
+        extra_form->addRow(QString::fromUtf8("Режим:"), sync_check);
+
+        const std::string xck_mode = document_->field(block_index, "xck_mode").is_string()
+            ? document_->field(block_index, "xck_mode").get<std::string>() : "mode0";
+        QComboBox* xck_combo = stringCombo(
+            {{"XCK mode 0", "mode0"}, {"XCK mode 1", "mode1"}, {"XCK mode 2", "mode2"}, {"XCK mode 3", "mode3"}},
+            xck_mode,
+            [this, block_index](const std::string& value)
+            {
+                document_->setField(block_index, "xck_mode", value);
+                emit documentChanged();
+            });
+        xck_combo->setEnabled(is_synchronous);
+        extra_form->addRow(QString::fromUtf8("Режим тактового сигнала:"), xck_combo);
+
+        QCheckBox* last_byte = new QCheckBox(QString::fromUtf8("Тактовый импульс на последнем байте"));
+        last_byte->setChecked(document_->field(block_index, "last_byte_clock").is_boolean()
+                              && document_->field(block_index, "last_byte_clock").get<bool>());
+        last_byte->setEnabled(is_synchronous);
+        connect(last_byte, &QCheckBox::toggled, this, [this, block_index](bool on)
+        {
+            document_->setField(block_index, "last_byte_clock", on);
+            emit documentChanged();
+        });
+        extra_form->addRow(QString::fromUtf8(""), last_byte);
+
+        connect(sync_check, &QCheckBox::toggled, this, [this, block_index, xck_combo, last_byte](bool on)
+        {
+            document_->setField(block_index, "mode", on ? std::string("synchronous") : std::string("asynchronous"));
+            xck_combo->setEnabled(on);
+            last_byte->setEnabled(on);
+            emit documentChanged();
+        });
+    }
+    else
+    {
+        QLabel* sync_blocked = new QLabel(QString::fromUtf8(
+            "Синхронный режим недоступен для USART_1: errata МИК32V2 — паразитный "
+            "сигнал CK на PORT2_6 (там же светодиод на 1T Rex Board)."));
+        sync_blocked->setWordWrap(true);
+        sync_blocked->setEnabled(false);
+        extra_form->addRow(sync_blocked);
+    }
+
+    const std::string rts_mode = document_->field(block_index, "rts_mode").is_string()
+        ? document_->field(block_index, "rts_mode").get<std::string>() : "always_enabled";
+    QComboBox* rts_mode_combo = stringCombo(
+        {{"Всегда включён", "always_enabled"}, {"Модемный режим", "modem"}}, rts_mode,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "rts_mode", value);
+            emit documentChanged();
+        });
+    // rts_mode имеет смысл только при включённом RTS/CTS (flow чекбокс выше).
+    rts_mode_combo->setEnabled(flow->isChecked());
+    connect(flow, &QCheckBox::toggled, rts_mode_combo, &QComboBox::setEnabled);
+    extra_form->addRow(QString::fromUtf8("Режим RTS:"), rts_mode_combo);
+
+    QGroupBox* modem_box = new QGroupBox(QString::fromUtf8("Модемные сигналы (RI/DSR/DTR/DDIS/DCD)"));
+    QHBoxLayout* modem_layout = new QHBoxLayout(modem_box);
+    const nlohmann::json modem_signals = document_->field(block_index, "modem_signals");
+    const char* modem_fields[] = {"ri", "dsr", "dtr", "ddis", "dcd"};
+    const char* modem_labels[] = {"RI", "DSR", "DTR", "DDIS", "DCD"};
+    for (int i = 0; i < 5; ++i)
+    {
+        const char* field_name = modem_fields[i];
+        QCheckBox* box_check = new QCheckBox(QString::fromUtf8(modem_labels[i]));
+        box_check->setChecked(modem_signals.is_object() && modem_signals.contains(field_name)
+                              && modem_signals[field_name].is_boolean() && modem_signals[field_name].get<bool>());
+        connect(box_check, &QCheckBox::toggled, this, [this, block_index, field_name](bool on)
+        {
+            nlohmann::json modem_json = document_->field(block_index, "modem_signals");
+            if (!modem_json.is_object())
+            {
+                modem_json = nlohmann::json::object();
+            }
+            modem_json[field_name] = on;
+            document_->setField(block_index, "modem_signals", modem_json);
+            emit documentChanged();
+        });
+        modem_layout->addWidget(box_check);
+    }
+    modem_layout->addStretch();
+    extra_form->addRow(modem_box);
+
+    layout->addWidget(extra_box);
+
     // Выводы UART не выбираются: они жёстко привязаны к instance. Показать их
     // всё равно нужно — иначе конфликт с GPIO выглядит для пользователя
     // необъяснимым.
@@ -863,7 +1121,13 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
     auto fixed = knowledge_->i2c.instance_fixed_pins.find(instance);
     if (fixed != knowledge_->i2c.instance_fixed_pins.end() && !fixed->second.empty())
     {
-        QString pins_text = QString::fromUtf8("Выводы (фиксированы аппаратно): ");
+        // SDA/SCL по отдельности НЕ названы намеренно — датащит и HAL
+        // подтверждают только пару пинов, но не то, какой из двух физически
+        // SDA, а какой SCL (knowledge_base/i2c.json, _comment_instance_fixed_pins).
+        // Называть один из них "SDA" было бы невыдуманным по форме, но
+        // выдуманным по содержанию значением — поэтому показываем пару как
+        // пару, с явной пометкой, почему роли не различены.
+        QString pins_text = QString::fromUtf8("Выводы I2C (SDA/SCL, фиксированы аппаратно): ");
         for (size_t i = 0; i < fixed->second.size(); ++i)
         {
             if (i > 0)
@@ -875,6 +1139,11 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
         }
         QLabel* pins = new QLabel(pins_text);
         pins->setWordWrap(true);
+        pins->setToolTip(QString::fromUtf8(
+            "Какой из двух выводов физически SDA, а какой SCL — датащит МИК32 "
+            "и HAL не называют по отдельности (есть только маска обоих пинов "
+            "в одном вызове HAL_GPIO_Init). Уточнить можно по схеме/шелкографии "
+            "конкретной платы."));
         pins->setEnabled(false);
         layout->addWidget(pins);
     }
