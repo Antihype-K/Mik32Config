@@ -241,6 +241,16 @@ void ProjectDocument::setField(int block_index, const std::string& field_name, c
     modified_ = true;
 }
 
+void ProjectDocument::eraseField(int block_index, const std::string& field_name)
+{
+    if (block_index < 0 || block_index >= static_cast<int>(document_["peripherals"].size()))
+    {
+        return;
+    }
+    document_["peripherals"][block_index].erase(field_name);
+    modified_ = true;
+}
+
 nlohmann::json ProjectDocument::field(int block_index, const std::string& field_name) const
 {
     if (block_index < 0 || block_index >= static_cast<int>(document_["peripherals"].size()))
@@ -368,6 +378,59 @@ std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowle
                 "SPI0_n_ss_out_3 не работает и дублирует SPI0_n_ss_out_2. Используйте "
                 "manual_cs=true с ручным управлением через GPIO для 4-го ведомого.",
                 block_index});
+        }
+    }
+
+    // 5. OVERNIGHT_FIELD_REFERENCE.md — тот же приём "запрошено vs
+    // фактически", что и у Baud Rate выше, для Timer16/Timer32
+    // frequency_hz/duty_percent (округление делителей сдвигает фактический
+    // результат относительно запрошенного).
+    for (const Timer16Config& timer : parsed.config->timer16_blocks)
+    {
+        if (!timer.has_frequency_duty)
+        {
+            continue;
+        }
+        const double actual_freq = 32000000.0 / (static_cast<double>(timer.prescaler) * (static_cast<double>(timer.arr) + 1.0));
+        const double actual_duty = (timer.arr > 0 || timer.cmp > 0)
+            ? (static_cast<double>(timer.cmp) * 100.0 / (static_cast<double>(timer.arr) + 1.0)) : 0.0;
+        std::ostringstream message;
+        message.setf(std::ios::fixed);
+        message.precision(3);
+        message << "Timer16_" << timer.instance << ": запрошено " << timer.requested_frequency_hz
+                << " Гц/" << timer.requested_duty_percent << "%, фактически "
+                << actual_freq << " Гц/" << actual_duty << "%.";
+        diagnostics.push_back(Diagnostic{DiagnosticSeverity::Info, message.str(), -1});
+    }
+    for (const Timer32Config& timer : parsed.config->timer32_blocks)
+    {
+        if (!timer.has_frequency)
+        {
+            continue;
+        }
+        const double count_freq = 32000000.0 / (static_cast<double>(timer.prescaler) + 1.0);
+        const double actual_freq = count_freq / (static_cast<double>(timer.top) + 1.0);
+        std::ostringstream message;
+        message.setf(std::ios::fixed);
+        message.precision(3);
+        message << "Timer32_" << timer.instance << ": запрошено " << timer.requested_frequency_hz
+                << " Гц, фактически " << actual_freq << " Гц.";
+        diagnostics.push_back(Diagnostic{DiagnosticSeverity::Info, message.str(), -1});
+
+        for (const Timer32ChannelConfig& channel : timer.channels)
+        {
+            if (!channel.has_duty_percent)
+            {
+                continue;
+            }
+            const double actual_duty = static_cast<double>(channel.ocr) * 100.0 / (static_cast<double>(timer.top) + 1.0);
+            std::ostringstream channel_message;
+            channel_message.setf(std::ios::fixed);
+            channel_message.precision(3);
+            channel_message << "Timer32_" << timer.instance << " канал " << channel.index
+                             << ": запрошена скважность " << channel.requested_duty_percent
+                             << "%, фактически " << actual_duty << "%.";
+            diagnostics.push_back(Diagnostic{DiagnosticSeverity::Info, channel_message.str(), -1});
         }
     }
 

@@ -108,6 +108,16 @@ public:
 
     nlohmann::json field(int block_index, const std::string& field) const;
 
+    // Убирает ключ из блока целиком (не присваивает null — у парсеров
+    // contains(field) истинно и для null-значения, так что setField(...,
+    // null) не эквивалентен отсутствию поля). Нужен для полей, которые
+    // взаимоисключающи с другими (например, timer16 "frequency_hz"/
+    // "duty_percent" против "prescaler"/"arr"/"cmp" — см.
+    // OVERNIGHT_FIELD_REFERENCE.md) — переключение режима ввода в GUI обязано
+    // реально убрать поля прежнего режима, а не оставить их лежать со
+    // старыми значениями.
+    void eraseField(int block_index, const std::string& field);
+
     // Поля ВЕРХНЕГО уровня документа (соседи "mcu"/"version"/"peripherals"),
     // а не внутри блока периферии — например "toolchain", "hal_source_mode"
     // (CMake-тулчейн, codegen/project/project_config.h::ProjectConfig).

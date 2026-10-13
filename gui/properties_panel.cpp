@@ -15,6 +15,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -898,74 +899,153 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
             refresh();
         }));
 
-    const nlohmann::json prescaler = document_->field(block_index, "prescaler");
-    form->addRow(QString::fromUtf8("Предделитель:"), intCombo(
-        kPrescalers, QString(), prescaler.is_number_integer() ? prescaler.get<int>() : 16,
-        [this, block_index](int value)
+    // OVERNIGHT_FIELD_REFERENCE.md: два взаимоисключающих способа задать
+    // период/скважность — либо prescaler+arr+cmp (регистры напрямую), либо
+    // frequency_hz+duty_percent (парсер сам подбирает регистры). Переключатель
+    // здесь определяет, какую пару полей показывать и писать в документ;
+    // backend (parser/timer16/timer16_parser.cpp) требует, чтобы в JSON
+    // присутствовал РОВНО один из двух наборов — eraseField убирает поля
+    // прежнего режима целиком, а не обнуляет их.
+    const bool has_frequency_duty = document_->field(block_index, "frequency_hz").is_number();
+
+    QComboBox* input_mode = stringCombo(
+        {{"Регистры (предделитель/ARR/CMP)", "registers"}, {"Частота и скважность (Гц/%)", "frequency"}},
+        has_frequency_duty ? "frequency" : "registers",
+        [this, block_index](const std::string& value)
         {
-            document_->setField(block_index, "prescaler", value);
+            if (value == "frequency")
+            {
+                document_->eraseField(block_index, "prescaler");
+                document_->eraseField(block_index, "arr");
+                document_->eraseField(block_index, "cmp");
+                if (!document_->field(block_index, "frequency_hz").is_number())
+                {
+                    document_->setField(block_index, "frequency_hz", 1000);
+                    document_->setField(block_index, "duty_percent", 50);
+                }
+            }
+            else
+            {
+                document_->eraseField(block_index, "frequency_hz");
+                document_->eraseField(block_index, "duty_percent");
+                if (!document_->field(block_index, "prescaler").is_number_integer())
+                {
+                    document_->setField(block_index, "prescaler", 16);
+                    document_->setField(block_index, "arr", 999);
+                    document_->setField(block_index, "cmp", 499);
+                }
+            }
             emit documentChanged();
-        }));
+            refresh();
+        });
+    form->addRow(QString::fromUtf8("Способ задания:"), input_mode);
 
-    // ARR и CMP — произвольные 16-битные числа, а не перечисления, поэтому
-    // здесь spinbox, а не список. Ограничение CMP <= ARR (schemas/timer16.json,
-    // max_field) выражено прямо в виджете: недопустимое значение просто нельзя
-    // ввести, вместо того чтобы ловить его валидатором постфактум.
-    QSpinBox* arr = new QSpinBox();
-    arr->setRange(0, 65535);
-    const nlohmann::json arr_value = document_->field(block_index, "arr");
-    arr->setValue(arr_value.is_number_integer() ? arr_value.get<int>() : 999);
-
-    QSpinBox* cmp = new QSpinBox();
-    cmp->setRange(0, arr->value());
-    const nlohmann::json cmp_value = document_->field(block_index, "cmp");
-    cmp->setValue(cmp_value.is_number_integer() ? cmp_value.get<int>() : 499);
-
-    connect(arr, &QSpinBox::valueChanged, this, [this, block_index, cmp](int value)
+    if (has_frequency_duty)
     {
-        document_->setField(block_index, "arr", value);
-        cmp->setMaximum(value);   // сузили ARR — CMP подтянется сам
-        document_->setField(block_index, "cmp", cmp->value());
-        emit documentChanged();
-    });
-    connect(cmp, &QSpinBox::valueChanged, this, [this, block_index](int value)
-    {
-        document_->setField(block_index, "cmp", value);
-        emit documentChanged();
-    });
+        QDoubleSpinBox* freq = new QDoubleSpinBox();
+        freq->setRange(0.01, 32000000.0);
+        freq->setSuffix(QString::fromUtf8(" Гц"));
+        freq->setDecimals(2);
+        const nlohmann::json freq_value = document_->field(block_index, "frequency_hz");
+        freq->setValue(freq_value.is_number() ? freq_value.get<double>() : 1000.0);
+        connect(freq, &QDoubleSpinBox::valueChanged, this, [this, block_index](double value)
+        {
+            document_->setField(block_index, "frequency_hz", value);
+            emit documentChanged();
+        });
+        form->addRow(QString::fromUtf8("Частота:"), freq);
 
-    form->addRow(QString::fromUtf8("Период ARR:"), arr);
-    form->addRow(QString::fromUtf8("Сравнение CMP:"), cmp);
+        QDoubleSpinBox* duty = new QDoubleSpinBox();
+        duty->setRange(0.0, 100.0);
+        duty->setSuffix(QString::fromUtf8(" %"));
+        duty->setDecimals(1);
+        const nlohmann::json duty_value = document_->field(block_index, "duty_percent");
+        duty->setValue(duty_value.is_number() ? duty_value.get<double>() : 50.0);
+        connect(duty, &QDoubleSpinBox::valueChanged, this, [this, block_index](double value)
+        {
+            document_->setField(block_index, "duty_percent", value);
+            emit documentChanged();
+        });
+        form->addRow(QString::fromUtf8("Скважность:"), duty);
 
-    // Поле обязательно по ТЗ во всех режимах, но в счётном режиме HAL его не
-    // принимает (HAL_Timer16_Counter_Start без Compare) — честнее сказать это
-    // прямо, чем оставить пользователя гадать, почему правка ничего не меняет.
-    if (mode == "external_event_count")
-    {
-        cmp->setEnabled(false);
         QLabel* note = new QLabel(QString::fromUtf8(
-            "В режиме счёта внешних событий CMP кодогенерацией не используется "
-            "(docs/implementations/timer16.md)."));
+            "Фактическая частота/скважность после округления делителя — в панели "
+            "диагностики снизу (строка \"запрошено .../фактически ...\")."));
         note->setWordWrap(true);
         note->setEnabled(false);
         form->addRow(QString(), note);
     }
-    layout->addWidget(box);
-
-    // Наблюдаемая частота — то, ради чего эти три числа и вводятся. Считать её
-    // в уме (32 МГц / prescaler / (ARR+1)) пользователь не обязан.
-    const int prescaler_value = prescaler.is_number_integer() ? prescaler.get<int>() : 16;
-    const int arr_now = arr->value();
-    if (prescaler_value > 0 && arr_now >= 0)
+    else
     {
-        const double frequency = 32000000.0 / prescaler_value / (arr_now + 1.0);
-        const double duty = (arr_now > 0) ? (cmp->value() * 100.0 / (arr_now + 1.0)) : 0.0;
-        QLabel* summary = new QLabel(QString::fromUtf8(
-            "При HSI 32 МГц: частота ≈ %1 Гц, скважность ≈ %2 %")
-            .arg(frequency, 0, 'f', 1).arg(duty, 0, 'f', 1));
-        summary->setWordWrap(true);
-        layout->addWidget(summary);
+        const nlohmann::json prescaler = document_->field(block_index, "prescaler");
+        form->addRow(QString::fromUtf8("Предделитель:"), intCombo(
+            kPrescalers, QString(), prescaler.is_number_integer() ? prescaler.get<int>() : 16,
+            [this, block_index](int value)
+            {
+                document_->setField(block_index, "prescaler", value);
+                emit documentChanged();
+            }));
+
+        // ARR и CMP — произвольные 16-битные числа, а не перечисления, поэтому
+        // здесь spinbox, а не список. Ограничение CMP <= ARR (schemas/timer16.json,
+        // max_field) выражено прямо в виджете: недопустимое значение просто нельзя
+        // ввести, вместо того чтобы ловить его валидатором постфактум.
+        QSpinBox* arr = new QSpinBox();
+        arr->setRange(0, 65535);
+        const nlohmann::json arr_value = document_->field(block_index, "arr");
+        arr->setValue(arr_value.is_number_integer() ? arr_value.get<int>() : 999);
+
+        QSpinBox* cmp = new QSpinBox();
+        cmp->setRange(0, arr->value());
+        const nlohmann::json cmp_value = document_->field(block_index, "cmp");
+        cmp->setValue(cmp_value.is_number_integer() ? cmp_value.get<int>() : 499);
+
+        connect(arr, &QSpinBox::valueChanged, this, [this, block_index, cmp](int value)
+        {
+            document_->setField(block_index, "arr", value);
+            cmp->setMaximum(value);   // сузили ARR — CMP подтянется сам
+            document_->setField(block_index, "cmp", cmp->value());
+            emit documentChanged();
+        });
+        connect(cmp, &QSpinBox::valueChanged, this, [this, block_index](int value)
+        {
+            document_->setField(block_index, "cmp", value);
+            emit documentChanged();
+        });
+
+        form->addRow(QString::fromUtf8("Период ARR:"), arr);
+        form->addRow(QString::fromUtf8("Сравнение CMP:"), cmp);
+
+        // Поле обязательно по ТЗ во всех режимах, но в счётном режиме HAL его не
+        // принимает (HAL_Timer16_Counter_Start без Compare) — честнее сказать это
+        // прямо, чем оставить пользователя гадать, почему правка ничего не меняет.
+        if (mode == "external_event_count")
+        {
+            cmp->setEnabled(false);
+            QLabel* note = new QLabel(QString::fromUtf8(
+                "В режиме счёта внешних событий CMP кодогенерацией не используется "
+                "(docs/implementations/timer16.md)."));
+            note->setWordWrap(true);
+            note->setEnabled(false);
+            form->addRow(QString(), note);
+        }
+
+        // Наблюдаемая частота — то, ради чего эти три числа и вводятся. Считать её
+        // в уме (32 МГц / prescaler / (ARR+1)) пользователь не обязан.
+        const int prescaler_value = prescaler.is_number_integer() ? prescaler.get<int>() : 16;
+        const int arr_now = arr->value();
+        if (prescaler_value > 0 && arr_now >= 0)
+        {
+            const double frequency = 32000000.0 / prescaler_value / (arr_now + 1.0);
+            const double duty = (arr_now > 0) ? (cmp->value() * 100.0 / (arr_now + 1.0)) : 0.0;
+            QLabel* summary = new QLabel(QString::fromUtf8(
+                "При HSI 32 МГц: частота ≈ %1 Гц, скважность ≈ %2 %")
+                .arg(frequency, 0, 'f', 1).arg(duty, 0, 'f', 1));
+            summary->setWordWrap(true);
+            form->addRow(QString(), summary);
+        }
     }
+    layout->addWidget(box);
 
     QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
     connect(disable, &QPushButton::clicked, this, [this, instance]()
@@ -1351,47 +1431,105 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
         }));
     document_->setField(block_index, "count_mode", count_mode);
 
-    QSpinBox* prescaler = new QSpinBox();
-    // mik32_hal_timer32.h, TIMER32_ClockConfigTypeDef.Prescaler: прямое
-    // значение регистра (uint32_t), не HAL-перечисление. Верхняя граница
-    // виджета — kUint32SpinBoxMax (см. комментарий у константы выше).
-    prescaler->setRange(0, kUint32SpinBoxMax);
-    const nlohmann::json prescaler_value = document_->field(block_index, "prescaler");
-    // 31 — предделитель из ручного прогона, зафиксированного в
-    // docs/implementations/timer32.md, «Собрано и прогнано» (не произвольное
-    // число).
-    prescaler->setValue(prescaler_value.is_number_integer() ? prescaler_value.get<int>() : 31);
-    connect(prescaler, &QSpinBox::valueChanged, this, [this, block_index](int value)
-    {
-        document_->setField(block_index, "prescaler", value);
-        emit documentChanged();
-    });
-    form->addRow(QString::fromUtf8("Предделитель (PRESCALER):"), prescaler);
-    document_->setField(block_index, "prescaler", prescaler->value());
+    // OVERNIGHT_FIELD_REFERENCE.md: frequency_hz — альтернатива prescaler+top,
+    // взаимоисключающая (тот же приём переключателя, что и у Timer16 выше).
+    const bool has_frequency = document_->field(block_index, "frequency_hz").is_number();
 
-    QSpinBox* top = new QSpinBox();
-    // mik32_hal_timer32.h, TIMER32_HandleTypeDef.Top: 32-битный регистр TOP.
-    top->setRange(0, kUint32SpinBoxMax);
-    const nlohmann::json top_value = document_->field(block_index, "top");
-    top->setValue(top_value.is_number_integer() ? top_value.get<int>() : 999);
-    connect(top, &QSpinBox::valueChanged, this, [this, block_index](int value)
-    {
-        document_->setField(block_index, "top", value);
-        emit documentChanged();
-    });
-    form->addRow(QString::fromUtf8("Верхняя граница счёта (TOP):"), top);
-    document_->setField(block_index, "top", top->value());
-    layout->addWidget(box);
+    QComboBox* input_mode = stringCombo(
+        {{"Регистры (PRESCALER/TOP)", "registers"}, {"Частота (Гц)", "frequency"}},
+        has_frequency ? "frequency" : "registers",
+        [this, block_index](const std::string& value)
+        {
+            if (value == "frequency")
+            {
+                document_->eraseField(block_index, "prescaler");
+                document_->eraseField(block_index, "top");
+                if (!document_->field(block_index, "frequency_hz").is_number())
+                {
+                    document_->setField(block_index, "frequency_hz", 1000);
+                }
+            }
+            else
+            {
+                document_->eraseField(block_index, "frequency_hz");
+                if (!document_->field(block_index, "prescaler").is_number_integer())
+                {
+                    document_->setField(block_index, "prescaler", 31);
+                    document_->setField(block_index, "top", 999);
+                }
+            }
+            emit documentChanged();
+            refresh();
+        });
+    form->addRow(QString::fromUtf8("Способ задания:"), input_mode);
 
-    // Наблюдаемая частота счёта — mik32_hal_timer32.h: «Частота делится на
-    // Prescaler + 1» (ТЗ §3.1.8: HSI 32 МГц, knowledge_->timer32.sys_clk_hz).
-    const long sys_clk_hz = knowledge_->timer32.sys_clk_hz > 0
-        ? knowledge_->timer32.sys_clk_hz : 32000000;
-    const double frequency = static_cast<double>(sys_clk_hz) / (prescaler->value() + 1.0);
-    QLabel* summary = new QLabel(QString::fromUtf8("Частота счёта ≈ %1 Гц")
-        .arg(frequency, 0, 'f', 1));
-    summary->setWordWrap(true);
-    layout->addWidget(summary);
+    if (has_frequency)
+    {
+        QDoubleSpinBox* freq = new QDoubleSpinBox();
+        freq->setRange(0.01, 32000000.0);
+        freq->setSuffix(QString::fromUtf8(" Гц"));
+        freq->setDecimals(2);
+        const nlohmann::json freq_value = document_->field(block_index, "frequency_hz");
+        freq->setValue(freq_value.is_number() ? freq_value.get<double>() : 1000.0);
+        connect(freq, &QDoubleSpinBox::valueChanged, this, [this, block_index](double value)
+        {
+            document_->setField(block_index, "frequency_hz", value);
+            emit documentChanged();
+        });
+        form->addRow(QString::fromUtf8("Частота:"), freq);
+
+        QLabel* note = new QLabel(QString::fromUtf8(
+            "PRESCALER фиксируется в 0 (максимальное разрешение TOP). Фактическая "
+            "частота после округления — в панели диагностики снизу."));
+        note->setWordWrap(true);
+        note->setEnabled(false);
+        form->addRow(QString(), note);
+        layout->addWidget(box);
+    }
+    else
+    {
+        QSpinBox* prescaler = new QSpinBox();
+        // mik32_hal_timer32.h, TIMER32_ClockConfigTypeDef.Prescaler: прямое
+        // значение регистра (uint32_t), не HAL-перечисление. Верхняя граница
+        // виджета — kUint32SpinBoxMax (см. комментарий у константы выше).
+        prescaler->setRange(0, kUint32SpinBoxMax);
+        const nlohmann::json prescaler_value = document_->field(block_index, "prescaler");
+        // 31 — предделитель из ручного прогона, зафиксированного в
+        // docs/implementations/timer32.md, «Собрано и прогнано» (не произвольное
+        // число).
+        prescaler->setValue(prescaler_value.is_number_integer() ? prescaler_value.get<int>() : 31);
+        connect(prescaler, &QSpinBox::valueChanged, this, [this, block_index](int value)
+        {
+            document_->setField(block_index, "prescaler", value);
+            emit documentChanged();
+        });
+        form->addRow(QString::fromUtf8("Предделитель (PRESCALER):"), prescaler);
+        document_->setField(block_index, "prescaler", prescaler->value());
+
+        QSpinBox* top = new QSpinBox();
+        // mik32_hal_timer32.h, TIMER32_HandleTypeDef.Top: 32-битный регистр TOP.
+        top->setRange(0, kUint32SpinBoxMax);
+        const nlohmann::json top_value = document_->field(block_index, "top");
+        top->setValue(top_value.is_number_integer() ? top_value.get<int>() : 999);
+        connect(top, &QSpinBox::valueChanged, this, [this, block_index](int value)
+        {
+            document_->setField(block_index, "top", value);
+            emit documentChanged();
+        });
+        form->addRow(QString::fromUtf8("Верхняя граница счёта (TOP):"), top);
+        document_->setField(block_index, "top", top->value());
+        layout->addWidget(box);
+
+        // Наблюдаемая частота счёта — mik32_hal_timer32.h: «Частота делится на
+        // Prescaler + 1» (ТЗ §3.1.8: HSI 32 МГц, knowledge_->timer32.sys_clk_hz).
+        const long sys_clk_hz = knowledge_->timer32.sys_clk_hz > 0
+            ? knowledge_->timer32.sys_clk_hz : 32000000;
+        const double frequency = static_cast<double>(sys_clk_hz) / (prescaler->value() + 1.0);
+        QLabel* summary = new QLabel(QString::fromUtf8("Частота счёта ≈ %1 Гц")
+            .arg(frequency, 0, 'f', 1));
+        summary->setWordWrap(true);
+        layout->addWidget(summary);
+    }
 
     if (instance == 0)
     {
@@ -1589,7 +1727,7 @@ void PropertiesPanel::buildTimer32ChannelRow(QVBoxLayout* channels_layout, int b
             refresh();  // набор полей ниже зависит от режима именно этого канала
         }));
 
-    if (mode == "pwm" || mode == "compare")
+    if (mode == "compare")
     {
         QSpinBox* ocr = new QSpinBox();
         ocr->setRange(0, kUint32SpinBoxMax);
@@ -1605,7 +1743,7 @@ void PropertiesPanel::buildTimer32ChannelRow(QVBoxLayout* channels_layout, int b
                 emit documentChanged();
             }
         });
-        form->addRow(QString::fromUtf8("OCR (сравнение/скважность):"), ocr);
+        form->addRow(QString::fromUtf8("OCR (порог сравнения):"), ocr);
 
         // Бэкфилл, как и у top-level полей: свежедобавленный канал не
         // должен оставаться без обязательного поля до первой ручной правки.
@@ -1616,6 +1754,99 @@ void PropertiesPanel::buildTimer32ChannelRow(QVBoxLayout* channels_layout, int b
             {
                 channels[channel_position]["ocr"] = ocr->value();
                 document_->setField(block_index, "channels", channels);
+            }
+        }
+    }
+
+    if (mode == "pwm")
+    {
+        // OVERNIGHT_FIELD_REFERENCE.md: duty_percent — альтернатива ocr,
+        // взаимоисключающая, только для mode=pwm. Парсер (не GUI) вычисляет
+        // ocr = round((top_родителя+1) * duty_percent/100) — здесь top
+        // родительского Timer32Config неизвестен без повторного парсинга, и
+        // вычислять его тут не нужно: достаточно записать "duty_percent" в
+        // JSON, остальное сделает parser/timer32/timer32_parser.cpp при
+        // следующей валидации/генерации.
+        const bool has_duty = channel.contains("duty_percent") && channel["duty_percent"].is_number();
+
+        QComboBox* duty_mode = stringCombo(
+            {{"OCR (регистр)", "ocr"}, {"Скважность (%)", "duty_percent"}},
+            has_duty ? "duty_percent" : "ocr",
+            [this, block_index, channel_position](const std::string& value)
+            {
+                nlohmann::json channels = document_->field(block_index, "channels");
+                if (!channels.is_array() || channel_position >= static_cast<int>(channels.size()))
+                {
+                    return;
+                }
+                if (value == "duty_percent")
+                {
+                    channels[channel_position].erase("ocr");
+                    if (!channels[channel_position].contains("duty_percent"))
+                    {
+                        channels[channel_position]["duty_percent"] = 50;
+                    }
+                }
+                else
+                {
+                    channels[channel_position].erase("duty_percent");
+                    if (!channels[channel_position].contains("ocr"))
+                    {
+                        channels[channel_position]["ocr"] = 0;
+                    }
+                }
+                document_->setField(block_index, "channels", channels);
+                emit documentChanged();
+                refresh();
+            });
+        form->addRow(QString::fromUtf8("Способ задания:"), duty_mode);
+
+        if (has_duty)
+        {
+            QDoubleSpinBox* duty = new QDoubleSpinBox();
+            duty->setRange(0.0, 100.0);
+            duty->setSuffix(QString::fromUtf8(" %"));
+            duty->setDecimals(1);
+            const nlohmann::json duty_value = channel["duty_percent"];
+            duty->setValue(duty_value.is_number() ? duty_value.get<double>() : 50.0);
+            connect(duty, &QDoubleSpinBox::valueChanged, this, [this, block_index, channel_position](double value)
+            {
+                nlohmann::json channels = document_->field(block_index, "channels");
+                if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+                {
+                    channels[channel_position]["duty_percent"] = value;
+                    document_->setField(block_index, "channels", channels);
+                    emit documentChanged();
+                }
+            });
+            form->addRow(QString::fromUtf8("Скважность:"), duty);
+        }
+        else
+        {
+            QSpinBox* ocr = new QSpinBox();
+            ocr->setRange(0, kUint32SpinBoxMax);
+            const nlohmann::json ocr_field = channel.contains("ocr") ? channel["ocr"] : nlohmann::json();
+            ocr->setValue(ocr_field.is_number_integer() ? ocr_field.get<int>() : 0);
+            connect(ocr, &QSpinBox::valueChanged, this, [this, block_index, channel_position](int value)
+            {
+                nlohmann::json channels = document_->field(block_index, "channels");
+                if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+                {
+                    channels[channel_position]["ocr"] = value;
+                    document_->setField(block_index, "channels", channels);
+                    emit documentChanged();
+                }
+            });
+            form->addRow(QString::fromUtf8("OCR (скважность):"), ocr);
+
+            if (!ocr_field.is_number_integer())
+            {
+                nlohmann::json channels = document_->field(block_index, "channels");
+                if (channels.is_array() && channel_position < static_cast<int>(channels.size()))
+                {
+                    channels[channel_position]["ocr"] = ocr->value();
+                    document_->setField(block_index, "channels", channels);
+                }
             }
         }
     }
