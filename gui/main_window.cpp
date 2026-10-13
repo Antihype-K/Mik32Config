@@ -637,7 +637,7 @@ void MainWindow::onGenerate()
     if (diagnostics_->errorCount() > 0)
     {
         QMessageBox::critical(this, QString::fromUtf8("Генерация невозможна"),
-            QString::fromUtf8("В конфигурации есть ошибки (%1). ТЗ §3.1.6.3: ошибки "
+            QString::fromUtf8("В конфигурации есть ошибки (%1). Ошибки "
                               "блокируют кодогенерацию — исправьте их и повторите.")
                 .arg(diagnostics_->errorCount()));
         return;

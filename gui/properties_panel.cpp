@@ -521,7 +521,7 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
     QLabel* title = new QLabel(QString("<b>USART_%1</b>").arg(instance));
     layout->addWidget(title);
 
-    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры (ТЗ §3.1.3.2)"));
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
     const nlohmann::json baud = document_->field(block_index, "baud_rate");
@@ -882,7 +882,7 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
     QLabel* title = new QLabel(QString("<b>Timer16_%1</b>").arg(instance));
     layout->addWidget(title);
 
-    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры (ТЗ §3.1.4)"));
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
     const std::string mode = document_->field(block_index, "mode").is_string()
@@ -978,13 +978,14 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
     else
     {
         const nlohmann::json prescaler = document_->field(block_index, "prescaler");
-        form->addRow(QString::fromUtf8("Предделитель:"), intCombo(
+        QComboBox* prescaler_combo = intCombo(
             kPrescalers, QString(), prescaler.is_number_integer() ? prescaler.get<int>() : 16,
             [this, block_index](int value)
             {
                 document_->setField(block_index, "prescaler", value);
                 emit documentChanged();
-            }));
+            });
+        form->addRow(QString::fromUtf8("Предделитель:"), prescaler_combo);
 
         // ARR и CMP — произвольные 16-битные числа, а не перечисления, поэтому
         // здесь spinbox, а не список. Ограничение CMP <= ARR (schemas/timer16.json,
@@ -1000,31 +1001,17 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
         const nlohmann::json cmp_value = document_->field(block_index, "cmp");
         cmp->setValue(cmp_value.is_number_integer() ? cmp_value.get<int>() : 499);
 
-        connect(arr, &QSpinBox::valueChanged, this, [this, block_index, cmp](int value)
-        {
-            document_->setField(block_index, "arr", value);
-            cmp->setMaximum(value);   // сузили ARR — CMP подтянется сам
-            document_->setField(block_index, "cmp", cmp->value());
-            emit documentChanged();
-        });
-        connect(cmp, &QSpinBox::valueChanged, this, [this, block_index](int value)
-        {
-            document_->setField(block_index, "cmp", value);
-            emit documentChanged();
-        });
-
         form->addRow(QString::fromUtf8("Период ARR:"), arr);
         form->addRow(QString::fromUtf8("Сравнение CMP:"), cmp);
 
-        // Поле обязательно по ТЗ во всех режимах, но в счётном режиме HAL его не
+        // Поле обязательно во всех режимах, но в счётном режиме HAL его не
         // принимает (HAL_Timer16_Counter_Start без Compare) — честнее сказать это
         // прямо, чем оставить пользователя гадать, почему правка ничего не меняет.
         if (mode == "external_event_count")
         {
             cmp->setEnabled(false);
             QLabel* note = new QLabel(QString::fromUtf8(
-                "В режиме счёта внешних событий CMP кодогенерацией не используется "
-                "(docs/implementations/timer16.md)."));
+                "В режиме счёта внешних событий CMP кодогенерацией не используется."));
             note->setWordWrap(true);
             note->setEnabled(false);
             form->addRow(QString(), note);
@@ -1032,18 +1019,49 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
 
         // Наблюдаемая частота — то, ради чего эти три числа и вводятся. Считать её
         // в уме (32 МГц / prescaler / (ARR+1)) пользователь не обязан.
-        const int prescaler_value = prescaler.is_number_integer() ? prescaler.get<int>() : 16;
-        const int arr_now = arr->value();
-        if (prescaler_value > 0 && arr_now >= 0)
+        // ВАЖНО: это должно пересчитываться вживую при каждой правке, а не один
+        // раз на момент построения формы — иначе подпись молча расходится с
+        // реальными значениями, как только пользователь меняет хоть одно из
+        // трёх полей (MainWindow::refreshEverything не перестраивает панель
+        // свойств на documentChanged, только дерево/диагностику/схему корпуса).
+        QLabel* summary = new QLabel();
+        summary->setWordWrap(true);
+        form->addRow(QString(), summary);
+
+        auto updateSummary = [prescaler_combo, arr, cmp, summary]()
         {
-            const double frequency = 32000000.0 / prescaler_value / (arr_now + 1.0);
+            const int prescaler_now = prescaler_combo->currentData().toInt();
+            const int arr_now = arr->value();
+            if (prescaler_now <= 0)
+            {
+                summary->clear();
+                return;
+            }
+            const double frequency = 32000000.0 / prescaler_now / (arr_now + 1.0);
             const double duty = (arr_now > 0) ? (cmp->value() * 100.0 / (arr_now + 1.0)) : 0.0;
-            QLabel* summary = new QLabel(QString::fromUtf8(
-                "При HSI 32 МГц: частота ≈ %1 Гц, скважность ≈ %2 %")
+            summary->setText(QString::fromUtf8("При HSI 32 МГц: частота ≈ %1 Гц, скважность ≈ %2 %")
                 .arg(frequency, 0, 'f', 1).arg(duty, 0, 'f', 1));
-            summary->setWordWrap(true);
-            form->addRow(QString(), summary);
-        }
+        };
+        updateSummary();
+
+        connect(prescaler_combo, &QComboBox::currentIndexChanged, this, [updateSummary](int)
+        {
+            updateSummary();
+        });
+        connect(arr, &QSpinBox::valueChanged, this, [this, block_index, cmp, updateSummary](int value)
+        {
+            document_->setField(block_index, "arr", value);
+            cmp->setMaximum(value);   // сузили ARR — CMP подтянется сам
+            document_->setField(block_index, "cmp", cmp->value());
+            updateSummary();
+            emit documentChanged();
+        });
+        connect(cmp, &QSpinBox::valueChanged, this, [this, block_index, updateSummary](int value)
+        {
+            document_->setField(block_index, "cmp", value);
+            updateSummary();
+            emit documentChanged();
+        });
     }
     layout->addWidget(box);
 
@@ -1409,7 +1427,7 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
     QLabel* title = new QLabel(QString("<b>Timer32_%1</b>").arg(instance));
     layout->addWidget(title);
 
-    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры (ТЗ §3.1.5)"));
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
     // Блок, только что включённый через buildDisabledPlaceholder, приходит
@@ -1498,11 +1516,6 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
         // docs/implementations/timer32.md, «Собрано и прогнано» (не произвольное
         // число).
         prescaler->setValue(prescaler_value.is_number_integer() ? prescaler_value.get<int>() : 31);
-        connect(prescaler, &QSpinBox::valueChanged, this, [this, block_index](int value)
-        {
-            document_->setField(block_index, "prescaler", value);
-            emit documentChanged();
-        });
         form->addRow(QString::fromUtf8("Предделитель (PRESCALER):"), prescaler);
         document_->setField(block_index, "prescaler", prescaler->value());
 
@@ -1511,24 +1524,43 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
         top->setRange(0, kUint32SpinBoxMax);
         const nlohmann::json top_value = document_->field(block_index, "top");
         top->setValue(top_value.is_number_integer() ? top_value.get<int>() : 999);
-        connect(top, &QSpinBox::valueChanged, this, [this, block_index](int value)
-        {
-            document_->setField(block_index, "top", value);
-            emit documentChanged();
-        });
         form->addRow(QString::fromUtf8("Верхняя граница счёта (TOP):"), top);
         document_->setField(block_index, "top", top->value());
         layout->addWidget(box);
 
-        // Наблюдаемая частота счёта — mik32_hal_timer32.h: «Частота делится на
-        // Prescaler + 1» (ТЗ §3.1.8: HSI 32 МГц, knowledge_->timer32.sys_clk_hz).
+        // Наблюдаемая частота счёта и частота ШИМ-периода — mik32_hal_timer32.h:
+        // «Частота делится на Prescaler + 1», период ШИМ = TOP+1 тактов (та же
+        // идея, что и у Timer16 выше). ВАЖНО: пересчитывается вживую при каждой
+        // правке — MainWindow::refreshEverything не перестраивает эту панель на
+        // documentChanged (см. тот же комментарий у Timer16 выше).
         const long sys_clk_hz = knowledge_->timer32.sys_clk_hz > 0
             ? knowledge_->timer32.sys_clk_hz : 32000000;
-        const double frequency = static_cast<double>(sys_clk_hz) / (prescaler->value() + 1.0);
-        QLabel* summary = new QLabel(QString::fromUtf8("Частота счёта ≈ %1 Гц")
-            .arg(frequency, 0, 'f', 1));
+        QLabel* summary = new QLabel();
         summary->setWordWrap(true);
         layout->addWidget(summary);
+
+        auto updateSummary = [sys_clk_hz, prescaler, top, summary]()
+        {
+            const double count_freq = static_cast<double>(sys_clk_hz) / (prescaler->value() + 1.0);
+            const double period_freq = count_freq / (static_cast<double>(top->value()) + 1.0);
+            summary->setText(QString::fromUtf8(
+                "Частота счёта ≈ %1 Гц, частота периода ШИМ (с учётом TOP) ≈ %2 Гц")
+                .arg(count_freq, 0, 'f', 1).arg(period_freq, 0, 'f', 3));
+        };
+        updateSummary();
+
+        connect(prescaler, &QSpinBox::valueChanged, this, [this, block_index, updateSummary](int value)
+        {
+            document_->setField(block_index, "prescaler", value);
+            updateSummary();
+            emit documentChanged();
+        });
+        connect(top, &QSpinBox::valueChanged, this, [this, block_index, updateSummary](int value)
+        {
+            document_->setField(block_index, "top", value);
+            updateSummary();
+            emit documentChanged();
+        });
     }
 
     if (instance == 0)
@@ -1616,8 +1648,7 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
                 "ⓘ Errata п. 9.1: включение канала запускает его через "
                 "_IT-вариант HAL (другого пути нет), поэтому кодоген "
                 "обязательно генерирует шаблон обработчика прерывания со "
-                "сбросом флага первой инструкцией тела (см. "
-                "docs/implementations/timer32.md)."));
+                "сбросом флага первой инструкцией тела."));
             errata->setWordWrap(true);
             layout->addWidget(errata);
         }
