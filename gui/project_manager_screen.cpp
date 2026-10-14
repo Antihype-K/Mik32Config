@@ -147,9 +147,7 @@ ProjectManagerScreen::ProjectManagerScreen(QWidget* parent)
 
     QLabel* note = new QLabel(QString::fromUtf8(
         "mik32_init.c/.h — один общий файл на весь проект по умолчанию; "
-        "«по файлу на периферию» доступно только для тулчейна CMake.\n"
-        "Демо-логика в while(1) переключается пунктом меню "
-        "«Проект → Генерировать демо-логику в while(1)»."));
+        "«по файлу на периферию» доступно только для тулчейна CMake."));
     note->setWordWrap(true);
     note->setStyleSheet("color: gray;");
     root_project->addSpacing(18);

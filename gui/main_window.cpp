@@ -137,15 +137,6 @@ void MainWindow::buildMenus()
     generate_action->setShortcut(QKeySequence("Ctrl+G"));
     connect(generate_action, &QAction::triggered, this, &MainWindow::onGenerate);
 
-    // Тот же переключатель, что и --demo у консольного приложения
-    // (src/main.cpp). Смысл флага — в project_codegen.h: демо-логика в while(1)
-    // нужна для аппаратной проверки, но не нужна в «чистой» инициализации —
-    // поэтому по умолчанию выключено, включается по явному запросу.
-    demo_loops_action_ = project_menu->addAction(
-        QString::fromUtf8("Генерировать демо-логику в while(1)"));
-    demo_loops_action_->setCheckable(true);
-    demo_loops_action_->setChecked(false);
-
     QMenu* help_menu = menuBar()->addMenu(QString::fromUtf8("&Справка"));
     QAction* about_action = help_menu->addAction(QString::fromUtf8("&О программе"));
     connect(about_action, &QAction::triggered, this, &MainWindow::onAbout);
@@ -281,7 +272,11 @@ void MainWindow::applyViewModel()
     tab_strip_->setVisible(vm.tabStripVisible);
     generate_button_->setVisible(vm.generateButtonVisible);
     generate_button_->setEnabled(vm.generateButtonEnabled);
-    tab_strip_->setTabEnabled(2, vm.codeTabEnabled);
+    // Вкладка 3 — «Просмотр кода»: недоступна до первой успешной генерации
+    // (vm.codeTabEnabled == state_.hasGeneratedOnce). Project Manager (вкладка
+    // 2, тулчейн/HAL-источник/per_type_files) должна работать ДО генерации —
+    // это настройки, которые читает сам кодоген, а не его результат.
+    tab_strip_->setTabEnabled(3, vm.codeTabEnabled);
     breadcrumb_label_->setText(vm.breadcrumbText);
 
     if (vm.activeTabIndex >= 0 && tab_strip_->currentIndex() != vm.activeTabIndex)
@@ -694,7 +689,7 @@ void MainWindow::onGenerate()
     if (parsed.config->language == OutputLanguage::Rust)
     {
         ParseResult<GeneratedProjectFirmwareRust> rust_firmware = generateProjectFirmwareRust(
-            *parsed.config, demo_loops_action_->isChecked());
+            *parsed.config);
         if (!rust_firmware.success)
         {
             QMessageBox::critical(this, QString::fromUtf8("Ошибка кодогенерации"),
@@ -734,7 +729,7 @@ void MainWindow::onGenerate()
     if (parsed.config->toolchain == ToolchainKind::CMake)
     {
         ParseResult<GeneratedProjectFirmwareCmake> firmware = generateProjectFirmwareCmake(
-            *parsed.config, knowledge_, demo_loops_action_->isChecked());
+            *parsed.config, knowledge_);
         if (!firmware.success)
         {
             QMessageBox::critical(this, QString::fromUtf8("Ошибка кодогенерации"),
@@ -749,7 +744,7 @@ void MainWindow::onGenerate()
     else
     {
         ParseResult<GeneratedProjectFirmware> firmware = generateProjectFirmware(
-            *parsed.config, knowledge_, demo_loops_action_->isChecked());
+            *parsed.config, knowledge_);
         if (!firmware.success)
         {
             QMessageBox::critical(this, QString::fromUtf8("Ошибка кодогенерации"),

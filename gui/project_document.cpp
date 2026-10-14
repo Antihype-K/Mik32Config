@@ -56,7 +56,6 @@ namespace
             // (см. calcI2cTimingr в codegen/project/i2c_contribution.cpp).
             block["mode"] = "master";
             block["clock_speed"] = 100000;
-            block["demo"] = "scanner";
         }
         else if (type == "spi")
         {
