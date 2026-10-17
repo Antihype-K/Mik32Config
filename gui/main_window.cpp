@@ -69,6 +69,9 @@ namespace
     // (gui/peripheral_tree.cpp), и с диспетчером parseProjectDocument.
     const std::vector<std::pair<const char*, int>> kSupportedBlocks = {
         {"gpio", 3}, {"uart", 2}, {"timer16", 3}, {"i2c", 2}, {"spi", 2}, {"timer32", 3},
+        {"rtc", 1}, {"wdt", 1}, {"eeprom", 1}, {"bus_watchdog", 1},
+        {"adc", 1}, {"dac", 2}, {"tsens", 1}, {"pvd", 1},
+        {"crc", 1}, {"crypto", 1}, {"otp", 1}, {"dma", 4},
     };
 }
 
