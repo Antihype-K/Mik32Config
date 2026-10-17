@@ -30,6 +30,18 @@ set(CORE_SOURCES
         parser/timer16/timer16_parser.cpp
         parser/timer32/timer32_parser.cpp
         parser/freertos/freertos_parser.cpp
+        parser/rtc/rtc_parser.cpp
+        parser/crc/crc_parser.cpp
+        parser/eeprom/eeprom_parser.cpp
+        parser/wdt/wdt_parser.cpp
+        parser/dac/dac_parser.cpp
+        parser/adc/adc_parser.cpp
+        parser/crypto/crypto_parser.cpp
+        parser/otp/otp_parser.cpp
+        parser/tsens/tsens_parser.cpp
+        parser/pvd/pvd_parser.cpp
+        parser/bus_watchdog/bus_watchdog_parser.cpp
+        parser/dma/dma_parser.cpp
 
         # База знаний МИК32: аппаратные факты из даташита и errata
         knowledge_base/gpio_knowledge.cpp
@@ -39,6 +51,8 @@ set(CORE_SOURCES
         knowledge_base/package_knowledge.cpp
         knowledge_base/timer32_knowledge.cpp
         knowledge_base/spi_knowledge.cpp
+        knowledge_base/rtc_knowledge.cpp
+        knowledge_base/dac_knowledge.cpp
 
         # Кросс-модульная валидация (ТЗ §3.1.6)
         validation/cross_module_validator.cpp
@@ -55,6 +69,18 @@ set(CORE_SOURCES
         codegen/project/i2c_contribution.cpp
         codegen/project/timer32_contribution.cpp
         codegen/project/spi_contribution.cpp
+        codegen/project/rtc_contribution.cpp
+        codegen/project/crc_contribution.cpp
+        codegen/project/eeprom_contribution.cpp
+        codegen/project/wdt_contribution.cpp
+        codegen/project/dac_contribution.cpp
+        codegen/project/adc_contribution.cpp
+        codegen/project/crypto_contribution.cpp
+        codegen/project/otp_contribution.cpp
+        codegen/project/tsens_contribution.cpp
+        codegen/project/pvd_contribution.cpp
+        codegen/project/bus_watchdog_contribution.cpp
+        codegen/project/dma_contribution.cpp
         codegen/project/freertos_codegen.cpp
         codegen/project/project_codegen.cpp
         codegen/project/cmake_project_codegen.cpp
@@ -98,6 +124,18 @@ target_include_directories(mik32-core
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/timer32
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/spi
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/freertos
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/rtc
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/crc
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/eeprom
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/wdt
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/dac
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/adc
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/crypto
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/otp
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/tsens
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/pvd
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/bus_watchdog
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/dma
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/reverse_import
         ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/project

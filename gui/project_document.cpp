@@ -86,6 +86,92 @@ namespace
             block["top"] = 999;
             block["channels"] = nlohmann::json::array();
         }
+        else if (type == "rtc")
+        {
+            // Полночь 1 января 2000 года — валидная, нейтральная дата без
+            // будильника (schemas/rtc.json: time/date обязательны, alarm нет).
+            block["time"] = {{"dow", 6}, {"hours", 0}, {"minutes", 0}, {"seconds", 0}};
+            block["date"] = {{"century", 20}, {"day", 1}, {"month", 1}, {"year", 0}};
+        }
+        else if (type == "crc")
+        {
+            // CRC-32 (preset) — самый распространённый вариант, известные
+            // контрольные значения подтверждены на плате (docs/implementations/crc.md).
+            block["preset"] = "crc32";
+        }
+        else if (type == "eeprom")
+        {
+            // two_stage — то же значение, что использует вендорный пример по
+            // умолчанию (schemas/eeprom.json).
+            block["mode"] = "two_stage";
+        }
+        else if (type == "wdt")
+        {
+            // osc32k/1000мс — безопасный дефолт в пределах предела для 32 кГц
+            // источника (schemas/wdt.json: 511875 мс максимум для 32к).
+            // HAL_WDT_Start/Refresh кодоген НЕ генерирует (см. схему).
+            block["clock_source"] = "osc32k";
+            block["reload_ms"] = 1000;
+        }
+        else if (type == "dac")
+        {
+            // div=0 (без деления), встроенный ИОН — минимальная валидная
+            // конфигурация (schemas/dac.json).
+            block["div"] = 0;
+            block["ext_ref"] = false;
+            block["ext_clb"] = false;
+        }
+        else if (type == "adc")
+        {
+            // channel=0, встроенный ИОН — минимальная валидная конфигурация
+            // (schemas/adc.json).
+            block["channel"] = 0;
+            block["ext_ref"] = false;
+            block["ext_clb"] = false;
+        }
+        else if (type == "crypto")
+        {
+            // AES/CBC — распространённая комбинация, ключ/IV НЕ хранятся в
+            // конфиге (schemas/crypto.json, _comment_no_key_no_iv).
+            block["algorithm"] = "aes";
+            block["cipher_mode"] = "cbc";
+        }
+        else if (type == "otp")
+        {
+            // two_stages — единственный безопасный дефолт (HAL_OTP_Write*
+            // кодоген никогда не генерирует, см. schemas/otp.json).
+            block["read_mode"] = "two_stages";
+        }
+        else if (type == "tsens")
+        {
+            // sys_clk/40000 Гц — TSENS_OPTIMAL_FREQUENCY из mik32_hal_tsens.h
+            // (schemas/tsens.json).
+            block["clock_source"] = "sys_clk";
+            block["frequency_hz"] = 40000;
+        }
+        else if (type == "pvd")
+        {
+            // Середина диапазона порогов, фильтр выключен — нейтральный
+            // стартовый дефолт (schemas/pvd.json). NRESETU/NRESETO кодоген
+            // не настраивает вообще (полярность не подтверждена).
+            block["under_threshold"] = 0;
+            block["over_threshold"] = 15;
+            block["digital_filter_value"] = 0;
+        }
+        else if (type == "bus_watchdog")
+        {
+            // Все три линии выключены по умолчанию — тот же принцип, что у
+            // системного WDT (schemas/bus_watchdog.json).
+        }
+        else if (type == "dma")
+        {
+            // peripheral_to_memory/crypto/byte/16 байт — минимальная валидная
+            // конфигурация (schemas/dma.json, docs/implementations/dma.md).
+            block["direction"] = "peripheral_to_memory";
+            block["request"] = "crypto";
+            block["element_size"] = "byte";
+            block["buffer_size_bytes"] = 16;
+        }
         return block;
     }
 }

@@ -1,0 +1,30 @@
+{
+  "peripheral_type": "bus_watchdog",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 3. shared/periphery/wdt_bus.h: WDT_BUS_TypeDef — один регистровый блок с тремя независимыми линиями (EEPROM/SPIFI/DOM3), настраиваемыми отдельными полями, а не отдельными instance.",
+  "required_fields": ["type"],
+  "fields": {
+    "eeprom_enabled": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "WDT_BUS->ENABLE бит WDT_BUS_EEPROM_S — следить за таймаутом шины EEPROM. По умолчанию выключено (как системный WDT — кодоген не включает сторожевой таймер без явного запроса пользователя)."
+    },
+    "timeout": {
+      "type": "integer",
+      "min": 0,
+      "max": 15,
+      "default": 0,
+      "_comment": "WDT_BUS->TIMEOUT — один общий регистр таймаута для всех трёх линий (wdt_bus.h не содержит отдельных TIMEOUT per-линия, только общие ENABLE-биты WDT_BUS_EEPROM_S/SPIFI_S/DOM3_S). ВАЖНО (найдено HW-тестом 2026-10-14): хотя wdt_bus.h объявляет TIMEOUT как полные 32 бита (volatile uint32_t), реальное железо реализует только младшие 4 бита — запись 0xFFFFFFFF считалась обратно как 0x0000000F. До этого исправления схема разрешала max=4294967295: попытка timeout=1000000 (0xF4240, младший нибл = 0x0) обрезалась до ЭФФЕКТИВНОГО ТАЙМАУТА 0 на линии dom3 (шина APB, через которую работает весь чип, включая UART) — плата переставала отвечать по UART сразу после прошивки (непрерывный сброс по таймауту шины ещё до вывода загрузочного баннера), восстановлена перепрошивкой безопасного значения. max=15 не даёт пользователю выбрать значение, которое молча обрежется до опасно маленького."
+    },
+    "spifi_enabled": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "WDT_BUS->ENABLE бит WDT_BUS_SPIFI_S."
+    },
+    "dom3_enabled": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "WDT_BUS->ENABLE бит WDT_BUS_DOM3_S — шина APB (периферия домена 3)."
+    }
+  }
+}

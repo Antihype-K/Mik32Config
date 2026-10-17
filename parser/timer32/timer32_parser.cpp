@@ -16,6 +16,8 @@ namespace
     constexpr uint32_t kMaxRegisterValue = 4294967295u;
 
     const std::set<std::string> kValidCountModes = {"forward", "reverse", "bidirectional"};
+    const std::set<std::string> kValidClockSources = {
+        "prescaler", "tim1_sys_clk", "tim1_hclk", "tim2_osc32k", "tim2_lsi32k", "tx_pad"};
     const std::set<std::string> kValidChannelModes = {"pwm", "capture", "compare"};
     const std::set<std::string> kValidCaptureEdges = {"rising", "falling"};
 
@@ -227,6 +229,37 @@ ParseResult<Timer32Config> parseTimer32Block(const nlohmann::json& timer32)
     config.type = "timer32";
     config.instance = instance;
     config.count_mode = timer32["count_mode"].get<std::string>();
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Timer32 — необязательные поля, общие для
+    // любого instance/набора каналов, парсятся до instance==0 раннего
+    // возврата ниже, чтобы применяться и к базовому счётчику.
+    if (timer32.contains("clock_source"))
+    {
+        if (!timer32["clock_source"].is_string() || !kValidClockSources.count(timer32["clock_source"].get<std::string>()))
+        {
+            return makeError("Поле \"clock_source\" содержит недопустимое значение "
+                "(разрешены prescaler, tim1_sys_clk, tim1_hclk, tim2_osc32k, tim2_lsi32k, tx_pad)");
+        }
+        config.clock_source = timer32["clock_source"].get<std::string>();
+    }
+
+    if (timer32.contains("overflow_interrupt"))
+    {
+        if (!timer32["overflow_interrupt"].is_boolean())
+        {
+            return makeError("Поле \"overflow_interrupt\" должно быть булевым");
+        }
+        config.overflow_interrupt = timer32["overflow_interrupt"].get<bool>();
+    }
+
+    if (timer32.contains("underflow_interrupt"))
+    {
+        if (!timer32["underflow_interrupt"].is_boolean())
+        {
+            return makeError("Поле \"underflow_interrupt\" должно быть булевым");
+        }
+        config.underflow_interrupt = timer32["underflow_interrupt"].get<bool>();
+    }
 
     // OVERNIGHT_FIELD_REFERENCE.md: frequency_hz — альтернатива prescaler+top,
     // взаимоисключающая (как у Timer16). prescaler фиксируется в 0 (делитель

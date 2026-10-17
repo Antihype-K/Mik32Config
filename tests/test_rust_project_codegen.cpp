@@ -96,6 +96,221 @@ TEST(RustProjectCodegen, RejectsI2cBlockAsUnsupportedInRustBranch)
     EXPECT_FALSE(firmware.success);
 }
 
+// AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — RTC добавлен только в C-ветке.
+TEST(RustProjectCodegen, RejectsRtcBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+
+    RtcConfig rtc_block;
+    rtc_block.type = "rtc";
+    rtc_block.dow = 1;
+    rtc_block.hours = 0;
+    rtc_block.minutes = 0;
+    rtc_block.seconds = 0;
+    rtc_block.century = 20;
+    rtc_block.day = 1;
+    rtc_block.month = 1;
+    rtc_block.year = 22;
+    config.rtc_block = rtc_block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("rtc"), std::string::npos) << reason;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    EXPECT_FALSE(firmware.success);
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — CRC добавлен только в C-ветке.
+TEST(RustProjectCodegen, RejectsCrcBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+
+    CrcConfig crc_block;
+    crc_block.type = "crc";
+    crc_block.poly = 0x04C11DB7;
+    crc_block.init = 0xFFFFFFFF;
+    crc_block.input_reverse = true;
+    crc_block.output_reverse = true;
+    crc_block.output_inversion = true;
+    config.crc_block = crc_block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("crc"), std::string::npos) << reason;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    EXPECT_FALSE(firmware.success);
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — EEPROM добавлен только в C-ветке.
+TEST(RustProjectCodegen, RejectsEepromBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+
+    EepromConfig eeprom_block;
+    eeprom_block.type = "eeprom";
+    eeprom_block.mode = "two_stage";
+    config.eeprom_block = eeprom_block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("eeprom"), std::string::npos) << reason;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    EXPECT_FALSE(firmware.success);
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — WDT добавлен только в C-ветке.
+TEST(RustProjectCodegen, RejectsWdtBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+
+    WdtConfig wdt_block;
+    wdt_block.type = "wdt";
+    wdt_block.clock_source = "osc32m";
+    wdt_block.reload_ms = 500;
+    config.wdt_block = wdt_block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("wdt"), std::string::npos) << reason;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    EXPECT_FALSE(firmware.success);
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — DAC добавлен только в C-ветке.
+TEST(RustProjectCodegen, RejectsDacBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+
+    DacConfig dac_block;
+    dac_block.type = "dac";
+    dac_block.instance = 0;
+    dac_block.div = 31;
+    dac_block.ext_ref = false;
+    dac_block.ext_clb = false;
+    config.dac_blocks.push_back(dac_block);
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("dac"), std::string::npos) << reason;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    EXPECT_FALSE(firmware.success);
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — ADC/CRYPTO/OTP/TSENS добавлены только в C-ветке.
+TEST(RustProjectCodegen, RejectsAdcBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    AdcConfig block; block.type = "adc"; block.channel = 0; block.ext_ref = false; block.ext_clb = false;
+    config.adc_block = block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("adc"), std::string::npos) << reason;
+    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+}
+
+TEST(RustProjectCodegen, RejectsCryptoBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    CryptoConfig block; block.type = "crypto"; block.algorithm = "aes"; block.cipher_mode = "ecb";
+    config.crypto_block = block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("crypto"), std::string::npos) << reason;
+    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+}
+
+TEST(RustProjectCodegen, RejectsOtpBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    OtpConfig block; block.type = "otp"; block.read_mode = "two_stages";
+    config.otp_block = block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("otp"), std::string::npos) << reason;
+    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+}
+
+TEST(RustProjectCodegen, RejectsTsensBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    TsensConfig block; block.type = "tsens"; block.clock_source = "sys_clk"; block.frequency_hz = 40000;
+    config.tsens_block = block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("tsens"), std::string::npos) << reason;
+    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+}
+
+TEST(RustProjectCodegen, RejectsPvdBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    PvdConfig block; block.type = "pvd"; block.under_threshold = 3; block.over_threshold = 12; block.digital_filter_value = 100;
+    config.pvd_block = block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("pvd"), std::string::npos) << reason;
+    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+}
+
+TEST(RustProjectCodegen, RejectsBusWatchdogBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    BusWatchdogConfig block; block.type = "bus_watchdog";
+    config.bus_watchdog_block = block;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("bus_watchdog"), std::string::npos) << reason;
+    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+}
+
+TEST(RustProjectCodegen, RejectsDmaBlockAsUnsupportedInRustBranch)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    DmaConfig block; block.type = "dma"; block.instance = 0; block.request = "spi_0";
+    block.direction = "peripheral_to_memory"; block.buffer_size_bytes = 16; block.element_size = "byte";
+    config.dma_blocks.push_back(block);
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("dma"), std::string::npos) << reason;
+    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+}
+
 TEST(RustProjectCodegen, RejectsGpioTimerSerialModeAsUnsupported)
 {
     ProjectConfig config;

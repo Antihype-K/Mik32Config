@@ -16,15 +16,23 @@ struct I2cConfig
     int instance;
     std::string mode;           // "master" / "slave"
     int clock_speed;
-    std::string demo;           // "scanner" / "ping_pong" / "receive"
 
     // Только для mode == "slave" (иначе пустая/0 — не читаются кодогеном
     // для master, HAL_I2C_MasterInit эти поля не использует вообще).
     std::string address_mode;   // "7bit" / "10bit"
     int own_address;
 
-    // Только для mode == "master" && demo == "ping_pong".
-    int target_address;
+    // Общие для master/slave — HAL_I2C_{Analog,Digital}FilterInit вызываются
+    // из обеих веток HAL_I2C_Init (см. schemas/i2c.json).
+    int digital_filter;      // 0 / 1 / 2 / 15 тактов
+    bool analog_filter;      // true = фильтр включён (I2C_ANALOGFILTER_ENABLE=0 в HAL — инверсия скрыта в кодогене)
+
+    // Только для mode == "slave" (HAL_I2C_SlaveInit).
+    bool general_call;
+    bool no_stretch_mode;
+    bool dual_address_enabled;
+    int own_address_2;             // валиден только если dual_address_enabled
+    std::string own_address_2_mask; // "none".."1111111", валиден только если dual_address_enabled
 };
 
 ParseResult<I2cConfig> parseI2cConfig(const std::string& file_name_path);

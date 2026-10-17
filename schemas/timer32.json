@@ -32,6 +32,25 @@
       "min_exclusive": 0,
       "_comment": "Необязательное поле (OVERNIGHT_FIELD_REFERENCE.md), альтернатива prescaler+top — взаимоисключающая. Парсер фиксирует prescaler=0 (делитель 1, максимальное разрешение TOP) и считает top = round(32МГц/frequency_hz) - 1. При sys_clk=32МГц и 32-битном TOP достижимы частоты от ~0.0075Гц до 32МГц без перебора делителей."
     },
+    "clock_source": {
+      "type": "enum",
+      "values": ["prescaler", "tim1_sys_clk", "tim1_hclk", "tim2_osc32k", "tim2_lsi32k", "tx_pad"],
+      "optional": true,
+      "default": "prescaler",
+      "_comment": "Необязательное поле (AUDIT_TZ_PERIPHERY_GAPS.md, Timer32: «выбор источника тактирования — HAL даёт 6 вариантов, в конфигураторе — только PRESCALER»). mik32_hal_timer32.h, HAL_TIMER32_SourceTypeDef: TIMER32_SOURCE_PRESCALER (старое поведение, значение по умолчанию — делитель от hclk, регистр PRESCALER) / TIM1_SYS_CLK / TIM1_HCLK / TIM2_OSC32K / TIM2_LSI32K / TX_PAD (внешний вывод). Регистр PM->TIMER_CFG (MUX_TIM32_x, сдвиг 0/3/6 для Timer32_0/1/2) пишется внутри HAL_Timer32_Source_Set, которую HAL_Timer32_Init вызывает сама (mik32_hal_timer32.c:80) — не регистровая работа без HAL-обвязки, как первоначально предполагал аудит, а обычный параметр Clock.Source. Prescaler-регистр пишется отдельно и действует независимо от источника (HAL_Timer32_Prescaler_Set вызывается всегда, mik32_hal_timer32.c:77) — поле \"prescaler\" остаётся обязательным при любом clock_source."
+    },
+    "overflow_interrupt": {
+      "type": "boolean",
+      "optional": true,
+      "default": false,
+      "_comment": "Необязательное, общее для любого instance/набора каналов. AUDIT_TZ_PERIPHERY_GAPS.md, Timer32: «маскирование прерываний по типам — сейчас либо все, либо ничего» — у Timer32 без каналов (базовый счётчик) раньше не было способа включить прерывание по переполнению вообще (кодоген жёстко звал HAL_Timer32_Start, не _IT-вариант). TIMER32_INT_OVERFLOW_M (shared/periphery/timer32.h:52-53), включается через HAL_Timer32_InterruptMask_Set — тем же вызовом, которым HAL_Timer32_Base_Start_IT/PWM_Start_IT уже включают этот флаг внутри HAL (mik32_hal_timer32.c:379/405). Независимо от того, есть ли у instance каналы и включён ли PWM (там OVERFLOW уже включается HAL автоматически) — флаг аддитивный (|=), повторное включение безвредно."
+    },
+    "underflow_interrupt": {
+      "type": "boolean",
+      "optional": true,
+      "default": false,
+      "_comment": "Необязательное, общее. TIMER32_INT_UNDERFLOW_M (shared/periphery/timer32.h:54-55) — отдельный флаг, который HAL НЕ включает автоматически ни в одном Start_IT-варианте (переполнение «снизу» актуально только при count_mode=reverse/bidirectional, но кодоген не навязывает эту связь — пользователь сам решает, нужен ли этот флаг)."
+    },
     "channels": {
       "type": "array",
       "_comment": "ТЗ §3.1.5 п.2: «для Timer32_1 и Timer32_2 позволять конфигурировать каждый из 4 каналов независимо в режимах: ШИМ, захват, сравнение; для Timer32_0 – только настройку счётчика». Поле допустимо только при instance=1 или instance=2 — эта межполевая проверка не выражается декларативно в этом MVP-формате схемы (см. schemas/i2c.json, где условные поля тоже описаны только текстом) и реализована прямо в parser/timer32/timer32_parser.cpp.",

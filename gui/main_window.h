@@ -180,8 +180,6 @@ private:
     PropertiesPanel* properties_ = nullptr;
     DiagnosticsPanel* diagnostics_ = nullptr;
 
-    QAction* demo_loops_action_ = nullptr;  // переключатель emit_demo_loops
-
     // --- Навигация по экранам ------------------------------------------
     ScreenNavigator navigator_;
     QStackedWidget* screens_stack_ = nullptr;   // порядок страниц = Screen enum

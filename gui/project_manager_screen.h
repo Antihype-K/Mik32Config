@@ -36,7 +36,6 @@
 #include "json.hpp"
 
 class ProjectDocument;
-class FreeRtosSettingsWidget;
 
 class QLabel;
 class QComboBox;
@@ -46,6 +45,7 @@ class QLineEdit;
 class QPushButton;
 class QCheckBox;
 class QWidget;
+class QTableWidget;
 
 class ProjectManagerScreen : public QWidget
 {
@@ -76,11 +76,6 @@ public:
                                 const QString& compiler_path,
                                 bool per_type_files);
 
-    // Текущее содержимое document["freertos"] (может быть JSON null, если
-    // ключа ещё нет — см. FreeRtosSettingsWidget::setValue). Тот же вызов из
-    // MainWindow::refreshEverything(), что и setGenerationSettings выше.
-    void setFreeRtosSettings(const nlohmann::json& freertos_settings);
-
 signals:
     // Тот же сигнал и тот же маршрут оповещения, что и
     // PropertiesPanel::documentChanged -> MainWindow::onDocumentChanged:
@@ -93,6 +88,11 @@ signals:
 private:
     void updateToolchainDependentVisibility();
     void updateHalLocalPathEnabled();
+    // Перестраивает обе read-only таблицы вкладки «Диагностика» (драйвер на
+    // модуль + сводка по EPIC-прерываниям) по ТЕКУЩЕМУ document_->document().
+    // Вызывается из setProjectInfo — она уже дёргается MainWindow на каждый
+    // refreshEverything(), отдельного нового вызова от MainWindow не требуется.
+    void refreshDiagnosticsTab();
 
     ProjectDocument* document_ = nullptr;
 
@@ -129,8 +129,16 @@ private:
     QCheckBox* backup_checkbox_ = nullptr;
     QCheckBox* delete_stale_checkbox_ = nullptr;
 
-    // --- Вкладка «FreeRTOS» --------------------------------------------------
-    FreeRtosSettingsWidget* freertos_widget_ = nullptr;
+    // --- Вкладка «Диагностика» (read-only, см. refreshDiagnosticsTab) -------
+    // Нет выбора HAL/LL (у MIK32 SDK нет LL-варианта драйверов — только HAL,
+    // см. комментарий в .cpp) и нет редактирования приоритета/edge-level
+    // прерываний (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 3 EPIC — классификация
+    // edge/level для части источников не подтверждена ни в одном доступном
+    // материале, угадывание воспроизводит уже дважды пойманный в этой сессии
+    // класс бага "незачищенный уровневый флаг -> бесконечный повторный вход
+    // в прерывание"). Эта вкладка только ПОКАЗЫВАЕТ, что уже решено кодогеном.
+    QTableWidget* driver_table_ = nullptr;
+    QTableWidget* irq_table_ = nullptr;
 };
 
 #endif //MIK32_CONFIGURATOR_PROJECT_MANAGER_SCREEN_H

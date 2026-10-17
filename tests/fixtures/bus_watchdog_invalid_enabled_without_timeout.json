@@ -1,0 +1,3 @@
+{ "mcu": "MIK32", "version": "2.0", "peripherals": [
+  { "type": "bus_watchdog", "eeprom_enabled": true }
+]}

@@ -42,6 +42,12 @@ struct Timer32Config
     // prescaler=0, максимальное разрешение — см. парсер).
     bool has_frequency = false;
     double requested_frequency_hz = 0.0;
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Timer32. Необязательные, общие для любого
+    // instance/набора каналов (см. schemas/timer32.json).
+    std::string clock_source = "prescaler"; // mik32_hal_timer32.h, HAL_TIMER32_SourceTypeDef
+    bool overflow_interrupt = false;        // TIMER32_INT_OVERFLOW_M
+    bool underflow_interrupt = false;       // TIMER32_INT_UNDERFLOW_M
 };
 
 ParseResult<Timer32Config> parseTimer32Config(const std::string& file_name_path);

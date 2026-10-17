@@ -21,9 +21,11 @@
 #include <QGraphicsView>
 #include <QHash>
 #include <QString>
+#include <QPointF>
 #include "package_knowledge.h"
 
 class QGraphicsRectItem;
+class QGraphicsSimpleTextItem;
 
 // Состояние вывода определяет цвет. Смысл состояний — не «красиво», а
 // «чем этот вывод сейчас занят и можно ли его трогать».
@@ -48,7 +50,14 @@ public:
 
     // Перекрашивает уже построенную схему. Выводы, отсутствующие в states,
     // считаются Free (для мультиплексируемых) или Service.
-    void setPinStates(const QHash<int, PinState>& states, const QHash<int, QString>& tooltips);
+    //
+    // labels — необязательная карта «короткая подпись текущей функции»
+    // (например, "I2C_0"), как в STM32CubeMX: имя вывода из даташита (pin.name)
+    // всегда написано ВНУТРИ самого вывода (неизменно), а назначенный
+    // интерфейс — СНАРУЖИ, над/сбоку от вывода, и виден только пока вывод
+    // реально чем-то занят (пустая labels — снаружи ничего не пишется).
+    void setPinStates(const QHash<int, PinState>& states, const QHash<int, QString>& tooltips,
+                       const QHash<int, QString>& labels = {});
 
 signals:
     void pinClicked(int pin_number);
@@ -62,8 +71,21 @@ private:
     struct PinItem
     {
         QGraphicsRectItem* pad = nullptr;
+        QGraphicsSimpleTextItem* name_label = nullptr;   // ВНУТРИ вывода — имя из даташита, всегда видно
+        QGraphicsSimpleTextItem* mode_label = nullptr;   // СНАРУЖИ вывода — назначенный интерфейс, видно только когда занят
         bool multiplexed = false;
+        QPointF pad_center;      // центр вывода — для name_label (внутри)
+        QPointF label_anchor;    // точка привязки СНАРУЖИ вывода — для mode_label
+        int side = 0;            // 0=лево,1=низ,2=право,3=верх
+        double label_rotation = 0.0;   // 0 (лево/право) или 90 (низ/верх)
     };
+
+    // Центрирует name_label ВНУТРИ вывода (pad_center).
+    void layoutNameLabel(QGraphicsSimpleTextItem* label, const PinItem& item);
+    // Раскладывает mode_label СНАРУЖИ вывода, от label_anchor наружу (как в
+    // STM32CubeMX — подпись интерфейса растёт от корпуса, а не наезжает
+    // на соседние выводы).
+    void layoutModeLabel(QGraphicsSimpleTextItem* label, const PinItem& item);
 
     QHash<int, PinItem> pin_items_;
     double scale_factor_ = 1.0;

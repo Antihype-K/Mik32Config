@@ -12,6 +12,7 @@
 // бы ввести значение, которое тут же отвергнет валидатор.
 //
 #include "properties_panel.h"
+#include "freertos_settings_widget.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -99,6 +100,30 @@ namespace
     // mik32_hal_timer16.h, HAL_Timer16_PrescalerTypeDef — восемь степеней двойки.
     const std::vector<int> kPrescalers = {1, 2, 4, 8, 16, 32, 64, 128};
 
+    // schemas/timer16.json: "clock_source" — Тир 1 аудита (AUDIT_TZ_PERIPHERY_GAPS.md).
+    const std::vector<std::pair<const char*, const char*>> kTimer16ClockSources = {
+        {"Системная (sys_clk)",                 "internal_system"},
+        {"Шина AHB (hclk)",                      "internal_ahb"},
+        {"Внешний осциллятор OSC32M",            "internal_osc32m"},
+        {"Встроенный осциллятор HSI32M",         "internal_hsi32m"},
+        {"Внешний осциллятор OSC32K",            "internal_osc32k"},
+        {"Встроенный осциллятор LSI32K",         "internal_lsi32k"},
+    };
+
+    const std::vector<std::pair<const char*, const char*>> kTimer16TriggerEdges = {
+        {"Программный (неактивен)",  "software"},
+        {"Нарастающий",              "rising"},
+        {"Спадающий",                "falling"},
+        {"Оба фронта",               "both"},
+    };
+
+    const std::vector<std::pair<const char*, const char*>> kTimer16Filters = {
+        {"Выключен",   "none"},
+        {"2 такта",    "2clock"},
+        {"4 такта",    "4clock"},
+        {"8 тактов",   "8clock"},
+    };
+
     // parser/i2c/i2c_parser.cpp, kValidClockSpeeds — Standard/Fast/Fast+.
     const std::vector<std::pair<const char*, int>> kI2cSpeeds = {
         {"100 кГц (Standard)",  100000},
@@ -106,16 +131,24 @@ namespace
         {"1 МГц (Fast+)",       1000000},
     };
 
-    // parser/i2c/i2c_parser.cpp, kValidMasterDemos / kValidSlaveDemos.
-    // Набор зависит от mode — именно поэтому смена mode пересобирает форму.
-    const std::vector<std::pair<const char*, const char*>> kI2cMasterDemos = {
-        {"Сканер шины (scanner)",  "scanner"},
-        {"Ping-pong",              "ping_pong"},
+    // mik32_hal_i2c.h, HAL_I2C_DigitalFilterTypeDef.
+    const std::vector<std::pair<const char*, int>> kI2cDigitalFilters = {
+        {"Выключен",      0},
+        {"1 такт",        1},
+        {"2 такта",       2},
+        {"15 тактов",     15},
     };
-    const std::vector<std::pair<const char*, const char*>> kI2cSlaveDemos = {
-        {"Пассивный приём (receive)",       "receive"},
-        {"Отвечать сканеру (scanner_target)", "scanner_target"},
-        {"Ping-pong",                       "ping_pong"},
+
+    // mik32_hal_i2c.h, HAL_I2C_OwnAddress2MaskTypeDef.
+    const std::vector<std::pair<const char*, const char*>> kI2cOwnAddress2Masks = {
+        {"Точное совпадение",      "none"},
+        {"Маска 1 бит (x)",        "111111x"},
+        {"Маска 2 бита (xx)",      "11111xx"},
+        {"Маска 3 бита (xxx)",     "1111xxx"},
+        {"Маска 4 бита (xxxx)",    "111xxxx"},
+        {"Маска 5 бит (xxxxx)",    "11xxxxx"},
+        {"Маска 6 бит (xxxxxx)",   "1xxxxxx"},
+        {"ACK все адреса",         "1111111"},
     };
 
     // schemas/spi.json, fields.clk_phase / fields.clk_polarity.
@@ -289,6 +322,20 @@ void PropertiesPanel::refresh()
         return;
     }
 
+    // FreeRTOS — не элемент peripherals[] (type+instance), а верхнеуровневый
+    // ключ документа "freertos" (как "clock" у ClockConfigScreen), поэтому
+    // document_->isEnabled("freertos", 0) всегда вернул бы false и показал
+    // бы заглушку "включить блок" с кнопкой, пишущей несуществующий блок
+    // peripherals[] — обходим общий гейт isEnabled ДО него, не трогая
+    // остальные типы. Включение/выключение самого FreeRTOS — чекбокс
+    // "Включить FreeRTOS" внутри FreeRtosSettingsWidget, как и раньше внутри
+    // ProjectManagerScreen.
+    if (type_ == "freertos")
+    {
+        buildFreertosForm(layout);
+        return;
+    }
+
     if (!document_->isEnabled(type_.toStdString(), instance_))
     {
         buildDisabledPlaceholder(layout, instance_);
@@ -301,6 +348,18 @@ void PropertiesPanel::refresh()
     else if (type_ == "i2c")      buildI2cForm(layout, instance_);
     else if (type_ == "spi")      buildSpiForm(layout, instance_);
     else if (type_ == "timer32")  buildTimer32Form(layout, instance_);
+    else if (type_ == "rtc")          buildRtcForm(layout);
+    else if (type_ == "crc")          buildCrcForm(layout);
+    else if (type_ == "eeprom")       buildEepromForm(layout);
+    else if (type_ == "wdt")          buildWdtForm(layout);
+    else if (type_ == "dac")          buildDacForm(layout, instance_);
+    else if (type_ == "adc")          buildAdcForm(layout);
+    else if (type_ == "crypto")       buildCryptoForm(layout);
+    else if (type_ == "otp")          buildOtpForm(layout);
+    else if (type_ == "tsens")        buildTsensForm(layout);
+    else if (type_ == "pvd")          buildPvdForm(layout);
+    else if (type_ == "bus_watchdog") buildBusWatchdogForm(layout);
+    else if (type_ == "dma")          buildDmaForm(layout, instance_);
 }
 
 void PropertiesPanel::buildDisabledPlaceholder(QVBoxLayout* layout, int instance)
@@ -1065,6 +1124,78 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
     }
     layout->addWidget(box);
 
+    // --- Тир 1 аудита: clock_source/trigger_edge/фильтры/полярность ------
+    QGroupBox* advanced_box = new QGroupBox(QString::fromUtf8("Дополнительно"));
+    QFormLayout* advanced_form = new QFormLayout(advanced_box);
+
+    const bool is_external_event_count = (mode == "external_event_count");
+
+    const std::string clock_source = document_->field(block_index, "clock_source").is_string()
+        ? document_->field(block_index, "clock_source").get<std::string>() : "internal_system";
+    QComboBox* clock_source_combo = stringCombo(
+        kTimer16ClockSources, clock_source,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "clock_source", value);
+            emit documentChanged();
+        });
+    clock_source_combo->setEnabled(!is_external_event_count);
+    clock_source_combo->setToolTip(is_external_event_count
+        ? QString::fromUtf8("В режиме счёта внешних событий источник всегда EXTERNAL_INPUT1 — поле не читается кодогеном.")
+        : QString::fromUtf8("Частота ШИМ в комментарии вычисляется только для системной/AHB/HSI32M "
+                            "(совпадают с sys_clk=32МГц по умолчанию) — для внешних/некалиброванных "
+                            "осцилляторов частота не зафиксирована."));
+    advanced_form->addRow(QString::fromUtf8("Источник тактирования:"), clock_source_combo);
+
+    const std::string trigger_edge = document_->field(block_index, "trigger_edge").is_string()
+        ? document_->field(block_index, "trigger_edge").get<std::string>() : "software";
+    advanced_form->addRow(QString::fromUtf8("Фронт триггера:"), stringCombo(
+        kTimer16TriggerEdges, trigger_edge,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "trigger_edge", value);
+            emit documentChanged();
+        }));
+
+    const std::string external_clock_filter = document_->field(block_index, "external_clock_filter").is_string()
+        ? document_->field(block_index, "external_clock_filter").get<std::string>() : "none";
+    advanced_form->addRow(QString::fromUtf8("Фильтр внешнего такта:"), stringCombo(
+        kTimer16Filters, external_clock_filter,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "external_clock_filter", value);
+            emit documentChanged();
+        }));
+
+    const std::string trigger_filter = document_->field(block_index, "trigger_filter").is_string()
+        ? document_->field(block_index, "trigger_filter").get<std::string>() : "none";
+    advanced_form->addRow(QString::fromUtf8("Фильтр триггера:"), stringCombo(
+        kTimer16Filters, trigger_filter,
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "trigger_filter", value);
+            emit documentChanged();
+        }));
+
+    QCheckBox* waveform_inverted = new QCheckBox(QString::fromUtf8("Инвертировать полярность ШИМ"));
+    waveform_inverted->setChecked(document_->field(block_index, "waveform_inverted").is_boolean()
+                                  && document_->field(block_index, "waveform_inverted").get<bool>());
+    waveform_inverted->setEnabled(!is_external_event_count);
+    if (is_external_event_count)
+    {
+        waveform_inverted->setToolTip(QString::fromUtf8(
+            "В режиме счёта внешних событий волновая форма не генерируется (Waveform.Enable=DISABLE) "
+            "— поле не влияет на сгенерированный код."));
+    }
+    connect(waveform_inverted, &QCheckBox::toggled, this, [this, block_index](bool on)
+    {
+        document_->setField(block_index, "waveform_inverted", on);
+        emit documentChanged();
+    });
+    advanced_form->addRow(QString::fromUtf8(""), waveform_inverted);
+
+    layout->addWidget(advanced_box);
+
     QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
     connect(disable, &QPushButton::clicked, this, [this, instance]()
     {
@@ -1098,23 +1229,17 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
         [this, block_index](const std::string& value)
         {
             document_->setField(block_index, "mode", value);
-            // Смена режима меняет и обязательные поля, и допустимый набор
-            // сценариев demo (parser/i2c/i2c_parser.cpp, kValidMasterDemos /
-            // kValidSlaveDemos). Поэтому сразу приводим блок к валидному для
-            // нового режима виду, а не оставляем его сломанным до тех пор,
-            // пока пользователь сам не догадается дозаполнить поля.
+            // Смена режима меняет обязательные поля (parser/i2c/i2c_parser.cpp)
+            // — сразу приводим блок к валидному для нового режима виду, а не
+            // оставляем его сломанным до тех пор, пока пользователь сам не
+            // догадается дозаполнить поля.
             if (value == "slave")
             {
-                document_->setField(block_index, "demo", "receive");
                 document_->setField(block_index, "address_mode", "7bit");
                 if (!document_->field(block_index, "own_address").is_number_integer())
                 {
                     document_->setField(block_index, "own_address", 0x36);
                 }
-            }
-            else
-            {
-                document_->setField(block_index, "demo", "scanner");
             }
             emit documentChanged();
             refresh();
@@ -1129,18 +1254,27 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
             emit documentChanged();
         }));
 
-    const std::string demo = document_->field(block_index, "demo").is_string()
-        ? document_->field(block_index, "demo").get<std::string>()
-        : (mode == "master" ? "scanner" : "receive");
-
-    form->addRow(QString::fromUtf8("Демо-сценарий:"), stringCombo(
-        mode == "master" ? kI2cMasterDemos : kI2cSlaveDemos, demo,
-        [this, block_index](const std::string& value)
+    // digital_filter/analog_filter — общие для master и slave
+    // (HAL_I2C_{Digital,Analog}FilterInit вызываются из обеих веток
+    // HAL_I2C_Init, см. schemas/i2c.json).
+    const nlohmann::json digital_filter = document_->field(block_index, "digital_filter");
+    form->addRow(QString::fromUtf8("Цифровой фильтр:"), labelledIntCombo(
+        kI2cDigitalFilters, digital_filter.is_number_integer() ? digital_filter.get<int>() : 0,
+        [this, block_index](int value)
         {
-            document_->setField(block_index, "demo", value);
+            document_->setField(block_index, "digital_filter", value);
             emit documentChanged();
-            refresh();  // ping_pong у master добавляет поле target_address
         }));
+
+    QCheckBox* analog_filter = new QCheckBox(QString::fromUtf8("Аналоговый фильтр"));
+    analog_filter->setChecked(document_->field(block_index, "analog_filter").is_boolean()
+                              && document_->field(block_index, "analog_filter").get<bool>());
+    connect(analog_filter, &QCheckBox::toggled, this, [this, block_index](bool on)
+    {
+        document_->setField(block_index, "analog_filter", on);
+        emit documentChanged();
+    });
+    form->addRow(QString::fromUtf8("Фильтры:"), analog_filter);
 
     if (mode == "slave")
     {
@@ -1154,7 +1288,9 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
                 document_->setField(block_index, "address_mode", value);
                 // При переходе на 10 бит адрес <= 127 запрещён парсером:
                 // HAL различает разрядность ПО ВЕЛИЧИНЕ адреса, и такой адрес
-                // молча стал бы 7-битным (parser/i2c/i2c_parser.cpp).
+                // молча стал бы 7-битным (parser/i2c/i2c_parser.cpp). Второй
+                // адрес (dual_address) требует 7-битный основной — выключаем
+                // его при переходе на 10 бит, иначе блок стал бы невалидным.
                 if (value == "10bit")
                 {
                     const nlohmann::json current = document_->field(block_index, "own_address");
@@ -1162,6 +1298,7 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
                     {
                         document_->setField(block_index, "own_address", 128);
                     }
+                    document_->setField(block_index, "dual_address_enabled", false);
                 }
                 emit documentChanged();
                 refresh();
@@ -1186,35 +1323,78 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
         // Значение могло быть подтянуто в допустимый диапазон самим виджетом —
         // документ обязан узнать об этом, иначе на диск уйдёт старое число.
         document_->setField(block_index, "own_address", own->value());
-    }
 
-    if (mode == "master" && demo == "ping_pong")
-    {
-        QSpinBox* target = new QSpinBox();
-        target->setRange(0, 127);  // parser/i2c: kMaxTargetAddress, только 7 бит
-        const nlohmann::json target_value = document_->field(block_index, "target_address");
-        target->setValue(target_value.is_number_integer() ? target_value.get<int>() : 0x36);
-        target->setDisplayIntegerBase(16);
-        target->setPrefix("0x");
-        connect(target, &QSpinBox::valueChanged, this, [this, block_index](int value)
+        QCheckBox* general_call = new QCheckBox(QString::fromUtf8("Общий вызов (General Call, адрес 0x00)"));
+        general_call->setChecked(document_->field(block_index, "general_call").is_boolean()
+                                 && document_->field(block_index, "general_call").get<bool>());
+        connect(general_call, &QCheckBox::toggled, this, [this, block_index](bool on)
         {
-            document_->setField(block_index, "target_address", value);
+            document_->setField(block_index, "general_call", on);
             emit documentChanged();
         });
-        form->addRow(QString::fromUtf8("Адрес ведомого:"), target);
-        document_->setField(block_index, "target_address", target->value());
-    }
-    layout->addWidget(box);
+        form->addRow(QString::fromUtf8("Ведомый:"), general_call);
 
-    if (mode == "master" && demo == "scanner")
-    {
-        QLabel* note = new QLabel(QString::fromUtf8(
-            "Сценарий «сканер» печатает результаты в UART — в конфигурации "
-            "должен быть включён хотя бы один блок USART."));
-        note->setWordWrap(true);
-        note->setEnabled(false);
-        layout->addWidget(note);
+        QCheckBox* no_stretch = new QCheckBox(QString::fromUtf8("Без растягивания SCL (NOSTRETCH)"));
+        no_stretch->setToolTip(QString::fromUtf8(
+            "Errata п. 4.1: без прерываний/DMA (этот кодоген генерирует только "
+            "блокирующие вызовы) возможна недозагрузка TXDR."));
+        no_stretch->setChecked(document_->field(block_index, "no_stretch_mode").is_boolean()
+                               && document_->field(block_index, "no_stretch_mode").get<bool>());
+        connect(no_stretch, &QCheckBox::toggled, this, [this, block_index](bool on)
+        {
+            document_->setField(block_index, "no_stretch_mode", on);
+            emit documentChanged();
+        });
+        form->addRow(QString::fromUtf8(""), no_stretch);
+
+        if (address_mode == "7bit")
+        {
+            QCheckBox* dual_address = new QCheckBox(QString::fromUtf8("Второй собственный адрес"));
+            const bool dual_address_enabled = document_->field(block_index, "dual_address_enabled").is_boolean()
+                                              && document_->field(block_index, "dual_address_enabled").get<bool>();
+            dual_address->setChecked(dual_address_enabled);
+            connect(dual_address, &QCheckBox::toggled, this, [this, block_index](bool on)
+            {
+                document_->setField(block_index, "dual_address_enabled", on);
+                if (on && !document_->field(block_index, "own_address_2").is_number_integer())
+                {
+                    document_->setField(block_index, "own_address_2", 0x37);
+                }
+                emit documentChanged();
+                refresh();
+            });
+            form->addRow(QString::fromUtf8(""), dual_address);
+
+            if (dual_address_enabled)
+            {
+                QSpinBox* own2 = new QSpinBox();
+                own2->setRange(0, 127);  // второй адрес всегда 7-битный
+                const nlohmann::json own2_value = document_->field(block_index, "own_address_2");
+                own2->setValue(own2_value.is_number_integer() ? own2_value.get<int>() : 0x37);
+                own2->setDisplayIntegerBase(16);
+                own2->setPrefix("0x");
+                connect(own2, &QSpinBox::valueChanged, this, [this, block_index](int value)
+                {
+                    document_->setField(block_index, "own_address_2", value);
+                    emit documentChanged();
+                });
+                form->addRow(QString::fromUtf8("Второй адрес:"), own2);
+                document_->setField(block_index, "own_address_2", own2->value());
+
+                const std::string mask = document_->field(block_index, "own_address_2_mask").is_string()
+                    ? document_->field(block_index, "own_address_2_mask").get<std::string>() : "none";
+                form->addRow(QString::fromUtf8("Маска второго адреса:"), stringCombo(
+                    kI2cOwnAddress2Masks, mask,
+                    [this, block_index](const std::string& value)
+                    {
+                        document_->setField(block_index, "own_address_2_mask", value);
+                        emit documentChanged();
+                    }));
+            }
+        }
     }
+
+    layout->addWidget(box);
 
     auto fixed = knowledge_->i2c.instance_fixed_pins.find(instance);
     if (fixed != knowledge_->i2c.instance_fixed_pins.end() && !fixed->second.empty())
@@ -1953,4 +2133,990 @@ void PropertiesPanel::buildTimer32ChannelRow(QVBoxLayout* channels_layout, int b
     }
 
     channels_layout->addWidget(row_box);
+}
+
+// ============================================================================
+// Тир 2/3 (AUDIT_TZ_PERIPHERY_GAPS.md) — RTC/CRC/EEPROM/WDT/DAC/ADC/CRYPTO/
+// OTP/TSENS/PVD/BusWatchdog. Все, кроме DAC, единственные глобальные блоки:
+// document_->blockIndices(type, 0) ищет их ровно так же, как остальные формы
+// выше ищут "свой" block_index — instance всегда 0 (см. properties_panel.h).
+// ============================================================================
+
+void PropertiesPanel::buildRtcForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("rtc", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>RTC</b>"));
+    layout->addWidget(title);
+
+    // schemas/rtc.json: time.dow — RTC_WEEKDAY_MONDAY(1)..SUNDAY(7), не 0-6.
+    const std::vector<std::pair<const char*, int>> kRtcWeekdays = {
+        {"Понедельник", 1}, {"Вторник", 2}, {"Среда", 3}, {"Четверг", 4},
+        {"Пятница", 5}, {"Суббота", 6}, {"Воскресенье", 7},
+    };
+
+    auto buildTimeDateFields = [this](QFormLayout* form, const nlohmann::json& time_value,
+        const nlohmann::json& date_value, const std::function<void(const nlohmann::json&)>& on_time_change,
+        const std::function<void(const nlohmann::json&)>& on_date_change)
+    {
+        nlohmann::json time = time_value.is_object() ? time_value
+            : nlohmann::json{{"dow", 1}, {"hours", 0}, {"minutes", 0}, {"seconds", 0}};
+        nlohmann::json date = date_value.is_object() ? date_value
+            : nlohmann::json{{"century", 20}, {"day", 1}, {"month", 1}, {"year", 0}};
+
+        form->addRow(QString::fromUtf8("День недели:"), labelledIntCombo(
+            {{"Понедельник", 1}, {"Вторник", 2}, {"Среда", 3}, {"Четверг", 4},
+             {"Пятница", 5}, {"Суббота", 6}, {"Воскресенье", 7}},
+            time.value("dow", 1),
+            [time, on_time_change](int value) mutable { time["dow"] = value; on_time_change(time); }));
+
+        QSpinBox* hours = new QSpinBox(); hours->setRange(0, 23);
+        hours->setValue(time.value("hours", 0));
+        connect(hours, &QSpinBox::valueChanged, this, [time, on_time_change](int value) mutable
+        { time["hours"] = value; on_time_change(time); });
+        form->addRow(QString::fromUtf8("Часы:"), hours);
+
+        QSpinBox* minutes = new QSpinBox(); minutes->setRange(0, 59);
+        minutes->setValue(time.value("minutes", 0));
+        connect(minutes, &QSpinBox::valueChanged, this, [time, on_time_change](int value) mutable
+        { time["minutes"] = value; on_time_change(time); });
+        form->addRow(QString::fromUtf8("Минуты:"), minutes);
+
+        QSpinBox* seconds = new QSpinBox(); seconds->setRange(0, 59);
+        seconds->setValue(time.value("seconds", 0));
+        connect(seconds, &QSpinBox::valueChanged, this, [time, on_time_change](int value) mutable
+        { time["seconds"] = value; on_time_change(time); });
+        form->addRow(QString::fromUtf8("Секунды:"), seconds);
+
+        QSpinBox* century = new QSpinBox(); century->setRange(0, 99);
+        century->setValue(date.value("century", 20));
+        connect(century, &QSpinBox::valueChanged, this, [date, on_date_change](int value) mutable
+        { date["century"] = value; on_date_change(date); });
+        form->addRow(QString::fromUtf8("Век (20=19xx/20xx):"), century);
+
+        QSpinBox* year = new QSpinBox(); year->setRange(0, 99);
+        year->setValue(date.value("year", 0));
+        connect(year, &QSpinBox::valueChanged, this, [date, on_date_change](int value) mutable
+        { date["year"] = value; on_date_change(date); });
+        form->addRow(QString::fromUtf8("Год (2 цифры):"), year);
+
+        QSpinBox* month = new QSpinBox(); month->setRange(1, 12);
+        month->setValue(date.value("month", 1));
+        connect(month, &QSpinBox::valueChanged, this, [date, on_date_change](int value) mutable
+        { date["month"] = value; on_date_change(date); });
+        form->addRow(QString::fromUtf8("Месяц:"), month);
+
+        QSpinBox* day = new QSpinBox(); day->setRange(1, 31);
+        day->setValue(date.value("day", 1));
+        connect(day, &QSpinBox::valueChanged, this, [date, on_date_change](int value) mutable
+        { date["day"] = value; on_date_change(date); });
+        form->addRow(QString::fromUtf8("День:"), day);
+    };
+
+    QGroupBox* time_box = new QGroupBox(QString::fromUtf8("Текущее время/дата"));
+    QFormLayout* time_form = new QFormLayout(time_box);
+    buildTimeDateFields(time_form, document_->field(block_index, "time"), document_->field(block_index, "date"),
+        [this, block_index](const nlohmann::json& v) { document_->setField(block_index, "time", v); emit documentChanged(); },
+        [this, block_index](const nlohmann::json& v) { document_->setField(block_index, "date", v); emit documentChanged(); });
+    layout->addWidget(time_box);
+
+    const bool has_alarm = document_->field(block_index, "alarm").is_object();
+    QCheckBox* alarm_enable = new QCheckBox(QString::fromUtf8("Будильник"));
+    alarm_enable->setChecked(has_alarm);
+    connect(alarm_enable, &QCheckBox::toggled, this, [this, block_index](bool on)
+    {
+        if (on)
+        {
+            document_->setField(block_index, "alarm", nlohmann::json{
+                {"time", {{"dow", 1}, {"hours", 0}, {"minutes", 0}, {"seconds", 0}}},
+                {"date", {{"century", 20}, {"day", 1}, {"month", 1}, {"year", 0}}}});
+        }
+        else
+        {
+            document_->eraseField(block_index, "alarm");
+        }
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(alarm_enable);
+
+    if (has_alarm)
+    {
+        const nlohmann::json alarm = document_->field(block_index, "alarm");
+        QGroupBox* alarm_box = new QGroupBox(QString::fromUtf8("Время/дата будильника"));
+        QFormLayout* alarm_form = new QFormLayout(alarm_box);
+        buildTimeDateFields(alarm_form, alarm.value("time", nlohmann::json()), alarm.value("date", nlohmann::json()),
+            [this, block_index](const nlohmann::json& v)
+            { nlohmann::json a = document_->field(block_index, "alarm"); a["time"] = v; document_->setField(block_index, "alarm", a); emit documentChanged(); },
+            [this, block_index](const nlohmann::json& v)
+            { nlohmann::json a = document_->field(block_index, "alarm"); a["date"] = v; document_->setField(block_index, "alarm", a); emit documentChanged(); });
+
+        QCheckBox* interrupt = new QCheckBox(QString::fromUtf8("Прерывание по будильнику"));
+        interrupt->setChecked(alarm.value("interrupt_enabled", false));
+        interrupt->setToolTip(QString::fromUtf8(
+            "EPIC-маскирование (HAL_EPIC_MaskLevelSet(HAL_EPIC_RTC_MASK)) и подключение "
+            "RTC_IRQHandler_Template() к raw_trap_handler остаются за вами."));
+        connect(interrupt, &QCheckBox::toggled, this, [this, block_index](bool on)
+        {
+            nlohmann::json a = document_->field(block_index, "alarm");
+            a["interrupt_enabled"] = on;
+            document_->setField(block_index, "alarm", a);
+            emit documentChanged();
+        });
+        alarm_form->addRow(QString(), interrupt);
+        layout->addWidget(alarm_box);
+
+        QLabel* compare_note = new QLabel(QString::fromUtf8(
+            "compare_fields не редактируется здесь — по умолчанию сравниваются все 8 "
+            "полей (точное совпадение). Для частичного сравнения (например, \"каждый день "
+            "в это время\") отредактируйте JSON-файл проекта вручную."));
+        compare_note->setWordWrap(true);
+        compare_note->setEnabled(false);
+        layout->addWidget(compare_note);
+    }
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("rtc", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildCrcForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("crc", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>CRC</b>"));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    const bool use_preset = document_->field(block_index, "preset").is_string();
+    QComboBox* source_mode = stringCombo(
+        {{"Готовый пресет", "preset"}, {"Свои параметры (poly/init/...)", "raw"}},
+        use_preset ? "preset" : "raw",
+        [this, block_index](const std::string& value)
+        {
+            if (value == "preset")
+            {
+                document_->eraseField(block_index, "poly");
+                document_->eraseField(block_index, "init");
+                document_->eraseField(block_index, "input_reverse");
+                document_->eraseField(block_index, "output_reverse");
+                document_->eraseField(block_index, "output_inversion");
+                document_->setField(block_index, "preset", "crc32");
+            }
+            else
+            {
+                document_->eraseField(block_index, "preset");
+                document_->setField(block_index, "poly", 0x04C11DB7);
+                document_->setField(block_index, "init", 0xFFFFFFFF);
+                document_->setField(block_index, "input_reverse", true);
+                document_->setField(block_index, "output_reverse", true);
+                document_->setField(block_index, "output_inversion", true);
+            }
+            emit documentChanged();
+            refresh();
+        });
+    form->addRow(QString::fromUtf8("Источник параметров:"), source_mode);
+
+    if (use_preset)
+    {
+        const std::string preset = document_->field(block_index, "preset").get<std::string>();
+        form->addRow(QString::fromUtf8("Пресет:"), stringCombo(
+            {{"CRC-32", "crc32"}, {"CRC-32/BZIP2", "crc32_bzip2"}, {"CRC-32C", "crc32c"},
+             {"CRC-32D", "crc32d"}, {"CRC-32/JAMCRC", "crc32_jamcrc"}, {"CRC-32/MPEG-2", "crc32_mpeg2"},
+             {"CRC-32/POSIX", "crc32_posix"}, {"CRC-32Q", "crc32q"}, {"CRC-32/XFER", "crc32_xfer"}},
+            preset,
+            [this, block_index](const std::string& value)
+            {
+                document_->setField(block_index, "preset", value);
+                emit documentChanged();
+            }));
+    }
+    else
+    {
+        QSpinBox* poly = new QSpinBox(); poly->setRange(0, kUint32SpinBoxMax);
+        poly->setDisplayIntegerBase(16); poly->setPrefix("0x");
+        const nlohmann::json poly_value = document_->field(block_index, "poly");
+        poly->setValue(poly_value.is_number_integer() ? poly_value.get<int>() : 0x04C11DB7);
+        connect(poly, &QSpinBox::valueChanged, this, [this, block_index](int value)
+        { document_->setField(block_index, "poly", static_cast<unsigned int>(value)); emit documentChanged(); });
+        form->addRow(QString::fromUtf8("Poly:"), poly);
+
+        QSpinBox* init = new QSpinBox(); init->setRange(0, kUint32SpinBoxMax);
+        init->setDisplayIntegerBase(16); init->setPrefix("0x");
+        const nlohmann::json init_value = document_->field(block_index, "init");
+        init->setValue(init_value.is_number_integer() ? init_value.get<int>() : -1);
+        connect(init, &QSpinBox::valueChanged, this, [this, block_index](int value)
+        { document_->setField(block_index, "init", static_cast<unsigned int>(value)); emit documentChanged(); });
+        form->addRow(QString::fromUtf8("Init:"), init);
+
+        QCheckBox* input_reverse = new QCheckBox(QString::fromUtf8("Input reverse"));
+        input_reverse->setChecked(document_->field(block_index, "input_reverse").is_boolean()
+            && document_->field(block_index, "input_reverse").get<bool>());
+        connect(input_reverse, &QCheckBox::toggled, this, [this, block_index](bool on)
+        { document_->setField(block_index, "input_reverse", on); emit documentChanged(); });
+        form->addRow(QString(), input_reverse);
+
+        QCheckBox* output_reverse = new QCheckBox(QString::fromUtf8("Output reverse"));
+        output_reverse->setChecked(document_->field(block_index, "output_reverse").is_boolean()
+            && document_->field(block_index, "output_reverse").get<bool>());
+        connect(output_reverse, &QCheckBox::toggled, this, [this, block_index](bool on)
+        { document_->setField(block_index, "output_reverse", on); emit documentChanged(); });
+        form->addRow(QString(), output_reverse);
+
+        QCheckBox* output_inversion = new QCheckBox(QString::fromUtf8("Output inversion (XorOut)"));
+        output_inversion->setChecked(document_->field(block_index, "output_inversion").is_boolean()
+            && document_->field(block_index, "output_inversion").get<bool>());
+        connect(output_inversion, &QCheckBox::toggled, this, [this, block_index](bool on)
+        { document_->setField(block_index, "output_inversion", on); emit documentChanged(); });
+        form->addRow(QString(), output_inversion);
+    }
+
+    layout->addWidget(box);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("crc", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildEepromForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("eeprom", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>EEPROM</b>"));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    const std::string mode = document_->field(block_index, "mode").is_string()
+        ? document_->field(block_index, "mode").get<std::string>() : "two_stage";
+    form->addRow(QString::fromUtf8("Режим:"), stringCombo(
+        {{"2 этапа", "two_stage"}, {"3 этапа (с опросом BSY)", "three_stage"}}, mode,
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "mode", value); emit documentChanged(); }));
+
+    QCheckBox* ecc = new QCheckBox(QString::fromUtf8("Коррекция ошибок (ECC)"));
+    const nlohmann::json ecc_value = document_->field(block_index, "ecc_enabled");
+    ecc->setChecked(!ecc_value.is_boolean() || ecc_value.get<bool>());
+    connect(ecc, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "ecc_enabled", on); emit documentChanged(); });
+    form->addRow(QString(), ecc);
+
+    QCheckBox* serr = new QCheckBox(QString::fromUtf8("Прерывание по одиночной ошибке ECC"));
+    serr->setChecked(document_->field(block_index, "single_error_interrupt_enabled").is_boolean()
+        && document_->field(block_index, "single_error_interrupt_enabled").get<bool>());
+    connect(serr, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "single_error_interrupt_enabled", on); emit documentChanged(); });
+    form->addRow(QString(), serr);
+
+    layout->addWidget(box);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("eeprom", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildWdtForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("wdt", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>WDT</b>"));
+    layout->addWidget(title);
+
+    QLabel* safety_note = new QLabel(QString::fromUtf8(
+        "Кодоген генерирует только HAL_WDT_Init — HAL_WDT_Start/Refresh никогда не "
+        "вызываются автоматически (автозапуск без гарантии регулярного Refresh в вашем "
+        "коде привёл бы к безусловному циклическому сбросу платы)."));
+    safety_note->setWordWrap(true);
+    safety_note->setEnabled(false);
+    layout->addWidget(safety_note);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    const std::string clock_source = document_->field(block_index, "clock_source").is_string()
+        ? document_->field(block_index, "clock_source").get<std::string>() : "osc32k";
+    form->addRow(QString::fromUtf8("Источник тактирования:"), stringCombo(
+        {{"OSC32M", "osc32m"}, {"HSI32M", "hsi32m"}, {"OSC32K", "osc32k"}, {"LSI32K", "lsi32k"}},
+        clock_source,
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "clock_source", value); emit documentChanged(); }));
+
+    const bool is_32m = (clock_source == "osc32m" || clock_source == "hsi32m");
+    QSpinBox* reload_ms = new QSpinBox();
+    // mik32_hal_wdt.h: 524 мс максимум для источников 32 МГц, 511875 мс для 32 кГц —
+    // межполевая проверка, парсер валидирует точнее (parser/wdt/wdt_parser.cpp).
+    reload_ms->setRange(1, is_32m ? 524 : 511875);
+    const nlohmann::json reload_value = document_->field(block_index, "reload_ms");
+    reload_ms->setValue(reload_value.is_number_integer() ? reload_value.get<int>() : 1000);
+    reload_ms->setSuffix(QString::fromUtf8(" мс"));
+    connect(reload_ms, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    { document_->setField(block_index, "reload_ms", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Время до сброса:"), reload_ms);
+
+    layout->addWidget(box);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("wdt", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildDacForm(QVBoxLayout* layout, int instance)
+{
+    const std::vector<int> indices = document_->blockIndices("dac", instance);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString("<b>DAC_%1</b>").arg(instance));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    QSpinBox* div = new QSpinBox(); div->setRange(0, 255);
+    const nlohmann::json div_value = document_->field(block_index, "div");
+    div->setValue(div_value.is_number_integer() ? div_value.get<int>() : 0);
+    connect(div, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    { document_->setField(block_index, "div", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Делитель (DIV):"), div);
+
+    QCheckBox* ext_ref = new QCheckBox(QString::fromUtf8("Внешний ИОН (ext_ref)"));
+    ext_ref->setChecked(document_->field(block_index, "ext_ref").is_boolean()
+        && document_->field(block_index, "ext_ref").get<bool>());
+    connect(ext_ref, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "ext_ref", on); emit documentChanged(); });
+    form->addRow(QString(), ext_ref);
+
+    QCheckBox* ext_clb = new QCheckBox(QString::fromUtf8("Внешний вывод DAC_REF (ext_clb)"));
+    ext_clb->setToolTip(QString::fromUtf8(
+        "Вывод DAC_REF=GPIO_1/PIN_11 занимается только когда ext_ref И ext_clb оба включены."));
+    ext_clb->setChecked(document_->field(block_index, "ext_clb").is_boolean()
+        && document_->field(block_index, "ext_clb").get<bool>());
+    connect(ext_clb, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "ext_clb", on); emit documentChanged(); });
+    form->addRow(QString(), ext_clb);
+
+    layout->addWidget(box);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this, instance]()
+    {
+        document_->removeBlocks("dac", instance);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildAdcForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("adc", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>ADC</b>"));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    const nlohmann::json channel_value = document_->field(block_index, "channel");
+    form->addRow(QString::fromUtf8("Начальный канал:"), labelledIntCombo(
+        {{"Канал 0 (PORT_1_5)", 0}, {"Канал 1 (PORT_1_7)", 1}, {"Канал 2 (PORT_0_2)", 2},
+         {"Канал 3 (PORT_0_4)", 3}, {"Канал 4 (PORT_0_7)", 4}, {"Канал 5 (PORT_0_9)", 5},
+         {"Канал 6 (PORT_0_11)", 6}, {"Канал 7 (PORT_0_13)", 7}},
+        channel_value.is_number_integer() ? channel_value.get<int>() : 0,
+        [this, block_index](int value)
+        { document_->setField(block_index, "channel", value); emit documentChanged(); }));
+
+    QCheckBox* ext_ref = new QCheckBox(QString::fromUtf8("Внешний ИОН (ext_ref)"));
+    ext_ref->setChecked(document_->field(block_index, "ext_ref").is_boolean()
+        && document_->field(block_index, "ext_ref").get<bool>());
+    connect(ext_ref, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "ext_ref", on); emit documentChanged(); });
+    form->addRow(QString(), ext_ref);
+
+    QCheckBox* ext_clb = new QCheckBox(QString::fromUtf8("Внешний вывод ADC_REF (ext_clb)"));
+    ext_clb->setChecked(document_->field(block_index, "ext_clb").is_boolean()
+        && document_->field(block_index, "ext_clb").get<bool>());
+    connect(ext_clb, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "ext_clb", on); emit documentChanged(); });
+    form->addRow(QString(), ext_clb);
+
+    layout->addWidget(box);
+
+    QLabel* note = new QLabel(QString::fromUtf8(
+        "Переключение на другие каналы в рантайме остаётся за вами — здесь задаётся "
+        "только начальный канал при инициализации."));
+    note->setWordWrap(true);
+    note->setEnabled(false);
+    layout->addWidget(note);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("adc", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildCryptoForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("crypto", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>CRYPTO</b>"));
+    layout->addWidget(title);
+
+    QLabel* security_note = new QLabel(QString::fromUtf8(
+        "Ключ и вектор инициализации (IV) сознательно не настраиваются здесь — это "
+        "секретные данные времени выполнения, их нельзя хранить в JSON-конфиге или "
+        "генерировать в исходном коде. Задайте их сами через HAL_Crypto_SetKey/SetIV."));
+    security_note->setWordWrap(true);
+    security_note->setEnabled(false);
+    layout->addWidget(security_note);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    const std::string algorithm = document_->field(block_index, "algorithm").is_string()
+        ? document_->field(block_index, "algorithm").get<std::string>() : "aes";
+    form->addRow(QString::fromUtf8("Алгоритм:"), stringCombo(
+        {{"Кузнечик", "kuznechik"}, {"Магма", "magma"}, {"AES", "aes"}}, algorithm,
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "algorithm", value); emit documentChanged(); }));
+
+    const std::string cipher_mode = document_->field(block_index, "cipher_mode").is_string()
+        ? document_->field(block_index, "cipher_mode").get<std::string>() : "cbc";
+    form->addRow(QString::fromUtf8("Режим шифрования:"), stringCombo(
+        {{"ECB", "ecb"}, {"CBC", "cbc"}, {"CTR", "ctr"}}, cipher_mode,
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "cipher_mode", value); emit documentChanged(); }));
+
+    const std::string swap_mode = document_->field(block_index, "swap_mode").is_string()
+        ? document_->field(block_index, "swap_mode").get<std::string>() : "none";
+    form->addRow(QString::fromUtf8("Перестановка байт:"), stringCombo(
+        {{"Нет", "none"}, {"Полуслово", "halfword"}, {"Байт", "byte"}, {"Бит", "bit"}}, swap_mode,
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "swap_mode", value); emit documentChanged(); }));
+
+    const std::string order_mode = document_->field(block_index, "order_mode").is_string()
+        ? document_->field(block_index, "order_mode").get<std::string>() : "lsw";
+    form->addRow(QString::fromUtf8("Порядок слов:"), stringCombo(
+        {{"LSW (младшее слово первым)", "lsw"}, {"MSW (старшее слово первым)", "msw"}}, order_mode,
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "order_mode", value); emit documentChanged(); }));
+
+    layout->addWidget(box);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("crypto", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildOtpForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("otp", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>OTP</b>"));
+    layout->addWidget(title);
+
+    QLabel* safety_note = new QLabel(QString::fromUtf8(
+        "Кодоген генерирует только HAL_OTP_Init (режим чтения) — запись в OTP никогда "
+        "не генерируется автоматически: запись физически необратима (прожигает биты)."));
+    safety_note->setWordWrap(true);
+    safety_note->setEnabled(false);
+    layout->addWidget(safety_note);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    const std::string read_mode = document_->field(block_index, "read_mode").is_string()
+        ? document_->field(block_index, "read_mode").get<std::string>() : "two_stages";
+    form->addRow(QString::fromUtf8("Режим чтения:"), stringCombo(
+        {{"2 этапа (такты ожидания APB)", "two_stages"}, {"3 этапа (опрос флага BSY)", "three_stages"}},
+        read_mode,
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "read_mode", value); emit documentChanged(); }));
+
+    layout->addWidget(box);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("otp", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildTsensForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("tsens", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>TSENS</b>"));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    const std::string clock_source = document_->field(block_index, "clock_source").is_string()
+        ? document_->field(block_index, "clock_source").get<std::string>() : "sys_clk";
+    form->addRow(QString::fromUtf8("Источник тактирования:"), stringCombo(
+        {{"Системная (sys_clk)", "sys_clk"}, {"Шина AHB (hclk)", "hclk"}, {"OSC32M", "osc32m"},
+         {"HSI32M", "hsi32m"}, {"OSC32K", "osc32k"}, {"LSI32K", "lsi32k"}}, clock_source,
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "clock_source", value); emit documentChanged(); }));
+
+    QSpinBox* frequency = new QSpinBox(); frequency->setRange(1, 100000);
+    frequency->setSuffix(QString::fromUtf8(" Гц"));
+    const nlohmann::json frequency_value = document_->field(block_index, "frequency_hz");
+    // TSENS_OPTIMAL_FREQUENCY = 40000 (mik32_hal_tsens.h).
+    frequency->setValue(frequency_value.is_number_integer() ? frequency_value.get<int>() : 40000);
+    connect(frequency, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    { document_->setField(block_index, "frequency_hz", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Частота:"), frequency);
+
+    const bool has_low = document_->field(block_index, "low_threshold_celsius").is_number_integer();
+    QCheckBox* low_enable = new QCheckBox(QString::fromUtf8("Нижний порог"));
+    low_enable->setChecked(has_low);
+    connect(low_enable, &QCheckBox::toggled, this, [this, block_index](bool on)
+    {
+        if (on) document_->setField(block_index, "low_threshold_celsius", -10);
+        else document_->eraseField(block_index, "low_threshold_celsius");
+        emit documentChanged();
+        refresh();
+    });
+    form->addRow(QString(), low_enable);
+    if (has_low)
+    {
+        QSpinBox* low = new QSpinBox(); low->setRange(-40, 125);
+        low->setSuffix(QString::fromUtf8(" °C"));
+        low->setValue(document_->field(block_index, "low_threshold_celsius").get<int>());
+        connect(low, &QSpinBox::valueChanged, this, [this, block_index](int value)
+        { document_->setField(block_index, "low_threshold_celsius", value); emit documentChanged(); });
+        form->addRow(QString::fromUtf8("Значение нижнего порога:"), low);
+    }
+
+    const bool has_high = document_->field(block_index, "high_threshold_celsius").is_number_integer();
+    QCheckBox* high_enable = new QCheckBox(QString::fromUtf8("Верхний порог"));
+    high_enable->setChecked(has_high);
+    connect(high_enable, &QCheckBox::toggled, this, [this, block_index](bool on)
+    {
+        if (on) document_->setField(block_index, "high_threshold_celsius", 85);
+        else document_->eraseField(block_index, "high_threshold_celsius");
+        emit documentChanged();
+        refresh();
+    });
+    form->addRow(QString(), high_enable);
+    if (has_high)
+    {
+        QSpinBox* high = new QSpinBox(); high->setRange(-40, 125);
+        high->setSuffix(QString::fromUtf8(" °C"));
+        high->setValue(document_->field(block_index, "high_threshold_celsius").get<int>());
+        connect(high, &QSpinBox::valueChanged, this, [this, block_index](int value)
+        { document_->setField(block_index, "high_threshold_celsius", value); emit documentChanged(); });
+        form->addRow(QString::fromUtf8("Значение верхнего порога:"), high);
+    }
+
+    const nlohmann::json interrupts = document_->field(block_index, "interrupts");
+    std::set<std::string> enabled_interrupts;
+    if (interrupts.is_array())
+    {
+        for (const auto& item : interrupts)
+        {
+            if (item.is_string()) enabled_interrupts.insert(item.get<std::string>());
+        }
+    }
+    auto makeInterruptCheckbox = [this, block_index](const char* label, const char* key, bool checked)
+    {
+        QCheckBox* box = new QCheckBox(QString::fromUtf8(label));
+        box->setChecked(checked);
+        connect(box, &QCheckBox::toggled, this, [this, block_index, key](bool on)
+        {
+            nlohmann::json interrupts = document_->field(block_index, "interrupts");
+            if (!interrupts.is_array()) interrupts = nlohmann::json::array();
+            std::set<std::string> values;
+            for (const auto& item : interrupts) if (item.is_string()) values.insert(item.get<std::string>());
+            if (on) values.insert(key); else values.erase(key);
+            nlohmann::json updated = nlohmann::json::array();
+            for (const auto& value : values) updated.push_back(value);
+            document_->setField(block_index, "interrupts", updated);
+            emit documentChanged();
+        });
+        return box;
+    };
+    form->addRow(QString::fromUtf8("Прерывания:"),
+        makeInterruptCheckbox("Низкая температура", "low", enabled_interrupts.count("low") > 0));
+    form->addRow(QString(), makeInterruptCheckbox("Высокая температура", "high", enabled_interrupts.count("high") > 0));
+    form->addRow(QString(), makeInterruptCheckbox("Конец преобразования (EOC)", "eoc", enabled_interrupts.count("eoc") > 0));
+
+    layout->addWidget(box);
+
+    QLabel* note = new QLabel(QString::fromUtf8(
+        "Запуск измерения (HAL_TSENS_SingleStart/ContinuousStart) остаётся за вами — "
+        "здесь настраивается только тактирование/пороги/прерывания."));
+    note->setWordWrap(true);
+    note->setEnabled(false);
+    layout->addWidget(note);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("tsens", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildPvdForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("pvd", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>PVD</b>"));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
+    QFormLayout* form = new QFormLayout(box);
+
+    QSpinBox* under = new QSpinBox(); under->setRange(0, 15);
+    const nlohmann::json under_value = document_->field(block_index, "under_threshold");
+    under->setValue(under_value.is_number_integer() ? under_value.get<int>() : 0);
+    connect(under, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    { document_->setField(block_index, "under_threshold", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Порог \"ниже\" (сырой код 0-15):"), under);
+
+    QSpinBox* over = new QSpinBox(); over->setRange(0, 15);
+    const nlohmann::json over_value = document_->field(block_index, "over_threshold");
+    over->setValue(over_value.is_number_integer() ? over_value.get<int>() : 15);
+    connect(over, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    { document_->setField(block_index, "over_threshold", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Порог \"выше\" (сырой код 0-15):"), over);
+
+    QSpinBox* filter = new QSpinBox();
+    // Схема допускает 0-65535 (ширина регистра), но Errata MIK32V2 §12.2:
+    // значения выше 255 отключают детектирование напряжения вообще — в GUI
+    // верхняя граница зажата строже схемы (см. codegen/project/pvd_contribution.cpp).
+    filter->setRange(0, 255);
+    filter->setToolTip(QString::fromUtf8(
+        "Errata §12.2: значения выше 255 отключают детектирование напряжения — "
+        "GUI ограничивает диапазон строже, чем сама схема/регистр."));
+    const nlohmann::json filter_value = document_->field(block_index, "digital_filter_value");
+    filter->setValue(filter_value.is_number_integer()
+        ? std::min(filter_value.get<int>(), 255) : 0);
+    connect(filter, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    { document_->setField(block_index, "digital_filter_value", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Цифровой фильтр:"), filter);
+
+    QCheckBox* calibration = new QCheckBox(QString::fromUtf8("Калибровка опорного напряжения"));
+    calibration->setChecked(document_->field(block_index, "enable_reference_calibration").is_boolean()
+        && document_->field(block_index, "enable_reference_calibration").get<bool>());
+    connect(calibration, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "enable_reference_calibration", on); emit documentChanged(); });
+    form->addRow(QString(), calibration);
+
+    layout->addWidget(box);
+
+    QLabel* note = new QLabel(QString::fromUtf8(
+        "Сброс платы по порогу (NRESETU/NRESETO) здесь не настраивается — полярность "
+        "этих битов не подтверждена ни в одном доступном материале, кодоген их не трогает."));
+    note->setWordWrap(true);
+    note->setEnabled(false);
+    layout->addWidget(note);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("pvd", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+void PropertiesPanel::buildBusWatchdogForm(QVBoxLayout* layout)
+{
+    const std::vector<int> indices = document_->blockIndices("bus_watchdog", 0);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>Bus Watchdog</b>"));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Линии"));
+    QFormLayout* form = new QFormLayout(box);
+
+    QCheckBox* eeprom = new QCheckBox(QString::fromUtf8("EEPROM"));
+    eeprom->setChecked(document_->field(block_index, "eeprom_enabled").is_boolean()
+        && document_->field(block_index, "eeprom_enabled").get<bool>());
+    connect(eeprom, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "eeprom_enabled", on); emit documentChanged(); });
+    form->addRow(QString(), eeprom);
+
+    QCheckBox* spifi = new QCheckBox(QString::fromUtf8("SPIFI"));
+    spifi->setChecked(document_->field(block_index, "spifi_enabled").is_boolean()
+        && document_->field(block_index, "spifi_enabled").get<bool>());
+    connect(spifi, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "spifi_enabled", on); emit documentChanged(); });
+    form->addRow(QString(), spifi);
+
+    QCheckBox* dom3 = new QCheckBox(QString::fromUtf8("DOM3 (периферия APB)"));
+    dom3->setChecked(document_->field(block_index, "dom3_enabled").is_boolean()
+        && document_->field(block_index, "dom3_enabled").get<bool>());
+    connect(dom3, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "dom3_enabled", on); emit documentChanged(); });
+    form->addRow(QString(), dom3);
+
+    QSpinBox* timeout = new QSpinBox(); timeout->setRange(0, kUint32SpinBoxMax);
+    const nlohmann::json timeout_value = document_->field(block_index, "timeout");
+    timeout->setValue(timeout_value.is_number_integer() ? timeout_value.get<int>() : 0);
+    connect(timeout, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    { document_->setField(block_index, "timeout", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Таймаут (общий на все линии):"), timeout);
+
+    layout->addWidget(box);
+
+    QLabel* note = new QLabel(QString::fromUtf8(
+        "Хотя бы одна линия включена, а таймаут равен 0 — сторожевой таймер шины "
+        "сработает немедленно. Задайте ненулевой таймаут перед включением линии."));
+    note->setWordWrap(true);
+    note->setEnabled(false);
+    layout->addWidget(note);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this]()
+    {
+        document_->removeBlocks("bus_watchdog", 0);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+// schemas/dma.json, _comment_usart_excluded: USART0/1 настраиваются
+// встроенным полем "dma" у type="uart", здесь не повторяются.
+void PropertiesPanel::buildDmaForm(QVBoxLayout* layout, int instance)
+{
+    const std::vector<int> indices = document_->blockIndices("dma", instance);
+    if (indices.empty())
+    {
+        return;
+    }
+    const int block_index = indices.front();
+
+    QLabel* title = new QLabel(QString::fromUtf8("<b>DMA — канал %1</b>").arg(instance));
+    layout->addWidget(title);
+
+    QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры канала"));
+    QFormLayout* form = new QFormLayout(box);
+
+    static const std::vector<std::pair<const char*, const char*>> kDmaDirections = {
+        {"Периферия -> память (RX)", "peripheral_to_memory"},
+        {"Память -> периферия (TX)", "memory_to_peripheral"},
+        {"Память -> память", "memory_to_memory"},
+    };
+    QComboBox* direction = stringCombo(kDmaDirections,
+        document_->field(block_index, "direction").is_string()
+            ? document_->field(block_index, "direction").get<std::string>() : "peripheral_to_memory",
+        [this, block_index](const std::string& value)
+        {
+            document_->setField(block_index, "direction", value);
+            if (value == "memory_to_memory")
+            {
+                // "request" не должен остаться в документе — парсер
+                // (parser/dma/dma_parser.cpp) отклоняет сам факт его
+                // присутствия при direction=memory_to_memory, даже если
+                // значение null.
+                document_->eraseField(block_index, "request");
+            }
+            else if (!document_->field(block_index, "request").is_string())
+            {
+                // Обратный переход — "request" обязателен, а поле могло
+                // быть стёрто предыдущим переключением на memory_to_memory;
+                // без этого документ был бы временно невалиден до того,
+                // как пользователь тронет комбобокс request сам.
+                document_->setField(block_index, "request", std::string("crypto"));
+            }
+            emit documentChanged();
+            refresh();
+        });
+    form->addRow(QString::fromUtf8("Направление:"), direction);
+
+    static const std::vector<std::pair<const char*, const char*>> kDmaRequests = {
+        {"CRYPTO", "crypto"}, {"SPI_0", "spi_0"}, {"SPI_1", "spi_1"},
+        {"I2C_0", "i2c_0"}, {"I2C_1", "i2c_1"}, {"SPIFI", "spifi"},
+        {"Timer32_0", "timer32_0"}, {"Timer32_1", "timer32_1"}, {"Timer32_2", "timer32_2"},
+        {"DAC_0", "dac_0"}, {"DAC_1", "dac_1"},
+    };
+    const std::string current_direction = document_->field(block_index, "direction").is_string()
+        ? document_->field(block_index, "direction").get<std::string>() : "peripheral_to_memory";
+    if (current_direction != "memory_to_memory")
+    {
+        QComboBox* request = stringCombo(kDmaRequests,
+            document_->field(block_index, "request").is_string()
+                ? document_->field(block_index, "request").get<std::string>() : "crypto",
+            [this, block_index](const std::string& value)
+            { document_->setField(block_index, "request", value); emit documentChanged(); });
+        form->addRow(QString::fromUtf8("Периферийная линия (request):"), request);
+    }
+    else
+    {
+        QLabel* no_request = new QLabel(QString::fromUtf8("(не используется — обе стороны канала — память)"));
+        no_request->setEnabled(false);
+        form->addRow(QString::fromUtf8("Периферийная линия (request):"), no_request);
+    }
+
+    static const std::vector<std::pair<const char*, const char*>> kDmaElementSizes = {
+        {"Байт", "byte"}, {"Полуслово", "halfword"}, {"Слово", "word"},
+    };
+    QComboBox* element_size = stringCombo(kDmaElementSizes,
+        document_->field(block_index, "element_size").is_string()
+            ? document_->field(block_index, "element_size").get<std::string>() : "byte",
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "element_size", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Размер элемента:"), element_size);
+
+    QSpinBox* buffer_size = new QSpinBox(); buffer_size->setRange(1, kUint32SpinBoxMax);
+    const nlohmann::json buffer_size_value = document_->field(block_index, "buffer_size_bytes");
+    buffer_size->setValue(buffer_size_value.is_number_integer() ? buffer_size_value.get<int>() : 16);
+    connect(buffer_size, &QSpinBox::valueChanged, this, [this, block_index](int value)
+    { document_->setField(block_index, "buffer_size_bytes", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Размер буфера (байт):"), buffer_size);
+
+    static const std::vector<std::pair<const char*, const char*>> kDmaPriorities = {
+        {"Низкий", "low"}, {"Средний", "medium"}, {"Высокий", "high"}, {"Наивысший", "very_high"},
+    };
+    QComboBox* priority = stringCombo(kDmaPriorities,
+        document_->field(block_index, "priority").is_string()
+            ? document_->field(block_index, "priority").get<std::string>() : "very_high",
+        [this, block_index](const std::string& value)
+        { document_->setField(block_index, "priority", value); emit documentChanged(); });
+    form->addRow(QString::fromUtf8("Приоритет:"), priority);
+
+    QCheckBox* irq_enable = new QCheckBox(QString::fromUtf8("Прерывание по завершении канала"));
+    irq_enable->setChecked(document_->field(block_index, "irq_enable").is_boolean()
+        && document_->field(block_index, "irq_enable").get<bool>());
+    connect(irq_enable, &QCheckBox::toggled, this, [this, block_index](bool on)
+    { document_->setField(block_index, "irq_enable", on); emit documentChanged(); });
+    form->addRow(QString(), irq_enable);
+
+    layout->addWidget(box);
+
+    QLabel* note = new QLabel(QString::fromUtf8(
+        "Кодоген настраивает только канал (ChannelInit) — сам запуск передачи "
+        "(HAL_DMA_Start) остаётся за вами: конкретный адрес регистра данных нужной "
+        "периферии не выводится автоматически (см. docs/implementations/dma.md). "
+        "USART0/1 настраиваются отдельно — встроенным полем DMA в самом блоке UART."));
+    note->setWordWrap(true);
+    note->setEnabled(false);
+    layout->addWidget(note);
+
+    QPushButton* disable = new QPushButton(QString::fromUtf8("Отключить блок"));
+    connect(disable, &QPushButton::clicked, this, [this, instance]()
+    {
+        document_->removeBlocks("dma", instance);
+        emit documentChanged();
+        refresh();
+    });
+    layout->addWidget(disable);
+}
+
+// FreeRTOS — перенесено сюда из ProjectManagerScreen (gui/project_manager_screen.cpp)
+// по требованию пользователя: в STM32CubeMX middleware (FreeRTOS и т.п.)
+// выбирается кликом по дереву слева, а не вкладкой внутри Project Manager.
+// FreeRtosSettingsWidget уже самодостаточен (setValue/value()/changed()) —
+// тот же приём "собрать весь nlohmann::json объект одним value()", что и
+// раньше; здесь только меняется МЕСТО встраивания, не контракт виджета.
+void PropertiesPanel::buildFreertosForm(QVBoxLayout* layout)
+{
+    QLabel* title = new QLabel(QString::fromUtf8("<b>FreeRTOS</b>"));
+    layout->addWidget(title);
+
+    FreeRtosSettingsWidget* widget = new FreeRtosSettingsWidget();
+    widget->setValue(document_->projectSetting("freertos"));
+    connect(widget, &FreeRtosSettingsWidget::changed, this, [this, widget]()
+    {
+        document_->setProjectSetting("freertos", widget->value());
+        emit documentChanged();
+    });
+    layout->addWidget(widget);
 }

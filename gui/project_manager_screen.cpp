@@ -1,6 +1,5 @@
 #include "project_manager_screen.h"
 #include "project_document.h"
-#include "freertos_settings_widget.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -14,17 +13,21 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTabWidget>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QAbstractItemView>
 #include <QVBoxLayout>
+#include <map>
+#include <set>
 
 ProjectManagerScreen::ProjectManagerScreen(QWidget* parent)
     : QWidget(parent)
 {
-    // Вкладки: «Проект» — весь прежний экран без изменений (первая вкладка),
-    // «FreeRTOS» — новый редактор document["freertos"]
-    // (gui/freertos_settings_widget.h). QTabWidget выбран потому, что
-    // FreeRTOS-редактору нужны enable-чекбокс + 3-way source_mode + 7 полей
-    // os_config + пять отдельных таблиц — заметно больше содержимого, чем
-    // умещается рядом со «Настройками генерации» без потери читаемости.
+    // Вкладка «Проект» — весь прежний экран без изменений. FreeRTOS раньше
+    // жил здесь отдельной вкладкой; перенесён в дерево периферии слева
+    // (gui/peripheral_tree.cpp, группа "Middleware and Software Packs") —
+    // в STM32CubeMX middleware выбирается кликом по дереву, а не вкладкой
+    // внутри Project Manager (см. gui/properties_panel.cpp::buildFreertosForm).
     QVBoxLayout* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
 
@@ -156,13 +159,64 @@ ProjectManagerScreen::ProjectManagerScreen(QWidget* parent)
 
     tabs->addTab(project_tab, QString::fromUtf8("Проект"));
 
-    // --- Вкладка FreeRTOS ------------------------------------------------
-    QWidget* freertos_tab = new QWidget();
-    QVBoxLayout* root_freertos = new QVBoxLayout(freertos_tab);
-    root_freertos->setContentsMargins(40, 26, 40, 26);
-    freertos_widget_ = new FreeRtosSettingsWidget();
-    root_freertos->addWidget(freertos_widget_);
-    tabs->addTab(freertos_tab, QString::fromUtf8("FreeRTOS"));
+    // --- Вкладка «Диагностика» -----------------------------------------
+    // Read-only сводка в духе Project Manager -> Advanced Settings / NVIC
+    // Settings из STM32CubeMX, но честная относительно того, что реально
+    // есть у MIK32: ОДИН драйвер (HAL) на все модули — у vendor SDK
+    // (~/.platformio/packages/framework-mik32v2-sdk) нет LL-слоя, который
+    // CubeMX даёт выбирать для STM32, поэтому здесь не переключатель,
+    // а констатация факта с пояснением, почему он не настраивается. Таблица
+    // EPIC-прерываний — тоже read-only: редактируемый edge/level-редактор
+    // сознательно не сделан в этой же сессии как отдельный Тир-3 модуль
+    // (AUDIT_TZ_PERIPHERY_GAPS.md) — для части источников (PVD AVCC/VCC,
+    // BOR, battery, DMA global error, freq monitor) нет подтверждённой
+    // классификации edge/level ни в одном доступном материале, а неверная
+    // догадка воспроизводит уже дважды пойманный в этой сессии класс бага
+    // (незачищенный уровневый флаг -> бесконечный повторный вход в
+    // прерывание, см. RTC ALRM). Эта вкладка не редактирует ничего — только
+    // показывает, что уже решено кодогеном для ТЕКУЩЕЙ конфигурации.
+    QWidget* diagnostics_tab = new QWidget();
+    QVBoxLayout* root_diagnostics = new QVBoxLayout(diagnostics_tab);
+    root_diagnostics->setContentsMargins(40, 26, 40, 26);
+
+    QLabel* driver_caption = new QLabel(QString::fromUtf8(
+        "<b>Драйвер на модуль</b><br>"
+        "MIK32 SDK не содержит LL-варианта драйверов (в отличие от STM32) — "
+        "только HAL. Переключателя нет не потому, что он не реализован, "
+        "а потому, что выбирать не из чего."));
+    driver_caption->setWordWrap(true);
+    root_diagnostics->addWidget(driver_caption);
+
+    driver_table_ = new QTableWidget();
+    driver_table_->setColumnCount(2);
+    driver_table_->setHorizontalHeaderLabels(
+        {QString::fromUtf8("Периферия"), QString::fromUtf8("Драйвер")});
+    driver_table_->horizontalHeader()->setStretchLastSection(true);
+    driver_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    driver_table_->setSelectionMode(QAbstractItemView::NoSelection);
+    driver_table_->setMaximumHeight(220);
+    root_diagnostics->addWidget(driver_table_);
+
+    root_diagnostics->addSpacing(18);
+
+    QLabel* irq_caption = new QLabel(QString::fromUtf8(
+        "<b>Прерывания (EPIC)</b><br>"
+        "Read-only: кто из включённых блоков генерирует обработчик "
+        "прерывания в текущей конфигурации. Приоритет/edge-level здесь не "
+        "редактируются — см. AUDIT_TZ_PERIPHERY_GAPS.md, Тир 3 (EPIC)."));
+    irq_caption->setWordWrap(true);
+    root_diagnostics->addWidget(irq_caption);
+
+    irq_table_ = new QTableWidget();
+    irq_table_->setColumnCount(2);
+    irq_table_->setHorizontalHeaderLabels(
+        {QString::fromUtf8("Периферия"), QString::fromUtf8("Прерывание")});
+    irq_table_->horizontalHeader()->setStretchLastSection(true);
+    irq_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    irq_table_->setSelectionMode(QAbstractItemView::NoSelection);
+    root_diagnostics->addWidget(irq_table_, 1);
+
+    tabs->addTab(diagnostics_tab, QString::fromUtf8("Расширенные настройки"));
 
     updateToolchainDependentVisibility();
     updateHalLocalPathEnabled();
@@ -272,19 +326,6 @@ ProjectManagerScreen::ProjectManagerScreen(QWidget* parent)
         document_->setProjectSetting("per_type_files", checked);
         emit documentChanged();
     });
-
-    // FreeRtosSettingsWidget собирает весь document["freertos"] как один
-    // nlohmann::json объект сам (value()) — здесь только пишем его в
-    // документ целиком, тем же приёмом, что и остальные поля выше.
-    connect(freertos_widget_, &FreeRtosSettingsWidget::changed, this, [this]()
-    {
-        if (syncing_ || document_ == nullptr)
-        {
-            return;
-        }
-        document_->setProjectSetting("freertos", freertos_widget_->value());
-        emit documentChanged();
-    });
 }
 
 void ProjectManagerScreen::setContext(ProjectDocument* document)
@@ -306,6 +347,133 @@ void ProjectManagerScreen::setProjectInfo(const QString& file_path, const QStrin
         location_value_->setText(info.absolutePath());
     }
     package_value_->setText(package_summary);
+    refreshDiagnosticsTab();
+}
+
+namespace
+{
+    // Человекочитаемое имя блока "type:instance" — тот же приём, что
+    // PeripheralTree::keyFor, но для отображения, не для ключа QSet.
+    QString peripheralLabel(const std::string& type, const nlohmann::json& block)
+    {
+        static const std::map<std::string, QString> kDisplayNames = {
+            {"gpio", "GPIO"}, {"uart", "USART"}, {"timer16", "Timer16"}, {"i2c", "I2C"},
+            {"spi", "SPI"}, {"timer32", "Timer32"}, {"rtc", "RTC"}, {"crc", "CRC"},
+            {"eeprom", "EEPROM"}, {"wdt", "WDT"}, {"dac", "DAC"}, {"adc", "ADC"},
+            {"crypto", "CRYPTO"}, {"otp", "OTP"}, {"tsens", "TSENS"}, {"pvd", "PVD"},
+            {"bus_watchdog", "Bus Watchdog"},
+        };
+        const auto it = kDisplayNames.find(type);
+        const QString name = it != kDisplayNames.end() ? it->second : QString::fromStdString(type);
+        if (block.contains("instance") && block["instance"].is_number_integer())
+        {
+            return QString("%1_%2").arg(name).arg(block["instance"].get<int>());
+        }
+        return name;
+    }
+}
+
+void ProjectManagerScreen::refreshDiagnosticsTab()
+{
+    if (driver_table_ == nullptr || irq_table_ == nullptr)
+    {
+        return;
+    }
+    if (document_ == nullptr || !document_->document().contains("peripherals")
+        || !document_->document()["peripherals"].is_array())
+    {
+        driver_table_->setRowCount(0);
+        irq_table_->setRowCount(0);
+        return;
+    }
+
+    const nlohmann::json& peripherals = document_->document()["peripherals"];
+
+    // --- Таблица драйверов: один раз на type:instance, HAL всегда -------
+    driver_table_->setRowCount(0);
+    for (const nlohmann::json& block : peripherals)
+    {
+        if (!block.contains("type") || !block["type"].is_string())
+        {
+            continue;
+        }
+        const std::string type = block["type"].get<std::string>();
+        const int row = driver_table_->rowCount();
+        driver_table_->insertRow(row);
+        driver_table_->setItem(row, 0, new QTableWidgetItem(peripheralLabel(type, block)));
+        driver_table_->setItem(row, 1, new QTableWidgetItem(QString::fromUtf8("HAL")));
+    }
+
+    // --- Таблица прерываний: пересчитана из тех же условий, что реальный --
+    // кодоген использует для contribution.irq_handler_function_name
+    // (codegen/project/rtc_contribution.cpp, spi_contribution.cpp,
+    // gpio_contribution.cpp) и для EPIC-масок без именованного шаблона
+    // обработчика (timer32_contribution.cpp, tsens_contribution.cpp) —
+    // пересчёт здесь, а не вызов реального пайплайна, т.к. ProjectManagerScreen
+    // не имеет доступа к ProjectKnowledge (нужен generateProjectFirmware),
+    // а тянуть его сюда ради одной read-only таблицы — больше связности,
+    // чем эта вкладка стоит. Если условия в контрибьюторах изменятся,
+    // эта таблица может разойтись с реальным кодоgenom — риск принят
+    // осознанно ради простоты (см. директиву задачи #24).
+    irq_table_->setRowCount(0);
+    auto addIrqRow = [this](const QString& label, const QString& detail)
+    {
+        const int row = irq_table_->rowCount();
+        irq_table_->insertRow(row);
+        irq_table_->setItem(row, 0, new QTableWidgetItem(label));
+        irq_table_->setItem(row, 1, new QTableWidgetItem(detail));
+    };
+
+    bool any_gpio_irq = false;
+    for (const nlohmann::json& block : peripherals)
+    {
+        if (!block.contains("type") || !block["type"].is_string())
+        {
+            continue;
+        }
+        const std::string type = block["type"].get<std::string>();
+
+        if (type == "gpio" && block.contains("interrupts") && block["interrupts"].is_array()
+            && !block["interrupts"].empty())
+        {
+            any_gpio_irq = true;
+        }
+        else if (type == "spi" && block.contains("interrupts") && block["interrupts"].is_array()
+            && !block["interrupts"].empty())
+        {
+            addIrqRow(peripheralLabel(type, block),
+                QString::fromUtf8("готовый SPI_x_IRQHandler_Template()"));
+        }
+        else if (type == "rtc" && block.contains("alarm") && block["alarm"].is_object()
+            && block["alarm"].value("interrupt_enabled", false))
+        {
+            addIrqRow(peripheralLabel(type, block),
+                QString::fromUtf8("готовый RTC_IRQHandler_Template()"));
+        }
+        else if (type == "timer32"
+            && (block.value("overflow_interrupt", false) || block.value("underflow_interrupt", false)
+                || (block.contains("channels") && block["channels"].is_array() && !block["channels"].empty())))
+        {
+            addIrqRow(peripheralLabel(type, block),
+                QString::fromUtf8("маска EPIC включена, обработчик пишет пользователь (raw_trap_handler)"));
+        }
+        else if (type == "tsens" && block.contains("interrupts") && block["interrupts"].is_array()
+            && !block["interrupts"].empty())
+        {
+            addIrqRow(peripheralLabel(type, block),
+                QString::fromUtf8("макрос __HAL_TSENS_IRQ_ENABLE_*, обработчик пишет пользователь"));
+        }
+    }
+    if (any_gpio_irq)
+    {
+        addIrqRow(QString::fromUtf8("GPIO"),
+            QString::fromUtf8("готовый GPIO_IRQHandler_Template() (общий на все линии GPIO IRQ)"));
+    }
+
+    if (irq_table_->rowCount() == 0)
+    {
+        addIrqRow(QString::fromUtf8("—"), QString::fromUtf8("ни один блок не запрашивает прерывание"));
+    }
 }
 
 void ProjectManagerScreen::setGenerationSettings(const QString& toolchain,
@@ -345,17 +513,6 @@ void ProjectManagerScreen::setGenerationSettings(const QString& toolchain,
 
     updateToolchainDependentVisibility();
     updateHalLocalPathEnabled();
-}
-
-void ProjectManagerScreen::setFreeRtosSettings(const nlohmann::json& freertos_settings)
-{
-    // syncing_ здесь избыточен относительно собственного syncing_ виджета
-    // (FreeRtosSettingsWidget::setValue уже гасит свой changed() во время
-    // программного заполнения), но выставляется для единообразия с
-    // остальными setXxx-методами этого экрана.
-    syncing_ = true;
-    freertos_widget_->setValue(freertos_settings);
-    syncing_ = false;
 }
 
 void ProjectManagerScreen::updateToolchainDependentVisibility()

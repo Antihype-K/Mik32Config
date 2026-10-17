@@ -46,9 +46,28 @@ PeripheralTree::PeripheralTree(QWidget* parent)
     {
         addLeaf(gpio_group, QString("GPIO_%1").arg(instance), "gpio", instance, true);
     }
+    // RTC/WDT/EEPROM/BusWatchdog — единственные глобальные блоки без
+    // нумерации (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2/3), в дереве закреплены
+    // за instance=0 — тот же приём, что у "Clock" выше и ADC/TSENS/PVD ниже:
+    // одна строка на весь МК, а не 0..N.
+    addLeaf(system_core, "RTC", "rtc", 0, true);
+    addLeaf(system_core, "WDT", "wdt", 0, true);
+    addLeaf(system_core, "EEPROM", "eeprom", 0, true);
+    addLeaf(system_core, "Bus Watchdog", "bus_watchdog", 0, true);
 
     auto* analog = new QTreeWidgetItem(tree_, QStringList("Analog"));
-    addLeaf(analog, "(зарезервировано)", QString(), -1, false);
+    addLeaf(analog, "ADC", "adc", 0, true);
+    for (int instance = 0; instance <= 1; ++instance)
+    {
+        addLeaf(analog, QString("DAC_%1").arg(instance), "dac", instance, true);
+    }
+    addLeaf(analog, "TSENS", "tsens", 0, true);
+    addLeaf(analog, "PVD", "pvd", 0, true);
+
+    auto* security = new QTreeWidgetItem(tree_, QStringList("Security & Integrity"));
+    addLeaf(security, "CRC", "crc", 0, true);
+    addLeaf(security, "CRYPTO", "crypto", 0, true);
+    addLeaf(security, "OTP", "otp", 0, true);
 
     auto* timers = new QTreeWidgetItem(tree_, QStringList("Timers"));
     for (int instance = 0; instance <= 2; ++instance)
@@ -76,6 +95,24 @@ PeripheralTree::PeripheralTree(QWidget* parent)
     {
         addLeaf(connectivity, QString("SPI_%1").arg(instance), "spi", instance, true);
     }
+    // DMA_0..3 — номер канала ПДП (instance), не отдельный физический блок
+    // на канал (shared/periphery/dma_config.h, DMA_CHANNEL_COUNT=4). Под
+    // Connectivity — DMA в этом конфигураторе настраивается именно как
+    // подключение канала к одной из шинных/таймерных периферий
+    // (docs/implementations/dma.md), UART имеет свой отдельный встроенный
+    // путь (schemas/uart.json, поле "dma") и здесь не дублируется.
+    for (int instance = 0; instance <= 3; ++instance)
+    {
+        addLeaf(connectivity, QString("DMA_%1").arg(instance), "dma", instance, true);
+    }
+
+    // Middleware — не блок peripherals[], а верхнеуровневый ключ документа
+    // "freertos" (как "clock"), ровно так же как в STM32CubeMX middleware
+    // (FreeRTOS и т.п.) живёт отдельной веткой дерева "Middleware and
+    // Software Packs", а не вкладкой внутри Project Manager. instance=0 —
+    // тот же приём фиксированной единственной строки, что у RTC/CRC/... выше.
+    auto* middleware = new QTreeWidgetItem(tree_, QStringList("Middleware and Software Packs"));
+    addLeaf(middleware, "FREERTOS", "freertos", 0, true);
 
     tree_->expandAll();
 

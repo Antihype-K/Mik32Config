@@ -158,10 +158,15 @@ ParseResult<FreeRtosProjectPieces> buildFreeRtosProjectPieces(
     {
         pieces.main_c_includes.push_back("timers.h");
     }
+    // mik32_hal_irq.h нужен ВСЕГДА — freertos_risc_v_application_interrupt_handler
+    // ниже безусловно вызывает HAL_EPIC_Clear() (строка "HAL_EPIC_Clear(0xFFFFFFFF);"),
+    // не только когда есть GPIO IRQ. Без этого include HAL_EPIC_Clear (static inline
+    // в mik32_hal_irq.h, mik32_hal.h его не подтягивает) падает на линковке с
+    // undefined reference — поймано на реальной плате 2026-10-14.
+    pieces.main_c_includes.push_back("mik32_hal_irq.h");
     if (!gpio_irq_handler_function_names.empty())
     {
         pieces.main_c_includes.push_back("mik32_hal_gpio.h");
-        pieces.main_c_includes.push_back("mik32_hal_irq.h");
     }
     if (console_available)
     {
@@ -448,6 +453,138 @@ CodegenWriteResult writeFreeRtosKernelSource(
                 fs::remove(entry.path(), remove_error); // best-effort — лишний heap_N.c не критичен, но мешает сборке дублем pvPortMalloc
             }
         }
+    }
+
+    // --- локальный патч линкер-скрипта (spifi.ld в корне проекта) ----------
+    // board_build.ldscript=spifi в platformio.ini ищет "spifi.ld" сперва в
+    // $PROJECT_DIR, потом в framework/shared/ldscripts (mik32 platform
+    // builder/frameworks/custom.py) — файл в корне проекта перекрывает
+    // глобальный пакет без его модификации. Нужен из-за найденного на
+    // реальной плате 2026-10-14 бага: голое правило KEEP(*(.trap_text)) в
+    // shared/ldscripts/sections.lds не ловит именованные подсекции вида
+    // ".trap_text.freertos_risc_v_trap_handler" (FreeRTOS-Kernel portASM.S),
+    // такие секции остаются "осиротевшими" на адресе 0x0 — вызов через них
+    // (raw_trap_handler -> freertos_risc_v_trap_handler) приводит к краху/
+    // перезагрузке на первом же прерывании. Подтверждено objdump -h
+    // (VMA=LMA=0 для секции) и живым тестом на 1T Rex Board. Локальная копия
+    // ниже — тот же sections.lds, слитый в spifi.ld, с добавленным правилом
+    // KEEP(*(.trap_text.*)). См. docs/implementations/freertos.md.
+    const std::string patched_spifi_ld =
+        "OUTPUT_FORMAT(\"elf32-littleriscv\", \"elf32-littleriscv\", \"elf32-littleriscv\")\n"
+        "OUTPUT_ARCH(riscv)\n\n"
+        "ENTRY(_start)\n\n\n"
+        "MEMORY {\n"
+        "  spifi (RX): ORIGIN = 0x80000000, LENGTH = 2*1024M\n"
+        "  ram (RWX): ORIGIN = 0x02000000, LENGTH = 16K\n"
+        "}\n\n"
+        "__stack_size = DEFINED(__stack_size) ? __stack_size : 1024;\n\n"
+        "SECTION_ALIGNMENT = 4;\n\n"
+        "REGION_ALIAS(\"REGION_TEXT\", spifi);\n"
+        "REGION_ALIAS(\"REGION_RAM\", ram);\n\n"
+        "SECTIONS {\n\n"
+        "    .startup ORIGIN(REGION_TEXT) : {\n"
+        "        *crt0.o(.text .text.*)\n"
+        "    } >REGION_TEXT\n\n"
+        "    .ram_text : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(__RAM_TEXT_START__ = .);\n"
+        "        *(.small_ram_text)\n"
+        "        . = ORIGIN(REGION_RAM) + 0xC0;\n"
+        "        PROVIDE(__TRAP_TEXT_START__ = .);\n"
+        "        KEEP(*crt0.o(.trap_text))\n"
+        "        KEEP(*(.trap_text))\n"
+        "        KEEP(*(.trap_text.*))\n"
+        "        *(.ram_text)\n"
+        "        . = ALIGN(4);\n"
+        "        PROVIDE(__RAM_TEXT_END__ = .);\n"
+        "    } >REGION_RAM AT>REGION_TEXT\n\n"
+        "    __RAM_TEXT_IMAGE_START__ = LOADADDR(.ram_text);\n"
+        "    __RAM_TEXT_IMAGE_END__ = LOADADDR(.ram_text) + SIZEOF(.ram_text);\n"
+        "    ASSERT(__RAM_TEXT_IMAGE_END__ < ORIGIN(REGION_TEXT) + LENGTH(REGION_TEXT), \"REGION_TEXT segment overflows\")\n\n"
+        "    .text : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(__TEXT_START__ = .);\n"
+        "        *(.text.SmallSystemInit)\n"
+        "        *(.text)\n"
+        "        *(.text.*)\n"
+        "        *(.gnu.linkonce.t.*)\n"
+        "        *(.rodata)\n"
+        "        *(.rodata.*)\n"
+        "        *(.gnu.linkonce.r.*)\n"
+        "        . = ALIGN(4);\n"
+        "        PROVIDE(__TEXT_END__ = .);\n"
+        "    } >REGION_TEXT\n\n"
+        "    .tdata : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(_tls_data = .);\n"
+        "        PROVIDE(_tdata_start = .);\n"
+        "        *(.tdata .tdata.*)\n"
+        "        *(.gnu.linkonce.td.*)\n"
+        "        . = ALIGN(4);\n"
+        "        PROVIDE(_tdata_end = .);\n"
+        "    } >REGION_RAM AT>REGION_TEXT\n\n"
+        "    .tbss : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(_tbss_start = .);\n"
+        "        *(.tbss .tbss.*)\n"
+        "        *(.gnu.linkonce.tb.*)\n"
+        "        . = ALIGN(4);\n"
+        "        PROVIDE(_tbss_end = .);\n"
+        "    } >REGION_RAM\n\n"
+        "    __TDATA_IMAGE_START__ = LOADADDR(.tdata);\n"
+        "    __TDATA_IMAGE_END__ = LOADADDR(.tdata) + SIZEOF(.tdata);\n\n"
+        "    .data : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(__DATA_START__ = .);\n"
+        "        *(.data .data.*)\n"
+        "        *(.gnu.linkonce.d.*)\n"
+        "        . = ALIGN(4);\n"
+        "        PROVIDE(__DATA_END__ = .);\n"
+        "    } >REGION_RAM AT>REGION_TEXT\n\n"
+        "    .sdata : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(__SDATA_START__ = .);\n"
+        "        *(.sdata .sdata.* .sdata2.* .gnu.linkonce.s.*)\n"
+        "    } >REGION_RAM AT>REGION_TEXT\n\n"
+        "    .srodata : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(__SRODATA_START__ = .);\n"
+        "        *(.srodata.cst16) *(.srodata.cst8) *(.srodata.cst4) *(.srodata.cst2) *(.srodata*)\n"
+        "    } >REGION_RAM AT>REGION_TEXT\n\n"
+        "    __DATA_IMAGE_START__ = LOADADDR(.data);\n"
+        "    __DATA_IMAGE_END__ = LOADADDR(.srodata) + SIZEOF(.srodata);\n\n"
+        "    .sbss : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(__SBSS_START__ = .);\n"
+        "        *(.sbss .sbss.*)\n"
+        "        *(.gnu.linkonce.sb.*)\n"
+        "        *(.scommon)\n"
+        "        . = ALIGN(4);\n"
+        "        PROVIDE(__SBSS_END__ = .);\n"
+        "    } >REGION_RAM\n\n"
+        "    .bss : ALIGN(SECTION_ALIGNMENT) {\n"
+        "        PROVIDE(__BSS_START__ = .);\n"
+        "        *(.bss .bss.*)\n"
+        "        *(.gnu.linkonce.b.*)\n"
+        "        *(COMMON)\n"
+        "        . = ALIGN(4);\n"
+        "        PROVIDE(__BSS_END__ = .);\n"
+        "    } >REGION_RAM\n\n"
+        "    __global_pointer$ = MIN(__SDATA_START__ + 2016, MAX(__DATA_START__ + 2016, __BSS_END__ - 2016));\n\n"
+        "    ASSERT(__BSS_END__ < ORIGIN(REGION_RAM) + LENGTH(REGION_RAM) - __stack_size, \"REGION_RAM section overflows\")\n\n"
+        "    PROVIDE(_end = .);\n"
+        "    PROVIDE(__end = .);\n"
+        "    PROVIDE(end = .);\n\n"
+        "    .stack ORIGIN(REGION_RAM) + LENGTH(REGION_RAM) - __stack_size : {\n"
+        "        . = ALIGN(16);\n"
+        "        PROVIDE( _heap_end = . );\n"
+        "        PROVIDE(__STACK_START__ = .);\n"
+        "        . = __stack_size;\n"
+        "        PROVIDE(__C_STACK_TOP__ = .);\n"
+        "        PROVIDE(__STACK_END__ = .);\n"
+        "    } >REGION_RAM\n\n"
+        "    /DISCARD/ : {\n"
+        "        *(.eh_frame .eh_frame.*)\n"
+        "    }\n"
+        "}\n";
+
+    const fs::path ldscript_path = utf8Path(output_project_dir) / "spifi.ld";
+    const FileWriteOutcome ld_write = writeUtf8PathFile(ldscript_path.u8string(), patched_spifi_ld);
+    if (!ld_write.success)
+    {
+        return makeWriteError("Не удалось записать spifi.ld: " + ld_write.diagnostic);
     }
 
     return CodegenWriteResult{true, ""};

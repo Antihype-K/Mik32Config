@@ -1,0 +1,82 @@
+{
+  "peripheral_type": "rtc",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_memory_map.h: #define RTC ((RTC_TypeDef*)RTC_BASE_ADDRESS) — единственный глобальный блок RTC, без нумерации 0/1/2, в отличие от GPIO/UART/Timer16/Timer32/I2C/SPI. Поле \"instance\" у этого типа периферии не существует — допустим только один блок type=\"rtc\" на проект.",
+  "required_fields": ["type", "time", "date"],
+  "fields": {
+    "time": {
+      "type": "object",
+      "_comment": "mik32_hal_rtc.h, RTC_TimeTypeDef — текущее время, устанавливается один раз при инициализации HAL_RTC_SetTime (RTC продолжает идти сама дальше).",
+      "required_fields": ["dow", "hours", "minutes", "seconds"],
+      "item_fields": {
+        "dow": {
+          "type": "integer",
+          "min": 1,
+          "max": 7,
+          "_comment": "mik32_hal_rtc.h: RTC_WEEKDAY_MONDAY(1)..RTC_WEEKDAY_SUNDAY(7)."
+        },
+        "hours": { "type": "integer", "min": 0, "max": 23 },
+        "minutes": { "type": "integer", "min": 0, "max": 59 },
+        "seconds": { "type": "integer", "min": 0, "max": 59 }
+      }
+    },
+    "date": {
+      "type": "object",
+      "_comment": "mik32_hal_rtc.h, RTC_DateTypeDef. day валидируется относительно month/year с учётом високосного года (29 февраля) — межполевая проверка, не выражается декларативно в этом MVP-формате схемы (тот же приём, что у schemas/timer32.json, cmp/max_field), реализована в parser/rtc/rtc_parser.cpp. Реальный год для расчёта високосности — century*100+year (century=20,year=26 -> 2026).",
+      "required_fields": ["century", "day", "month", "year"],
+      "item_fields": {
+        "century": { "type": "integer", "min": 0, "max": 99 },
+        "day": { "type": "integer", "min": 1, "max": 31 },
+        "month": {
+          "type": "integer",
+          "min": 1,
+          "max": 12,
+          "_comment": "mik32_hal_rtc.h: RTC_MONTH_JANUARY(1)..RTC_MONTH_DECEMBER(12)."
+        },
+        "year": { "type": "integer", "min": 0, "max": 99 }
+      }
+    },
+    "alarm": {
+      "type": "object",
+      "optional": true,
+      "_comment": "Необязательный объект. mik32_hal_rtc.h, RTC_AlarmTypeDef — будильник сравнивает ТЕКУЩЕЕ время/дату с заданными здесь ПО ПОЛЯМ, выбранным в compare_fields (MaskAlarmTime/MaskAlarmDate — не диапазон, а маска 'это конкретное поле должно совпасть'). Например, compare_fields=[hours,minutes,seconds] без dow/century/day/month даёт 'срабатывать каждый день в это время' (день недели/число/месяц/век игнорируются сравнением). Отсутствие поля \"alarm\" -> будильник не настраивается (HAL_RTC_AlarmDisable — состояние по умолчанию в только что сброшенном RTC).",
+      "required_fields": ["time", "date"],
+      "item_fields": {
+        "time": {
+          "type": "object",
+          "required_fields": ["dow", "hours", "minutes", "seconds"],
+          "item_fields": {
+            "dow": { "type": "integer", "min": 1, "max": 7 },
+            "hours": { "type": "integer", "min": 0, "max": 23 },
+            "minutes": { "type": "integer", "min": 0, "max": 59 },
+            "seconds": { "type": "integer", "min": 0, "max": 59 }
+          }
+        },
+        "date": {
+          "type": "object",
+          "required_fields": ["century", "day", "month", "year"],
+          "item_fields": {
+            "century": { "type": "integer", "min": 0, "max": 99 },
+            "day": { "type": "integer", "min": 1, "max": 31 },
+            "month": { "type": "integer", "min": 1, "max": 12 },
+            "year": { "type": "integer", "min": 0, "max": 99 }
+          }
+        },
+        "compare_fields": {
+          "type": "array",
+          "optional": true,
+          "default": ["dow", "hours", "minutes", "seconds", "century", "day", "month", "year"],
+          "_comment": "Необязательное — какие поля будильник обязан сравнить, чтобы сработать. Дефолт — все восемь (полное совпадение даты и времени, ровно как в обоих вендорных примерах Hal_RTC/Hal_RTC_IRQ: RTC_TALRM_CDOW_M|CH_M|CM_M|CS_M и RTC_DALRM_CC_M|CD_M|CM_M|CY_M все выставлены). item values: dow, hours, minutes, seconds, century, day, month, year.",
+          "item_type": "enum",
+          "item_values": ["dow", "hours", "minutes", "seconds", "century", "day", "month", "year"]
+        },
+        "interrupt_enabled": {
+          "type": "boolean",
+          "optional": true,
+          "default": false,
+          "_comment": "RTC_HandleTypeDef.Interrupts.Alarm -> HAL_RTC_InterruptInit/HAL_RTC_SetInterruptAlarm (RTC_CTRL.INTE). EPIC-маскирование (HAL_EPIC_MaskLevelSet(HAL_EPIC_RTC_MASK)) и подключение к raw_trap_handler остаются на стороне пользователя — тот же паттерн, что у SPI/GPIO IRQ."
+        }
+      }
+    }
+  }
+}

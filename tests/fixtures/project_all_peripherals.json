@@ -32,8 +32,7 @@
       "type": "i2c",
       "instance": 0,
       "mode": "master",
-      "clock_speed": 100000,
-      "demo": "scanner"
+      "clock_speed": 100000
     },
     {
       "type": "timer16",

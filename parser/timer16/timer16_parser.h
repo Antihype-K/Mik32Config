@@ -27,6 +27,18 @@ struct Timer16Config
     bool has_frequency_duty = false;
     double requested_frequency_hz = 0.0;
     double requested_duty_percent = 0.0;
+
+    // Тир 1 аудита (AUDIT_TZ_PERIPHERY_GAPS.md): все пять — необязательны,
+    // дефолты сохраняют прежнее хардкод-поведение кодогена
+    // (schemas/timer16.json). clock_source принимается, но игнорируется
+    // кодогеном при mode=="external_event_count" (Clock.Source там всегда
+    // TIMER16_SOURCE_EXTERNAL_INPUT1) — тот же паттерн, что уже был у "cmp"
+    // до этой сессии.
+    std::string clock_source = "internal_system"; // mik32_hal_timer16.h, HAL_Timer16_SourceTypeDef (минус EXTERNAL_INPUT1 — см. выше)
+    std::string trigger_edge = "software";         // Trigger.ActiveEdge — HAL_Timer16_Trigger_ActiveEdgeTypeDef
+    std::string external_clock_filter = "none";    // Filter.ExternalClock — HAL_Timer16_FilterTypeDef
+    std::string trigger_filter = "none";            // Filter.Trigger — HAL_Timer16_FilterTypeDef
+    bool waveform_inverted = false;                 // Waveform.Polarity, только при Waveform.Enable=ENABLE (period/one_shot)
 };
 
 ParseResult<Timer16Config> parseTimer16Config(const std::string& file_name_path);

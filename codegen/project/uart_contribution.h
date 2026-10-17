@@ -32,13 +32,9 @@
 // выбранный пользователем instance, ни про наш хендл. Поэтому для консольного
 // UART генерируется собственная, сильная реализация xputc — но именно одна:
 // два определения xputc снова дали бы конфликт символов.
-//
-// emit_demo_loop — добавлять ли в тело while(1) периодическую печать строки
-// (см. обоснование флага в codegen/project/project_codegen.h).
 ParseResult<PeripheralContribution> buildUartContribution(
     const UartConfig& config,
     const UartKnowledge& knowledge,
-    bool is_console,
-    bool emit_demo_loop);
+    bool is_console);
 
 #endif //MIK32_CONFIGURATOR_UART_CONTRIBUTION_H

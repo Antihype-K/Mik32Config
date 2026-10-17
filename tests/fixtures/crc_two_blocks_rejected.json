@@ -1,0 +1,8 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    { "type": "crc", "preset": "crc32" },
+    { "type": "crc", "preset": "crc32q" }
+  ]
+}

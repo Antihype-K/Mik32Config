@@ -39,6 +39,11 @@
 #include "i2c_knowledge.h"
 #include "timer32_knowledge.h"
 #include "spi_knowledge.h"
+#include "rtc_knowledge.h"
+#include "crc_parser.h"
+#include "eeprom_parser.h"
+#include "wdt_parser.h"
+#include "dac_knowledge.h"
 #include "freertos_parser.h"
 #include "parse_result.h"
 #include "codegen_result.h"
@@ -55,7 +60,11 @@ struct ProjectKnowledge
     I2cKnowledge i2c;
     Timer32Knowledge timer32;
     SpiKnowledge spi;
+    RtcKnowledge rtc;
+    DacKnowledge dac;
 };
+
+// (ADC/CRYPTO/OTP/TSENS не имеют knowledge_base — см. codegen/project/adc_contribution.h и соседние.)
 
 struct GeneratedProjectFirmware
 {
@@ -70,25 +79,12 @@ struct GeneratedProjectFirmware
     std::string freertos_config_h;
 };
 
-// emit_demo_loops — генерировать ли в теле while(1) наблюдаемую демо-логику
-// (мигание выходами GPIO, периодическая строка в UART, сценарий "demo" у I2C).
-//
-// Флаг существует, потому что здесь сталкиваются два разумных требования.
-// С одной стороны, конфигуратор по ТЗ настраивает периферию, а не пишет
-// прикладную логику — «чистая» генерация должна давать пустой while(1) под
-// маркерами USER CODE. С другой стороны, аппаратная проверка (см. CLAUDE.md,
-// hardware validation gate) требует, чтобы сгенерированная прошивка что-то
-// делала наблюдаемое на осциллографе/в терминале, а поле "demo" в
-// schemas/i2c.json уже описывает такие сценарии явно. Поэтому демо не
-// вырезано и не зашито, а вынесено в один переключатель проекта: true —
-// прошивка сразу демонстрирует настроенную периферию, false — генерируется
-// только инициализация. Значение по умолчанию true сохраняет поведение
-// уже проверенных на плате конфигураций (tests/fixtures/gpio_uart_demo.json,
-// i2c_master_scanner.json и т.п.).
+// Конфигуратор по ТЗ настраивает периферию, а не пишет прикладную логику —
+// тело while(1) всегда пустое под маркерами USER CODE (ТЗ §3.1.7.3), и его
+// содержимое — целиком дело пользователя между регенерациями.
 ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     const ProjectConfig& config,
-    const ProjectKnowledge& knowledge,
-    bool emit_demo_loops = true);
+    const ProjectKnowledge& knowledge);
 
 // Копирует skeleton_dir в output_project_dir (только если там ещё нет
 // platformio.ini — повторная генерация не затирает то, что пользователь

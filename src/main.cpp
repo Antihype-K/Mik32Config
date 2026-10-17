@@ -29,6 +29,7 @@
 #include "i2c_knowledge.h"
 #include "timer32_knowledge.h"
 #include "spi_knowledge.h"
+#include "rtc_knowledge.h"
 #include "cross_module_validator.h"
 
 namespace
@@ -74,6 +75,12 @@ namespace
             std::cerr << "Ошибка knowledge_base/spi.json: " << spi.error << "\n";
             return false;
         }
+        ParseResult<RtcKnowledge> rtc = loadRtcKnowledge("knowledge_base/rtc.json");
+        if (!rtc.success)
+        {
+            std::cerr << "Ошибка knowledge_base/rtc.json: " << rtc.error << "\n";
+            return false;
+        }
 
         knowledge.gpio = *gpio.config;
         knowledge.uart = *uart.config;
@@ -81,6 +88,7 @@ namespace
         knowledge.i2c = *i2c.config;
         knowledge.timer32 = *timer32.config;
         knowledge.spi = *spi.config;
+        knowledge.rtc = *rtc.config;
         return true;
     }
 
@@ -125,29 +133,17 @@ int main(int argc, char** argv)
     if (argc < 3)
     {
         std::cerr << "Использование: " << arguments[0]
-                  << " <путь-к-json-конфигу> <имя-проекта-в-generated_projects> [--demo]\n"
-                     "  --demo — добавить в тело while(1) демонстрационную логику\n"
-                     "           периферии (мигание, эхо по UART, сканер I2C и т.п.).\n"
-                     "           Без флага генерируется только инициализация,\n"
-                     "           с пустым телом while(1) под маркерами USER CODE.\n";
+                  << " <путь-к-json-конфигу> <имя-проекта-в-generated_projects>\n";
         return 1;
     }
 
     const std::string config_path = arguments[1];
     const std::string output_dir = "generated_projects/" + arguments[2];
 
-    bool emit_demo_loops = false;
     for (int i = 3; i < argc; ++i)
     {
-        if (arguments[static_cast<size_t>(i)] == "--demo")
-        {
-            emit_demo_loops = true;
-        }
-        else
-        {
-            std::cerr << "Неизвестный аргумент: " << arguments[static_cast<size_t>(i)] << "\n";
-            return 1;
-        }
+        std::cerr << "Неизвестный аргумент: " << arguments[static_cast<size_t>(i)] << "\n";
+        return 1;
     }
 
     // 1. Разбор и schema-валидация всех блоков конфигурации.
@@ -189,7 +185,7 @@ int main(int argc, char** argv)
     if (config_result.config->language == OutputLanguage::Rust)
     {
         ParseResult<GeneratedProjectFirmwareRust> rust_firmware_result =
-            generateProjectFirmwareRust(*config_result.config, emit_demo_loops);
+            generateProjectFirmwareRust(*config_result.config);
         if (!rust_firmware_result.success)
         {
             std::cerr << "Ошибка кодогенерации (Rust): " << rust_firmware_result.error << "\n";
@@ -220,7 +216,7 @@ int main(int argc, char** argv)
 
     // 5. Сборка одного проекта из вкладов всех блоков (C-ветка).
     ParseResult<GeneratedProjectFirmware> firmware_result =
-        generateProjectFirmware(*config_result.config, knowledge, emit_demo_loops);
+        generateProjectFirmware(*config_result.config, knowledge);
     if (!firmware_result.success)
     {
         std::cerr << "Ошибка кодогенерации: " << firmware_result.error << "\n";
@@ -249,7 +245,7 @@ int main(int argc, char** argv)
     if (config_result.config->toolchain == ToolchainKind::CMake)
     {
         ParseResult<GeneratedProjectFirmwareCmake> cmake_firmware_result =
-            generateProjectFirmwareCmake(*config_result.config, knowledge, emit_demo_loops);
+            generateProjectFirmwareCmake(*config_result.config, knowledge);
         if (!cmake_firmware_result.success)
         {
             std::cerr << "Ошибка кодогенерации (CMake): " << cmake_firmware_result.error << "\n";

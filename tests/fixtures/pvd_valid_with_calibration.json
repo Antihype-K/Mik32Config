@@ -1,0 +1,3 @@
+{ "mcu": "MIK32", "version": "2.0", "peripherals": [
+  { "type": "pvd", "under_threshold": 0, "over_threshold": 15, "digital_filter_value": 0, "enable_reference_calibration": true }
+]}

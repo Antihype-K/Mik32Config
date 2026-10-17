@@ -12,8 +12,8 @@
     },
     "mode": {
       "type": "enum",
-      "values": ["period", "one_shot", "external_event_count"],
-      "_comment": "ТЗ §3.1.4 п.2: «режим работы (период / одиночный импульс / счёт внешних событий)». period -> HAL_Timer16_StartPWM (непрерывный ШИМ), one_shot -> HAL_Timer16_StartOneShot, external_event_count -> HAL_Timer16_Counter_Start с Clock.Source=EXTERNAL_INPUT1/CountMode=EXTERNAL (см. knowledge_base/timer16.json и codegen/timer16/timer16_codegen.cpp)."
+      "values": ["period", "one_shot", "external_event_count", "encoder"],
+      "_comment": "ТЗ §3.1.4 п.2: «режим работы (период / одиночный импульс / счёт внешних событий)». period -> HAL_Timer16_StartPWM (непрерывный ШИМ), one_shot -> HAL_Timer16_StartOneShot, external_event_count -> HAL_Timer16_Counter_Start с Clock.Source=EXTERNAL_INPUT1/CountMode=EXTERNAL (см. knowledge_base/timer16.json и codegen/timer16/timer16_codegen.cpp). encoder — добавлено AUDIT_TZ_PERIPHERY_GAPS.md (Тир 1): HAL_Timer16_Encoder_Start(handle, arr), EncoderMode=TIMER16_ENCODER_ENABLE. Датащит (mik32_datasheet_v2_2_3.pdf, раздел «Режим энкодера», стр.128-129): два внешних сигнала lnput1/lnput2 квадратурного энкодера, допустим только при внутреннем источнике тактирования (clock_source != внешний — mode=encoder никогда не использует EXTERNAL_INPUT1) и ОБЯЗАТЕЛЬНО prescaler=1 (датащит, «Примечание»: биты PRESC[2:0] должны быть равны 0b000). HAL_TIMER16_MspInit сама настраивает оба вывода Input1/Input2 как HAL_GPIO_MODE_TIMER_SERIAL при EncoderMode=ENABLE (mik32_hal_timer16.c: GPIO_PIN_5|6 для Timer16_0, 8|9 для Timer16_1, 11|12 для Timer16_2) — подтверждено и таблицей 193 датащита (стр. 322, пины 45/46/48/49/50/53 — не регистровая работа без HAL, как предполагал первоначальный аудит."
     },
     "prescaler": {
       "type": "enum_int",
@@ -43,6 +43,35 @@
       "min": 0,
       "max": 100,
       "_comment": "Необязательное поле, обязано присутствовать вместе с frequency_hz. cmp = round(period_ticks * duty_percent / 100)."
+    },
+    "clock_source": {
+      "type": "enum",
+      "values": ["internal_system", "internal_ahb", "internal_osc32m", "internal_hsi32m", "internal_osc32k", "internal_lsi32k"],
+      "default": "internal_system",
+      "_comment": "mik32_hal_timer16.h, HAL_Timer16_SourceTypeDef (Clock.Source) — минус EXTERNAL_INPUT1, тот вариант уже доступен через mode=\"external_event_count\" и не дублируется здесь отдельным значением. Принимается, но ИГНОРИРУЕТСЯ кодогеном при mode=\"external_event_count\" (там Clock.Source всегда TIMER16_SOURCE_EXTERNAL_INPUT1 — тот же паттерн 'принято, но игнорируется для этого режима', что уже есть у поля \"cmp\"). Частота ШИМ в комментарии над Timer16_Init вычисляется только для internal_system/internal_ahb/internal_hsi32m (все три совпадают с sys_clk=32МГц при дефолтной конфигурации тактирования, ТЗ §3.1.8) — для internal_osc32m/internal_osc32k/internal_lsi32k реальная частота зависит от внешнего кристалла/нека-либрованного RC-генератора без зафиксированного в датащите значения, поэтому не вычисляется (см. AUDIT_TZ_PERIPHERY_GAPS.md, Тир 1 / Timer16)."
+    },
+    "trigger_edge": {
+      "type": "enum",
+      "values": ["software", "rising", "falling", "both"],
+      "default": "software",
+      "_comment": "mik32_hal_timer16.h, HAL_Timer16_Trigger_ActiveEdgeTypeDef (Trigger.ActiveEdge). Trigger.Source остаётся дефолтным безопасным значением на instance (knowledge_base/timer16.json, instance_default_trigger_source) — этот аудит добавляет только выбор фронта, не выбор источника триггера (8 вариантов GPIO/термосенсор/АЦП/RTC/будильник — отдельная, более крупная задача)."
+    },
+    "external_clock_filter": {
+      "type": "enum",
+      "values": ["none", "2clock", "4clock", "8clock"],
+      "default": "none",
+      "_comment": "mik32_hal_timer16.h, HAL_Timer16_FilterTypeDef (Filter.ExternalClock) — цифровой фильтр помех для внешнего тактового сигнала (значим при clock_source=... с внешним источником или mode=\"external_event_count\")."
+    },
+    "trigger_filter": {
+      "type": "enum",
+      "values": ["none", "2clock", "4clock", "8clock"],
+      "default": "none",
+      "_comment": "mik32_hal_timer16.h, HAL_Timer16_FilterTypeDef (Filter.Trigger) — цифровой фильтр помех для сигнала триггера."
+    },
+    "waveform_inverted": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "mik32_hal_timer16.h, HAL_Timer16_WaveformPolarityTypeDef (Waveform.Polarity: NONINVERTED/INVERTED). Принимается, но игнорируется кодогеном при mode=\"external_event_count\" — там Waveform.Enable=DISABLE, полярность ни на что не влияет (knowledge_base/timer16.json, mode_waveform_enable)."
     }
   }
 }

@@ -33,6 +33,12 @@ struct Timer16Knowledge
     // п.4), и validation/cross_module_validator.cpp (поиск конфликтов).
     std::map<int, FixedPin> instance_fixed_pwm_pin;
 
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Timer16 (2026-10-14). instance -> Input1
+    // (занят при mode=external_event_count ИЛИ mode=encoder) / Input2
+    // (занят только при mode=encoder) — см. knowledge_base/timer16.json.
+    std::map<int, FixedPin> instance_fixed_input1_pin;
+    std::map<int, FixedPin> instance_fixed_input2_pin;
+
     // instance (0/1/2) -> имя дефолтного (функционально неактивного —
     // Trigger.ActiveEdge=SOFTWARE) HAL enum'а источника триггера.
     std::map<int, std::string> instance_default_trigger_source;

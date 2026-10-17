@@ -115,7 +115,7 @@ namespace
 }
 
 ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
-    const ProjectConfig& config, bool emit_demo_loop)
+    const ProjectConfig& config)
 {
     const std::string unsupported = findUnsupportedRustFeature(config);
     if (!unsupported.empty())
@@ -145,12 +145,6 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
     const bool has_uart = !config.uart_blocks.empty();
     const bool has_drive_strength = !config.gpio_blocks.empty(); // обязательное поле каждого блока gpio
 
-    // --- собираем демо-логику и заодно решаем, нужна ли задержка в цикле ---
-    struct DemoOutput { std::string var_name; };
-    std::vector<DemoOutput> demo_outputs;
-    struct DemoUartTx { std::string var_name; std::string label; };
-    std::vector<DemoUartTx> demo_uart_tx;
-
     // --- код для тела main() -----------------------------------------------
     std::ostringstream splits;
     for (int instance : gpio_instances)
@@ -171,10 +165,6 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
                        << gpioPinFieldName(block.instance, pin) << "." << method << "();\n";
             gpio_setup << "    " << var_name << ".set_drive_strength("
                        << driveStrengthVariant(block.drive_strength) << ");\n";
-            if (block.mode == "output" && emit_demo_loop)
-            {
-                demo_outputs.push_back(DemoOutput{var_name});
-            }
         }
     }
 
@@ -213,49 +203,13 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
                    << "            receiving: " << receiving << ",\n"
                    << "        },\n"
                    << "    );\n";
-        // rx_half не мутируется в v1-демо (приёмная сторона демонстрируется
-        // только на C-ветке) — без "mut" здесь, иначе unused_mut warning.
-        // tx_half — "mut" только если реально пишем в цикле ниже (запись —
-        // единственная причина нужды в &mut Tx<U>, см. embedded-hal-nb).
-        const bool tx_used_in_demo = (transmitting == "true" && emit_demo_loop);
-        uart_setup << "    let (" << (tx_used_in_demo ? "mut " : "") << tx_half << ", " << rx_half << ") = "
+        // Ни tx_half, ни rx_half не мутируются — пустой while(1) ничего в них
+        // не пишет и не читает, без "let _ = &..." компилятор дал бы
+        // unused_variables warning.
+        uart_setup << "    let (" << tx_half << ", " << rx_half << ") = "
                    << serial_var << ".split();\n";
+        uart_setup << "    let _ = &" << tx_half << ";\n";
         uart_setup << "    let _ = &" << rx_half << ";\n";
-        if (!tx_used_in_demo)
-        {
-            uart_setup << "    let _ = &" << tx_half << ";\n";
-        }
-
-        if (tx_used_in_demo)
-        {
-            demo_uart_tx.push_back(DemoUartTx{tx_half, "UART_" + std::to_string(block.instance)});
-        }
-    }
-
-    const bool any_loop_delay = !demo_outputs.empty() || !demo_uart_tx.empty();
-
-    std::ostringstream loop_body;
-    for (const DemoOutput& output : demo_outputs)
-    {
-        loop_body << "        " << output.var_name << ".toggle();\n";
-    }
-    for (const DemoUartTx& tx : demo_uart_tx)
-    {
-        loop_body << "        writeln!(" << tx.var_name << ", \"" << tx.label
-                   << ": MIK32-Configurator tick\\r\").ok();\n";
-    }
-    if (any_loop_delay)
-    {
-        // riscv::asm::delay(cycles) — busy-wait без завязки на таймер
-        // (riscv-0.12.1/src/asm.rs:146-160, "mainly useful for simple
-        // timer-less ... if accurate timing is not essential"). Не HAL_DelayMs
-        // (как в C-ветке) намеренно: рабочего таймера в mik32-hal-main нет
-        // вообще (timer.rs/timer/delay.rs не компилируются даже в апстриме,
-        // см. docs/implementations/rust_codegen.md) — это ближайший честный
-        // эквивалент, а не имитация точной задержки. Число циклов подобрано
-        // "на глаз" для наблюдаемости демо (доли секунды на 32МГц), не
-        // калибровано.
-        loop_body << "        riscv::asm::delay(3_000_000);\n";
     }
 
     std::ostringstream main_rs;
@@ -299,10 +253,6 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
     {
         main_rs << "use mik32v2_hal::serial::{Serial, Config as UartConfig, DataBits, StopBits, Parity};\n";
     }
-    if (!demo_uart_tx.empty())
-    {
-        main_rs << "use core::fmt::Write as _;\n";
-    }
     main_rs << "\n"
                "// USER CODE BEGIN Includes\n"
                "// USER CODE END Includes\n"
@@ -333,7 +283,6 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
                "\n"
                "    loop {\n"
                "        // USER CODE BEGIN Loop\n"
-            << loop_body.str() <<
                "        // USER CODE END Loop\n"
                "    }\n"
                "}\n"

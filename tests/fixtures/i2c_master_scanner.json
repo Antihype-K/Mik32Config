@@ -1,8 +1,0 @@
-{
-  "mcu": "MIK32",
-  "version": "2.0",
-  "peripherals": [
-    { "type": "i2c", "instance": 0, "mode": "master", "clock_speed": 100000, "demo": "scanner" },
-    { "type": "uart", "instance": 0, "baud_rate": 38400, "data_bits": 8, "stop_bits": 1, "parity": "none", "flow_control": false, "direction": "duplex" }
-  ]
-}

@@ -1051,11 +1051,12 @@ void MainWindow::refreshEverything()
             : QString(),
         per_type_files_setting.is_boolean() && per_type_files_setting.get<bool>());
 
-    // FreeRTOS (parser/freertos/freertos_parser.h): тот же приём, что и
-    // остальные projectSetting выше — отсутствующий ключ читается как JSON
-    // null и передаётся как есть, дефолты подставляет сам виджет
-    // (FreeRtosSettingsWidget::setValue).
-    project_manager_screen_->setFreeRtosSettings(document_.projectSetting("freertos"));
+    // FreeRTOS (parser/freertos/freertos_parser.h) переехал из
+    // ProjectManagerScreen в PropertiesPanel (дерево периферии, группа
+    // "Middleware and Software Packs") — отдельного push-вызова отсюда
+    // больше не требуется: buildFreertosForm читает document_->projectSetting
+    // ("freertos") сам внутри properties_panel_->refresh(), тем же путём,
+    // что и RTC/CRC/... читают свои поля через document_->field(...).
 
     // Тактирование (codegen/project/project_config.h, ClockConfig) — тот же
     // приём, что и FreeRTOS выше: отсутствующий ключ "clock" читается как
@@ -1099,6 +1100,11 @@ void MainWindow::updatePackageColors()
 
     QHash<int, PinState> states;
     QHash<int, QString> tooltips;
+    // Короткая подпись текущей функции вывода — как в STM32CubeMX (PackageView,
+    // setPinStates). Заполняется только там, где вывод занят РОВНО одним
+    // блоком (found->second.first() ниже) — иначе (свободен/служебный/
+    // конфликт) на схеме остаётся старый статический текст из даташита.
+    QHash<int, QString> labels;
     for (const PackagePin& pin : package_.pins)
     {
         if (!pin.isMultiplexed())
@@ -1132,9 +1138,10 @@ void MainWindow::updatePackageColors()
         }
         states.insert(pin.pin, owner_types[key] == "gpio" ? PinState::Gpio : PinState::Peripheral);
         tooltips.insert(pin.pin, base + QString::fromUtf8("\nЗанят: ") + found->second.first());
+        labels.insert(pin.pin, found->second.first());
     }
 
-    package_view_->setPinStates(states, tooltips);
+    package_view_->setPinStates(states, tooltips, labels);
 }
 
 void MainWindow::updateWindowTitle()

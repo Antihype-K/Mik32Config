@@ -19,6 +19,8 @@ namespace
     const std::set<std::string> kValidClkPolarities = {"low", "high"};
     const std::set<int> kValidBaudRateDivs = {4, 8, 16, 32, 64, 128, 256};
     const std::set<std::string> kValidChipSelects = {"cs0", "cs1", "cs2", "cs3"};
+    const std::set<std::string> kValidInterrupts = {
+        "rx_fifo_not_empty", "tx_fifo_not_full", "rx_overflow", "mode_fail"};
 
     ParseResult<SpiConfig> makeError(const std::string& message)
     {
@@ -162,6 +164,25 @@ ParseResult<SpiConfig> parseSpiBlock(const nlohmann::json& spi)
             return makeError("Поле \"chip_select\" содержит недопустимое значение (разрешено cs0, cs1, cs2, cs3)");
         }
         config.chip_select = spi["chip_select"].get<std::string>();
+    }
+
+    // "interrupts" — необязательное поле, общее для master/slave (см.
+    // schemas/spi.json). Отсутствие поля — старое поведение (режим опроса).
+    if (spi.contains("interrupts"))
+    {
+        if (!spi["interrupts"].is_array())
+        {
+            return makeError("Поле \"interrupts\" должно быть массивом строк");
+        }
+        for (const auto& item : spi["interrupts"])
+        {
+            if (!item.is_string() || !kValidInterrupts.count(item.get<std::string>()))
+            {
+                return makeError("Поле \"interrupts\" содержит недопустимое значение "
+                    "(разрешено rx_fifo_not_empty, tx_fifo_not_full, rx_overflow, mode_fail)");
+            }
+            config.interrupts.push_back(item.get<std::string>());
+        }
     }
 
     return ParseResult<SpiConfig>{true, "", config};

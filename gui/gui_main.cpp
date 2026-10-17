@@ -25,6 +25,7 @@
 #include "i2c_knowledge.h"
 #include "timer32_knowledge.h"
 #include "spi_knowledge.h"
+#include "rtc_knowledge.h"
 #include "package_knowledge.h"
 
 namespace
@@ -115,6 +116,7 @@ int main(int argc, char** argv)
         && loadOne(knowledge.i2c, loadI2cKnowledge, root + "/knowledge_base/i2c.json", error)
         && loadOne(knowledge.timer32, loadTimer32Knowledge, root + "/knowledge_base/timer32.json", error)
         && loadOne(knowledge.spi, loadSpiKnowledge, root + "/knowledge_base/spi.json", error)
+        && loadOne(knowledge.rtc, loadRtcKnowledge, root + "/knowledge_base/rtc.json", error)
         && loadOne(package, loadPackageKnowledge, root + "/knowledge_base/package.json", error);
     if (!loaded)
     {

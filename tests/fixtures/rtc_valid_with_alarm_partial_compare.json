@@ -1,0 +1,16 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "rtc",
+      "time": { "dow": 2, "hours": 20, "minutes": 30, "seconds": 0 },
+      "date": { "century": 20, "day": 19, "month": 7, "year": 22 },
+      "alarm": {
+        "time": { "dow": 1, "hours": 7, "minutes": 0, "seconds": 0 },
+        "date": { "century": 20, "day": 1, "month": 1, "year": 22 },
+        "compare_fields": ["hours", "minutes", "seconds"]
+      }
+    }
+  ]
+}

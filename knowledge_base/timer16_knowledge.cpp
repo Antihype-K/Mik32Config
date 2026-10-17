@@ -48,6 +48,24 @@ ParseResult<Timer16Knowledge> loadTimer16Knowledge(const std::string& file_path)
             knowledge.instance_fixed_pwm_pin[std::stoi(it.key())] = pin;
         }
 
+        for (auto it = root.at("instance_fixed_input1_pin").begin();
+             it != root.at("instance_fixed_input1_pin").end(); ++it)
+        {
+            Timer16Knowledge::FixedPin pin;
+            pin.gpio_instance = it.value().at("gpio_instance").get<int>();
+            pin.pin = it.value().at("pin").get<int>();
+            knowledge.instance_fixed_input1_pin[std::stoi(it.key())] = pin;
+        }
+
+        for (auto it = root.at("instance_fixed_input2_pin").begin();
+             it != root.at("instance_fixed_input2_pin").end(); ++it)
+        {
+            Timer16Knowledge::FixedPin pin;
+            pin.gpio_instance = it.value().at("gpio_instance").get<int>();
+            pin.pin = it.value().at("pin").get<int>();
+            knowledge.instance_fixed_input2_pin[std::stoi(it.key())] = pin;
+        }
+
         for (auto it = root.at("instance_default_trigger_source").begin();
              it != root.at("instance_default_trigger_source").end(); ++it)
         {

@@ -1,28 +1,38 @@
 #include "i2c_contribution.h"
 #include "contribution_utils.h"
+#include <map>
 #include <sstream>
 
 namespace
 {
-    // Таймаут подбирается под сценарий — так делают все вендорные примеры, и
-    // это НЕ косметика. HAL_I2C_Master_WaitRXNE (mik32_hal_i2c.c:324-354,
-    // реально установленный SDK) проверяет только BERR/ARLO/RXNE и НЕ
-    // проверяет флаг NACKF: на адресе, где устройства нет, она докручивает
-    // счётчик Timeout до нуля и лишь потом возвращает HAL_TIMEOUT. Значит для
-    // сканера цена одного «пустого» адреса равна всему таймауту, а проход —
-    // 127 таких цен.
-    //
-    //  - сканер: 10000 — литерал из docs/examples/mik32-examples/I2C_Scan/
-    //    src/main.c:40. С I2C_TIMEOUT_DEFAULT (=1000000, mik32_hal_i2c.h:17)
-    //    проход стоил бы в 100 раз дороже — десятки секунд вместо долей.
-    //  - master точка-точка: I2C_TIMEOUT_DEFAULT — docs/examples/
-    //    mik32-examples/Hal_I2C_Master/src/main.c:43,59.
-    //  - slave: 5*I2C_TIMEOUT_DEFAULT — docs/examples/mik32-examples/
-    //    Hal_I2C_Slave/src/main.c:41,64 (ведомый ждёт ведущего, запас нужен
-    //    наоборот больше).
-    constexpr const char* kScannerTimeout = "10000";
-    constexpr const char* kMasterTimeout = "I2C_TIMEOUT_DEFAULT";
-    constexpr const char* kSlaveTimeout = "5*I2C_TIMEOUT_DEFAULT";
+    // mik32_hal_i2c.h, HAL_I2C_OwnAddress2MaskTypeDef — имя схемы ("none",
+    // "111111x"...) -> C-константа HAL.
+    std::string ownAddress2MaskConstant(const std::string& mask)
+    {
+        static const std::map<std::string, std::string> kMap = {
+            {"none", "I2C_OWNADDRESS2_MASK_DISABLE"},
+            {"111111x", "I2C_OWNADDRESS2_MASK_111111x"},
+            {"11111xx", "I2C_OWNADDRESS2_MASK_11111xx"},
+            {"1111xxx", "I2C_OWNADDRESS2_MASK_1111xxx"},
+            {"111xxxx", "I2C_OWNADDRESS2_MASK_111xxxx"},
+            {"11xxxxx", "I2C_OWNADDRESS2_MASK_11xxxxx"},
+            {"1xxxxxx", "I2C_OWNADDRESS2_MASK_1xxxxxx"},
+            {"1111111", "I2C_OWNADDRESS2_MASK_1111111"}};
+        const auto it = kMap.find(mask);
+        return it != kMap.end() ? it->second : "I2C_OWNADDRESS2_MASK_DISABLE";
+    }
+
+    // mik32_hal_i2c.h, HAL_I2C_DigitalFilterTypeDef — число тактов -> C-константа HAL.
+    std::string digitalFilterConstant(int cycles)
+    {
+        switch (cycles)
+        {
+            case 1: return "I2C_DIGITALFILTER_1CLOCKCYCLES";
+            case 2: return "I2C_DIGITALFILTER_2CLOCKCYCLES";
+            case 15: return "I2C_DIGITALFILTER_15CLOCKCYCLES";
+            default: return "I2C_DIGITALFILTER_OFF";
+        }
+    }
 
     struct I2cTimingr
     {
@@ -75,9 +85,7 @@ namespace
 
 ParseResult<PeripheralContribution> buildI2cContribution(
     const I2cConfig& config,
-    const I2cKnowledge& knowledge,
-    bool console_available,
-    bool emit_demo_loop)
+    const I2cKnowledge& knowledge)
 {
     const std::string* i2c_handle = findOrNull(knowledge.instance_handle, config.instance);
     if (!i2c_handle)
@@ -87,17 +95,6 @@ ParseResult<PeripheralContribution> buildI2cContribution(
     }
 
     const bool is_master = (config.mode == "master");
-    const bool is_scanner = (config.demo == "scanner");
-    const bool is_ping_pong = (config.demo == "ping_pong");
-
-    // Решение пользователя (сессия /grill-me): сканер без UART не может
-    // напечатать результат — блокируем кодоген, а не генерируем немой сканер.
-    if (emit_demo_loop && is_master && is_scanner && !console_available)
-    {
-        return ParseResult<PeripheralContribution>{
-            false, "demo=\"scanner\" для mode=\"master\" требует блок \"uart\" в том же конфиге "
-                   "(сканер печатает найденные адреса по UART)", std::nullopt};
-    }
 
     const std::string handle_name = "hi2c_" + std::to_string(config.instance);
     const std::string suffix = std::to_string(config.instance);
@@ -113,26 +110,28 @@ ParseResult<PeripheralContribution> buildI2cContribution(
         "void I2C_" + suffix + "_Reset(void);"};
 
     std::ostringstream init_c;
-    if (!is_master)
+    if (!is_master && config.no_stretch_mode)
     {
-        // Errata MIK32V2 v1.0.1, §4.1 «Флаг TXIS» — актуальна только для
-        // slave. NoStretchMode=DISABLE ниже захардкожен (растягивание
-        // активно, errata не проявляется), комментарий оставлен на случай,
-        // если NoStretchMode станет пользовательским полем.
+        // Errata MIK32V2 v1.0.1, §4.1 «Флаг TXIS»: флаг TXIS формируется в
+        // конце передачи байта, а не в начале. При NOSTRETCH=1, если за это
+        // время не были загружены новые данные, возникает недозагрузка.
+        // Обход: не использовать NOSTRETCH=1 без прерываний по TXIS с
+        // укороченным обработчиком, либо DMA — этот кодоген всегда генерирует
+        // только блокирующие Slave_Transmit/Receive (без прерываний),
+        // поэтому предупреждение вставляется безусловно при no_stretch_mode=true.
         init_c << "/*\n"
                   " * Errata п. 4.1 (mik32v2errataV1_0_1_1 v1.0.1): флаг TXIS формируется в конце\n"
-                  " * передачи байта, а не в начале. Если байт был предварительно загружен, первая\n"
-                  " * установка TXIS происходит после отправки первого байта; в режиме без\n"
-                  " * растягивания (NOSTRETCH=1), если за это время не были загружены новые данные,\n"
-                  " * возникает недозагрузка. Обход: не использовать NOSTRETCH=1 без прерываний по\n"
-                  " * TXIS с укороченным обработчиком, либо DMA. Этот кодоген хардкодит\n"
-                  " * NoStretchMode=DISABLE (растягивание активно), errata здесь не проявляется.\n"
+                  " * передачи байта, а не в начале. no_stretch_mode=true (NOSTRETCH=1) без\n"
+                  " * прерываний/DMA (этот кодоген генерирует только блокирующие вызовы) может\n"
+                  " * привести к недозагрузке TXDR. Обход: обслуживать TXIS по прерыванию с\n"
+                  " * укороченным обработчиком, либо DMA — ни то, ни другое этим кодогеном не\n"
+                  " * генерируется.\n"
                   " */\n";
     }
 
     init_c << "/*\n"
               " * " << *i2c_handle << ": mode=" << config.mode
-           << ", clock_speed=" << config.clock_speed << ", demo=" << config.demo << ".\n"
+           << ", clock_speed=" << config.clock_speed << ".\n"
               " */\n"
               "void " << contribution.init_function_name << "(void)\n"
               "{\n"
@@ -142,25 +141,41 @@ ParseResult<PeripheralContribution> buildI2cContribution(
     // master-поля (AutoEnd) и slave-поля (OwnAddress1/2, DualAddressMode,
     // GeneralCall, OwnAddress2Mask, NoStretchMode, SBCMode) не пересекаются —
     // читаются только в своей ветке HAL_I2C_Init (mik32_hal_i2c.c:178-197),
-    // поэтому генерируются только для своего mode.
+    // поэтому генерируются только для своего mode. DigitalFilter/AnalogFilter
+    // читаются ОБЕИМИ ветками — отсюда общие schemas/i2c.json-поля.
+    const std::string digital_filter_constant = digitalFilterConstant(config.digital_filter);
+    // mik32_hal_i2c.h: значения инвертированы — ENABLE=0, DISABLE=1.
+    const std::string analog_filter_constant =
+        config.analog_filter ? "I2C_ANALOGFILTER_ENABLE" : "I2C_ANALOGFILTER_DISABLE";
+
     if (is_master)
     {
         init_c << "    " << handle_name << ".Init.Mode = HAL_I2C_MODE_MASTER;\n"
-                  "    " << handle_name << ".Init.DigitalFilter = I2C_DIGITALFILTER_OFF;\n"
-                  "    " << handle_name << ".Init.AnalogFilter = I2C_ANALOGFILTER_DISABLE;\n"
+                  "    " << handle_name << ".Init.DigitalFilter = " << digital_filter_constant << ";\n"
+                  "    " << handle_name << ".Init.AnalogFilter = " << analog_filter_constant << ";\n"
                   "    " << handle_name << ".Init.AutoEnd = I2C_AUTOEND_ENABLE;\n";
     }
     else
     {
+        const std::string dual_address_constant =
+            config.dual_address_enabled ? "I2C_DUALADDRESS_ENABLE" : "I2C_DUALADDRESS_DISABLE";
+        const std::string general_call_constant =
+            config.general_call ? "I2C_GENERALCALL_ENABLE" : "I2C_GENERALCALL_DISABLE";
+        const std::string no_stretch_constant =
+            config.no_stretch_mode ? "I2C_NOSTRETCH_ENABLE" : "I2C_NOSTRETCH_DISABLE";
+
         init_c << "    " << handle_name << ".Init.Mode = HAL_I2C_MODE_SLAVE;\n"
-                  "    " << handle_name << ".Init.DigitalFilter = I2C_DIGITALFILTER_OFF;\n"
-                  "    " << handle_name << ".Init.AnalogFilter = I2C_ANALOGFILTER_DISABLE;\n"
+                  "    " << handle_name << ".Init.DigitalFilter = " << digital_filter_constant << ";\n"
+                  "    " << handle_name << ".Init.AnalogFilter = " << analog_filter_constant << ";\n"
                   "    " << handle_name << ".Init.OwnAddress1 = " << config.own_address << ";\n"
-                  "    " << handle_name << ".Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;\n"
-                  "    " << handle_name << ".Init.OwnAddress2 = 0;\n"
-                  "    " << handle_name << ".Init.OwnAddress2Mask = I2C_OWNADDRESS2_MASK_DISABLE;\n"
-                  "    " << handle_name << ".Init.GeneralCall = I2C_GENERALCALL_DISABLE;\n"
-                  "    " << handle_name << ".Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;\n"
+                  "    " << handle_name << ".Init.DualAddressMode = " << dual_address_constant << ";\n"
+                  "    " << handle_name << ".Init.OwnAddress2 = "
+               << (config.dual_address_enabled ? config.own_address_2 : 0) << ";\n"
+                  "    " << handle_name << ".Init.OwnAddress2Mask = "
+               << (config.dual_address_enabled ? ownAddress2MaskConstant(config.own_address_2_mask)
+                                                : "I2C_OWNADDRESS2_MASK_DISABLE") << ";\n"
+                  "    " << handle_name << ".Init.GeneralCall = " << general_call_constant << ";\n"
+                  "    " << handle_name << ".Init.NoStretchMode = " << no_stretch_constant << ";\n"
                   "    " << handle_name << ".Init.SBCMode = I2C_SBC_DISABLE;\n";
     }
 
@@ -194,108 +209,6 @@ ParseResult<PeripheralContribution> buildI2cContribution(
                "    HAL_I2C_Reset(&" << handle_name << ");\n"
                "}\n";
     contribution.helper_functions_text = helpers.str();
-
-    if (!emit_demo_loop)
-    {
-        return ParseResult<PeripheralContribution>{true, "", contribution};
-    }
-
-    // Тело цикла: сценарий задан полем "demo" (schemas/i2c.json), см.
-    // docs/implementations/i2c.md. Базовый отступ — 12 пробелов: сборщик
-    // оборачивает каждый вклад в собственную фигурную скобку внутри while(1)
-    // (см. codegen/project/peripheral_contribution.h).
-    std::ostringstream loop;
-    if (is_master && is_scanner)
-    {
-        loop << "            xprintf(\"" << contribution.label << ": searching for I2C devices...\\r\\n\");\n"
-                "            for (uint8_t addr = 0; addr < 0x80; addr++)\n"
-                "            {\n"
-                "                uint8_t dummy;\n"
-                "                if (HAL_I2C_Master_Receive(&" << handle_name << ", addr, &dummy, 1, "
-             << kScannerTimeout << ") == HAL_OK)\n"
-                "                {\n"
-                "                    xprintf(\"" << contribution.label << ": device found at 0x%02X\\r\\n\", addr);\n"
-                "                }\n"
-                "            }\n"
-                "            HAL_DelayMs(2000);\n";
-    }
-    else if (is_master && is_ping_pong)
-    {
-        loop << "            static uint8_t ping_pong_done = 0;\n"
-                "            if (!ping_pong_done)\n"
-                "            {\n"
-                "                uint8_t sent;\n"
-                "                uint8_t received;\n"
-                "                for (sent = 1; sent <= 9; sent += 2)\n"
-                "                {\n"
-                "                    HAL_I2C_Master_Transmit(&" << handle_name << ", " << config.target_address
-             << ", &sent, 1, " << kMasterTimeout << ");\n";
-        if (console_available)
-        {
-            loop << "                    xprintf(\"" << contribution.label << ": master sent %u\\r\\n\", (unsigned)sent);\n";
-        }
-        loop << "                    HAL_DelayMs(1000);\n"
-                "\n"
-                "                    HAL_I2C_Master_Receive(&" << handle_name << ", " << config.target_address
-             << ", &received, 1, " << kMasterTimeout << ");\n";
-        if (console_available)
-        {
-            loop << "                    xprintf(\"" << contribution.label << ": master received %u\\r\\n\", (unsigned)received);\n";
-        }
-        loop << "                    HAL_DelayMs(1000);\n"
-                "                }\n"
-                "                ping_pong_done = 1;\n"
-                "            }\n";
-    }
-    else if (!is_master && is_ping_pong)
-    {
-        loop << "            static uint8_t ping_pong_done = 0;\n"
-                "            if (!ping_pong_done)\n"
-                "            {\n"
-                "                uint8_t received;\n"
-                "                uint8_t to_send;\n"
-                "                for (received = 1; received <= 9; received += 2)\n"
-                "                {\n"
-                "                    HAL_I2C_Slave_Receive(&" << handle_name << ", &received, 1, " << kSlaveTimeout << ");\n";
-        if (console_available)
-        {
-            loop << "                    xprintf(\"" << contribution.label << ": slave received %u\\r\\n\", (unsigned)received);\n";
-        }
-        loop << "                    to_send = received + 1;\n"
-                "                    HAL_I2C_Slave_Transmit(&" << handle_name << ", &to_send, 1, " << kSlaveTimeout << ");\n";
-        if (console_available)
-        {
-            loop << "                    xprintf(\"" << contribution.label << ": slave sent %u\\r\\n\", (unsigned)to_send);\n";
-        }
-        loop << "                }\n"
-                "                ping_pong_done = 1;\n"
-                "            }\n";
-    }
-    else if (!is_master && config.demo == "scanner_target")
-    {
-        // HAL_I2C_Slave_Receive (mik32_hal_i2c.c:846-877) ждёт RXNE — то есть
-        // ЗАПИСЬ от master — и не отвечает на HAL_I2C_Master_Receive сканера
-        // (тот ждёт TXIS/данные). Поэтому у цели для сканера свой цикл
-        // HAL_I2C_Slave_Transmit с фиксированным байтом, чтобы ACK'ать именно
-        // чтение (см. docs/implementations/i2c.md).
-        loop << "            uint8_t probe_response = 0x42;\n"
-                "            HAL_I2C_Slave_Transmit(&" << handle_name << ", &probe_response, 1, " << kSlaveTimeout << ");\n";
-    }
-    else  // !is_master && demo == "receive"
-    {
-        loop << "            uint8_t received;\n"
-                "            HAL_I2C_Slave_Receive(&" << handle_name << ", &received, 1, " << kSlaveTimeout << ");\n";
-    }
-
-    contribution.loop_body = loop.str();
-    contribution.main_c_includes = {"mik32_hal_i2c.h"};
-    // xprintf.h нужен main.c, только если в теле цикла реально есть печать:
-    // у slave+receive и slave+scanner_target её нет.
-    if (console_available && (is_scanner || is_ping_pong))
-    {
-        contribution.main_c_includes.push_back("xprintf.h");
-    }
-    contribution.extern_declarations = "extern I2C_HandleTypeDef " + handle_name + ";\n";
 
     return ParseResult<PeripheralContribution>{true, "", contribution};
 }

@@ -52,13 +52,28 @@
   "mode_waveform_enable": {
     "period": true,
     "one_shot": true,
-    "external_event_count": false
+    "external_event_count": false,
+    "encoder": false
   },
-  "_comment_mode_waveform_enable": "mik32_hal_timer16.c: Waveform.Enable управляет и генерацией сигнала на CMP/ARR, и (через MspInit) авто-мультиплексированием ШИМ-вывода. period/one_shot используют HAL_Timer16_StartPWM/StartOneShot (оба требуют Waveform.Enable=ENABLE для видимого сигнала), external_event_count — HAL_Timer16_Counter_Start (только подсчёт внешних событий на Input1, без вывода ШИМ) -> Waveform.Enable=DISABLE, вывод ШИМ не резервируется и не занимается для этого режима.",
+  "_comment_mode_waveform_enable": "mik32_hal_timer16.c: Waveform.Enable управляет и генерацией сигнала на CMP/ARR, и (через MspInit) авто-мультиплексированием ШИМ-вывода. period/one_shot используют HAL_Timer16_StartPWM/StartOneShot (оба требуют Waveform.Enable=ENABLE для видимого сигнала), external_event_count — HAL_Timer16_Counter_Start (только подсчёт внешних событий на Input1, без вывода ШИМ) -> Waveform.Enable=DISABLE, вывод ШИМ не резервируется и не занимается для этого режима. encoder — HAL_Timer16_Encoder_Start читает Input1/Input2, вывод ШИМ не используется -> тоже DISABLE.",
+
+  "instance_fixed_input1_pin": {
+    "0": { "gpio_instance": 0, "pin": 5 },
+    "1": { "gpio_instance": 0, "pin": 8 },
+    "2": { "gpio_instance": 0, "pin": 11 }
+  },
+  "_comment_instance_fixed_input1_pin": "AUDIT_TZ_PERIPHERY_GAPS.md, Timer16 (добавлено 2026-10-14). mik32_hal_timer16.c, HAL_TIMER16_MspInit: GPIO_PIN_5/8/11 на GPIO_0 в HAL_GPIO_MODE_TIMER_SERIAL, включается при (Clock.Source==EXTERNAL_INPUT1) ИЛИ (CountMode==EXTERNAL) ИЛИ (EncoderMode==ENABLE) — то есть один и тот же пин для mode=external_event_count И mode=encoder. Подтверждено таблицей 193 датащита (mik32_datasheet_v2_2_3.pdf, стр.322: PORT_0_5/PORT_0_8/PORT_0_11 -> Timer16_x_in1). До этой сессии external_event_count резервировал только ШИМ-пин (не было вообще) — этот пин не был отражён в cross_module_validator вовсе, что было отдельным скрытым пробелом в конфликт-детекте, закрытым попутно.",
+
+  "instance_fixed_input2_pin": {
+    "0": { "gpio_instance": 0, "pin": 6 },
+    "1": { "gpio_instance": 0, "pin": 9 },
+    "2": { "gpio_instance": 0, "pin": 12 }
+  },
+  "_comment_instance_fixed_input2_pin": "AUDIT_TZ_PERIPHERY_GAPS.md, Timer16 (добавлено 2026-10-14) — второй квадратурный вход энкодера, занимается ТОЛЬКО при mode=encoder. mik32_hal_timer16.c, HAL_TIMER16_MspInit: GPIO_PIN_6/9/12 включается вместе с Input1 (GPIO_PIN_5|6, 8|9, 11|12 одной маской) при EncoderMode==ENABLE. Подтверждено таблицей 193 датащита (стр.322: PORT_0_6/PORT_0_9/PORT_0_12 -> Timer16_x_in2). Input2 нигде не упоминается в HAL вне EncoderMode — первоначальный вывод аудита «нужны свои пины, регистровая работа без HAL» был неверным: HAL_TIMER16_MspInit настраивает оба пина сама.",
 
   "not_covered_by_this_codegen": {
     "errata_8_1": "Errata MIK32V2 v1.0.1, §8.1 «Длительность тактов таймера и ШИМ»: при PRESCALER>1 длительность первого и последнего такта ШИМ-периода отличается от промежуточных на 1 такт Timer16_clk, из-за чего фактическая скважность смещена относительно заданной по CMP/ARR. Обход: Нет (подтверждено текстом errata). Отражается безусловным комментарием в генерируемом коде по ТЗ §3.1.4 п.3 / §3.1.7.5.",
-    "errata_8_2": "Errata MIK32V2 v1.0.1, §8.2 «Повторная установка флага сравнения CMPM»: флаг CMPM может выставиться повторно, если счётчик не успел измениться за такт после сброса флага внутри обработчика прерывания. Актуально только при использовании прерываний Timer16 (HAL_Timer16_StartPWM_IT и т.п.) — этот MVP-кодоген вызывает только non-IT варианты (StartPWM/StartOneShot/Counter_Start), прерывания не включает. Комментарий всё равно включается безусловно по буквальному требованию ТЗ §3.1.4 п.3.",
-    "trigger_and_encoder": "Trigger.Source (8 вариантов: GPIO/термосенсор/АЦП/RTC/будильник), Filter.*, EncoderMode — не запрошены ТЗ §3.1.4 п.2 (только режим/предделитель/ARR/CMP), зашиты безопасными дефолтами (software-триггер отключён, фильтры отключены, энкодер отключён) по образцу docs/examples/mik32-examples/HAL_Timer16."
+    "errata_8_2": "Errata MIK32V2 v1.0.1, §8.2 «Повторная установка флага сравнения CMPM»: флаг CMPM может выставиться повторно, если счётчик не успел измениться за такт после сброса флага внутри обработчика прерывания. Актуально только при использовании прерываний Timer16 (HAL_Timer16_StartPWM_IT и т.п.) — этот MVP-кодоген вызывает только non-IT варианты (StartPWM/StartOneShot/Counter_Start/Encoder_Start), прерывания не включает. Комментарий всё равно включается безусловно по буквальному требованию ТЗ §3.1.4 п.3.",
+    "trigger": "Trigger.Source (8 вариантов: GPIO/термосенсор/АЦП/RTC/будильник), Filter.* — не запрошены ТЗ §3.1.4 п.2 (только режим/предделитель/ARR/CMP), зашиты безопасными дефолтами (software-триггер отключён, фильтры отключены) по образцу docs/examples/mik32-examples/HAL_Timer16. EncoderMode закрыт этой сессией (AUDIT_TZ_PERIPHERY_GAPS.md) — см. instance_fixed_input1_pin/input2_pin выше."
   }
 }

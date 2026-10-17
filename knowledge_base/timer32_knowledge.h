@@ -24,6 +24,10 @@ struct Timer32Knowledge
     std::map<std::string, std::string> channel_mode_hal_enum;
     std::map<std::string, std::string> capture_edge_hal_enum;
 
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Timer32 — mik32_hal_timer32.h,
+    // HAL_TIMER32_SourceTypeDef (6 вариантов).
+    std::map<std::string, std::string> clock_source_hal_enum;
+
     // ТЗ §3.1.8: HSI 32МГц, используется для расчёта частоты счёта в
     // комментарии над Timer32_Init (freq = sys_clk_hz / (prescaler + 1)).
     long sys_clk_hz;

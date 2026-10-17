@@ -1,0 +1,7 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    { "type": "wdt", "clock_source": "osc64m", "reload_ms": 500 }
+  ]
+}

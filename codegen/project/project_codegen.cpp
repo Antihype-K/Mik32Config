@@ -9,6 +9,18 @@
 #include "i2c_contribution.h"
 #include "timer32_contribution.h"
 #include "spi_contribution.h"
+#include "rtc_contribution.h"
+#include "crc_contribution.h"
+#include "eeprom_contribution.h"
+#include "wdt_contribution.h"
+#include "dac_contribution.h"
+#include "adc_contribution.h"
+#include "crypto_contribution.h"
+#include "otp_contribution.h"
+#include "tsens_contribution.h"
+#include "pvd_contribution.h"
+#include "bus_watchdog_contribution.h"
+#include "dma_contribution.h"
 #include "freertos_codegen.h"
 #include "user_code_markers.h"
 #include <algorithm>
@@ -26,12 +38,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-    // Задержка в конце тела цикла для модулей, попросивших её через
-    // wants_loop_delay. 500 мс — значение из уже проверенной на плате
-    // демонстрации GPIO+UART (docs/implementations/gpio_uart_demo.md):
-    // мигание различимо глазом, а строки в терминале не сливаются в поток.
-    constexpr const char* kLoopDelayMs = "500";
-
     // Добавляет строки в список, пропуская уже имеющиеся, и сохраняя порядок
     // первого появления. Порядок важен не для компилятора, а для
     // воспроизводимости вывода: golden-файлы в тестах сравниваются побайтово,
@@ -66,28 +72,79 @@ namespace
     // калибровочные значения HSI32M/LSI32K, RTC — вне скоупа этой сессии).
     // До этого модуля один и тот же блок был скопирован в пять генераторов;
     // теперь он здесь в единственном экземпляре.
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Clock/PCC: HAL-имена для oscillator_enable
+    // (PCC_OSCILLATORTYPE_*, mik32_hal_pcc.h:20-24) — маска собирается через OR.
+    std::string oscillatorEnableMacro(const std::string& name)
+    {
+        if (name == "hsi32m") return "PCC_OSCILLATORTYPE_HSI32M";
+        if (name == "osc32m") return "PCC_OSCILLATORTYPE_OSC32M";
+        if (name == "lsi32k") return "PCC_OSCILLATORTYPE_LSI32K";
+        return "PCC_OSCILLATORTYPE_OSC32K";
+    }
+
+    // mik32_hal_pcc.h, HAL_PCC_RTCClockSourceTypeDef (строки 55-60) и
+    // HAL_PCC_FreqMonitorSourceTypeDef (строки 43-48) — те же три значения
+    // auto/lsi32k/osc32k, но разные enum'ы (разные макросы).
+    std::string rtcClockSourceMacro(const std::string& value)
+    {
+        if (value == "lsi32k") return "PCC_RTC_CLOCK_SOURCE_LSI32K";
+        if (value == "osc32k") return "PCC_RTC_CLOCK_SOURCE_OSC32K";
+        return "PCC_RTC_CLOCK_SOURCE_AUTO";
+    }
+
+    std::string freqMonitorSourceMacro(const std::string& value)
+    {
+        if (value == "lsi32k") return "PCC_FREQ_MONITOR_SOURCE_LSI32K";
+        if (value == "osc32k") return "PCC_FREQ_MONITOR_SOURCE_OSC32K";
+        return "PCC_FREQ_MONITOR_SOURCE_AUTO";
+    }
+
     std::string renderSystemClockConfig(const ClockConfig& clock)
     {
         // mik32_hal_pcc.h, HAL_PCC_OscillatorTypeTypeDef.
         const std::string oscillator_system_literal =
             (clock.oscillator_system == "hsi32m") ? "PCC_OSCILLATORTYPE_HSI32M" : "PCC_OSCILLATORTYPE_OSC32M";
 
+        std::ostringstream oscillator_enable_mask;
+        for (size_t i = 0; i < clock.oscillator_enable.size(); ++i)
+        {
+            if (i > 0) oscillator_enable_mask << " | ";
+            oscillator_enable_mask << oscillatorEnableMacro(clock.oscillator_enable[i]);
+        }
+
         std::ostringstream out;
+        // Errata MIK32V2 v1.0.1, §12.4.1 «Поправочный коэффициент HSI32M»:
+        // «Значения... лежат в диапазоне от 16 до 255. При значениях ниже 16
+        // работа HSI32M не гарантируется» — Предупреждение (не Ошибка, тот
+        // же принцип, что у SPI errata §7.1/Timer32 §9.1): кодоген не
+        // блокирует значения 0-15 (HAL-документированный диапазон PCC_InitTypeDef
+        // шире, 0-255), но помечает их комментарием.
+        if (clock.hsi32m_calibration < 16)
+        {
+            out << "/*\n"
+                   " * Errata п. 12.4.1 (mik32v2errataV1_0_1_1 v1.0.1): HSI32MCalibrationValue="
+                << clock.hsi32m_calibration << " ниже рекомендованного минимума 16 —\n"
+                   " * «при значениях ниже 16 работа HSI32M не гарантируется». Увеличьте значение\n"
+                   " * до диапазона 16-255, если используете HSI32M как источник тактирования.\n"
+                   " */\n";
+        }
         out << "void SystemClock_Config(void)\n"
                "{\n"
                "    PCC_InitTypeDef PCC_OscInit = {0};\n"
                "\n"
-               "    PCC_OscInit.OscillatorEnable = PCC_OSCILLATORTYPE_ALL;\n"
+               "    PCC_OscInit.OscillatorEnable = " << oscillator_enable_mask.str() << ";\n"
                "    PCC_OscInit.FreqMon.OscillatorSystem = " << oscillator_system_literal << ";\n"
-               "    PCC_OscInit.FreqMon.ForceOscSys = PCC_FORCE_OSC_SYS_UNFIXED;\n"
-               "    PCC_OscInit.FreqMon.Force32KClk = PCC_FREQ_MONITOR_SOURCE_OSC32K;\n"
+               "    PCC_OscInit.FreqMon.ForceOscSys = "
+            << (clock.force_osc_sys ? "PCC_FORCE_OSC_SYS_FIXED" : "PCC_FORCE_OSC_SYS_UNFIXED") << ";\n"
+               "    PCC_OscInit.FreqMon.Force32KClk = " << freqMonitorSourceMacro(clock.force_32k_clk) << ";\n"
                "    PCC_OscInit.AHBDivider = " << clock.ahb_divider << ";\n"
                "    PCC_OscInit.APBMDivider = " << clock.apbm_divider << ";\n"
                "    PCC_OscInit.APBPDivider = " << clock.apbp_divider << ";\n"
-               "    PCC_OscInit.HSI32MCalibrationValue = 128;\n"
-               "    PCC_OscInit.LSI32KCalibrationValue = 8;\n"
-               "    PCC_OscInit.RTCClockSelection = PCC_RTC_CLOCK_SOURCE_AUTO;\n"
-               "    PCC_OscInit.RTCClockCPUSelection = PCC_CPU_RTC_CLOCK_SOURCE_OSC32K;\n"
+               "    PCC_OscInit.HSI32MCalibrationValue = " << clock.hsi32m_calibration << ";\n"
+               "    PCC_OscInit.LSI32KCalibrationValue = " << clock.lsi32k_calibration << ";\n"
+               "    PCC_OscInit.RTCClockSelection = " << rtcClockSourceMacro(clock.rtc_clock_source) << ";\n"
+               "    PCC_OscInit.RTCClockCPUSelection = "
+            << (clock.rtc_clock_cpu_source == "lsi32k" ? "PCC_CPU_RTC_CLOCK_SOURCE_LSI32K" : "PCC_CPU_RTC_CLOCK_SOURCE_OSC32K") << ";\n"
                "    HAL_PCC_Config(&PCC_OscInit);\n"
                "}\n";
         return out.str();
@@ -101,8 +158,9 @@ namespace
     // CurrentValue=ENABLE — читать текущее состояние канала, а не значения
     // настройки (иначе HAL_DMA_GetChannelReadyStatus давал бы неактуальные
     // данные). Генерируется, только если хотя бы один блок uart запросил
-    // dma — иначе #include "mik32_hal_dma.h" и неиспользуемый глобал
-    // были бы мёртвым кодом.
+    // dma или есть хотя бы один standalone-блок type="dma" (any_dma_usage) —
+    // иначе #include "mik32_hal_dma.h" и неиспользуемый глобал были бы
+    // мёртвым кодом.
     const char* kDmaInitFunctionText =
         "void DMA_Init(void)\n"
         "{\n"
@@ -428,21 +486,23 @@ namespace
 
 ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     const ProjectConfig& config,
-    const ProjectKnowledge& knowledge,
-    bool emit_demo_loops)
+    const ProjectKnowledge& knowledge)
 {
     std::vector<PeripheralContribution> contributions;
 
-    // ТЗ §3.1.3.3: DMA настраивается на блоках uart, но сам DMA_CONFIG —
-    // один физический блок на весь МК (4 общих канала), поэтому его
+    // ТЗ §3.1.3.3: DMA настраивается на блоках uart ИЛИ standalone-блоками
+    // type="dma" (docs/implementations/dma.md), но сам DMA_CONFIG — один
+    // физический блок на весь МК (4 общих канала), поэтому его
     // инициализация не делегируется contribution-у конкретного блока (см.
-    // kDmaInitFunctionText ниже).
-    bool any_uart_dma = false;
+    // kDmaInitFunctionText ниже). any_dma_usage объединяет оба механизма —
+    // общий hdma/DMA_Init() должен попасть в прошивку один раз независимо
+    // от того, кто именно из них запросил DMA.
+    bool any_dma_usage = !config.dma_blocks.empty();
     for (const UartConfig& block : config.uart_blocks)
     {
         if (!block.dma.empty())
         {
-            any_uart_dma = true;
+            any_dma_usage = true;
             break;
         }
     }
@@ -473,7 +533,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
             }
         }
         ParseResult<PeripheralContribution> result =
-            buildGpioContribution(blocks_of_instance, knowledge.gpio, emit_demo_loops);
+            buildGpioContribution(blocks_of_instance, knowledge.gpio);
         if (!result.success)
         {
             return makeError(result.error);
@@ -487,7 +547,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     {
         ParseResult<PeripheralContribution> result = buildUartContribution(
             config.uart_blocks[i], knowledge.uart,
-            static_cast<int>(i) == console_index, emit_demo_loops);
+            static_cast<int>(i) == console_index);
         if (!result.success)
         {
             return makeError(result.error);
@@ -500,7 +560,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     for (const SpiConfig& block : config.spi_blocks)
     {
         ParseResult<PeripheralContribution> result =
-            buildSpiContribution(block, knowledge.spi, console_available, emit_demo_loops);
+            buildSpiContribution(block, knowledge.spi);
         if (!result.success)
         {
             return makeError(result.error);
@@ -508,11 +568,112 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         contributions.push_back(*result.config);
     }
 
+    // --- RTC (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2) — optional, не vector -------
+    if (config.rtc_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result =
+            buildRtcContribution(*config.rtc_block, knowledge.rtc);
+        if (!result.success)
+        {
+            return makeError(result.error);
+        }
+        contributions.push_back(*result.config);
+    }
+
+    // --- CRC (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2) — optional, не vector -------
+    if (config.crc_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildCrcContribution(*config.crc_block);
+        if (!result.success)
+        {
+            return makeError(result.error);
+        }
+        contributions.push_back(*result.config);
+    }
+
+    // --- EEPROM (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2) — optional, не vector ----
+    if (config.eeprom_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildEepromContribution(*config.eeprom_block);
+        if (!result.success)
+        {
+            return makeError(result.error);
+        }
+        contributions.push_back(*result.config);
+    }
+
+    // --- WDT (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2) — optional, не vector -------
+    if (config.wdt_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildWdtContribution(*config.wdt_block);
+        if (!result.success)
+        {
+            return makeError(result.error);
+        }
+        contributions.push_back(*result.config);
+    }
+
+    // --- DAC (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2) ------------------------------
+    for (const DacConfig& block : config.dac_blocks)
+    {
+        ParseResult<PeripheralContribution> result = buildDacContribution(block, knowledge.dac);
+        if (!result.success)
+        {
+            return makeError(result.error);
+        }
+        contributions.push_back(*result.config);
+    }
+
+    // --- ADC/CRYPTO/OTP/TSENS (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2) ------------
+    if (config.adc_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildAdcContribution(*config.adc_block);
+        if (!result.success) return makeError(result.error);
+        contributions.push_back(*result.config);
+    }
+    if (config.crypto_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildCryptoContribution(*config.crypto_block);
+        if (!result.success) return makeError(result.error);
+        contributions.push_back(*result.config);
+    }
+    if (config.otp_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildOtpContribution(*config.otp_block);
+        if (!result.success) return makeError(result.error);
+        contributions.push_back(*result.config);
+    }
+    if (config.tsens_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildTsensContribution(*config.tsens_block);
+        if (!result.success) return makeError(result.error);
+        contributions.push_back(*result.config);
+    }
+    if (config.pvd_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildPvdContribution(*config.pvd_block);
+        if (!result.success) return makeError(result.error);
+        contributions.push_back(*result.config);
+    }
+    if (config.bus_watchdog_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildBusWatchdogContribution(*config.bus_watchdog_block);
+        if (!result.success) return makeError(result.error);
+        contributions.push_back(*result.config);
+    }
+    // --- standalone DMA-каналы (docs/implementations/dma.md) ----------------
+    for (const DmaConfig& block : config.dma_blocks)
+    {
+        ParseResult<PeripheralContribution> result = buildDmaContribution(block);
+        if (!result.success) return makeError(result.error);
+        contributions.push_back(*result.config);
+    }
+
     // --- I2C ----------------------------------------------------------------
     for (const I2cConfig& block : config.i2c_blocks)
     {
         ParseResult<PeripheralContribution> result =
-            buildI2cContribution(block, knowledge.i2c, console_available, emit_demo_loops);
+            buildI2cContribution(block, knowledge.i2c);
         if (!result.success)
         {
             return makeError(result.error);
@@ -568,7 +729,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     // HAL-API — например, HAL_GPIO_TogglePin(GPIO_2, GPIO_PIN_6) не
     // компилируется: в main.c подключены только mik32_hal_pcc.h и mik32_init.h.
     std::vector<std::string> init_c_includes;
-    if (any_uart_dma)
+    if (any_dma_usage)
     {
         init_c_includes.push_back("mik32_hal_dma.h");
     }
@@ -587,7 +748,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     std::vector<std::string> init_h_includes = {"mik32_hal.h"};
     appendUnique(init_h_includes, init_c_includes);
     init_h << renderIncludes(init_h_includes) << "\n";
-    if (any_uart_dma)
+    if (any_dma_usage)
     {
         init_h << "void DMA_Init(void);\n";
     }
@@ -628,7 +789,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     // Глобальные хендлы — единым блоком перед функциями, как во всех
     // вендорных примерах (docs/examples/mik32-examples/*/src/main.c).
     std::ostringstream globals;
-    if (any_uart_dma)
+    if (any_dma_usage)
     {
         // Объявлен раньше per-contribution хендлов: DMA_ChannelHandleTypeDef
         // блоков uart (codegen/project/uart_contribution.cpp) ссылается на
@@ -644,7 +805,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         init_c << globals.str() << "\n";
     }
 
-    if (any_uart_dma)
+    if (any_dma_usage)
     {
         init_c << kDmaInitFunctionText << "\n";
     }
@@ -680,11 +841,6 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     }
 
     // --- ветка FreeRTOS (grill-сессия 2026-09-10) ---------------------------
-    // buildFreeRtosProjectPieces вызывается ДО принятия решения про
-    // loop_body/wants_loop_delay ниже: FreeRTOS-веткой они не используются
-    // вовсе (demo-цикл через while(1) не генерируется, пока планировщик не
-    // возвращается) — это не отдельный флаг, а прямое следствие того, что
-    // FreeRTOS-ветка main.c просто не читает contribution.loop_body.
     FreeRtosProjectPieces freertos_pieces;
     if (config.freertos.enabled)
     {
@@ -727,7 +883,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
               "{\n"
               "    SystemClock_Config();\n"
               "\n";
-    if (any_uart_dma)
+    if (any_dma_usage)
     {
         // До UART_x_Init: HAL_DMA_Init(&hdma) должен отработать раньше, чем
         // любой контроллер начнёт ссылаться на &hdma в своём канале.
@@ -744,9 +900,8 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
 
     if (config.freertos.enabled)
     {
-        // Ни demo-цикла, ни while(1): vTaskStartScheduler() не возвращается
-        // в штатной работе (grill-решение 2026-09-10) — peripheral
-        // contribution.loop_body здесь сознательно не читается.
+        // Ни while(1), ни USER CODE Loop: vTaskStartScheduler() не
+        // возвращается в штатной работе (grill-решение 2026-09-10).
         main_c << freertos_pieces.object_and_task_creation
                << "\n"
                   "    vTaskStartScheduler();\n"
@@ -765,36 +920,13 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         return ParseResult<GeneratedProjectFirmware>{true, "", firmware};
     }
 
-    bool any_loop_delay = false;
-    std::ostringstream loop_bodies;
-    for (const PeripheralContribution& contribution : contributions)
-    {
-        if (contribution.loop_body.empty())
-        {
-            continue;
-        }
-        // Своя область видимости на каждый вклад — обоснование в
-        // codegen/project/peripheral_contribution.h (иначе одноимённые
-        // локальные переменные двух demo-логик столкнулись бы).
-        loop_bodies << "        /* " << contribution.label << " */\n"
-                       "        {\n"
-                    << contribution.loop_body
-                    << "        }\n";
-        any_loop_delay = any_loop_delay || contribution.wants_loop_delay;
-    }
-
     main_c << "    while (1)\n"
               "    {\n"
-              // Маркеры ТЗ §3.1.7.3: всё тело цикла (включая demo-логику)
-              // лежит ВНУТРИ секции, чтобы пользователь мог заменить его
-              // целиком своим кодом, и замена пережила бы регенерацию.
+              // Маркеры ТЗ §3.1.7.3: тело цикла целиком лежит ВНУТРИ секции,
+              // чтобы пользователь мог заполнить его своим кодом, и
+              // содержимое пережило бы регенерацию.
               "        /* USER CODE BEGIN Loop */\n"
-           << loop_bodies.str();
-    if (any_loop_delay)
-    {
-        main_c << "        HAL_DelayMs(" << kLoopDelayMs << ");\n";
-    }
-    main_c << "        /* USER CODE END Loop */\n"
+              "        /* USER CODE END Loop */\n"
               "    }\n"
               "}\n"
               "\n"

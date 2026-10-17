@@ -1,0 +1,33 @@
+{
+  "peripheral_type": "crypto",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_hal_crypto.h: Crypto_HandleTypeDef.Instance = CRYPTO — единственный глобальный блок (три ядра шифрования общего автомата), как RTC/CRC/EEPROM/WDT.",
+  "required_fields": ["type", "algorithm", "cipher_mode"],
+  "fields": {
+    "algorithm": {
+      "type": "enum",
+      "values": ["kuznechik", "magma", "aes"],
+      "_comment": "Crypto_HandleTypeDef.Algorithm -> CRYPTO_ALG_KUZNECHIK(0)/MAGMA(1)/AES(2) (mik32_hal_crypto.h)."
+    },
+    "cipher_mode": {
+      "type": "enum",
+      "values": ["ecb", "cbc", "ctr"],
+      "_comment": "Crypto_HandleTypeDef.CipherMode -> CRYPTO_CIPHER_MODE_ECB(0)/CBC(1)/CTR(2)."
+    },
+    "swap_mode": {
+      "type": "enum",
+      "values": ["none", "halfword", "byte", "bit"],
+      "optional": true,
+      "default": "none",
+      "_comment": "Crypto_HandleTypeDef.SwapMode -> CRYPTO_SWAP_MODE_NONE(0)/HALFWORD(1)/BYTE(2)/BIT(3)."
+    },
+    "order_mode": {
+      "type": "enum",
+      "values": ["lsw", "msw"],
+      "optional": true,
+      "default": "lsw",
+      "_comment": "Crypto_HandleTypeDef.OrderMode -> CRYPTO_ORDER_MODE_LSW(0)/MSW(1)."
+    }
+  },
+  "_comment_no_key_no_iv": "Кодоген сознательно НЕ принимает поля для ключа/вектора инициализации — это секретные данные времени выполнения (HAL_Crypto_SetKey/SetIV), хранить ключ шифрования в JSON-конфиге и тем более в сгенерированном исходном коде недопустимо по соображениям безопасности. Настраивается только алгоритм/режим — ключ и IV задаёт пользователь сам в своём коде."
+}

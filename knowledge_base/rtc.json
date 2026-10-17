@@ -1,0 +1,46 @@
+{
+  "_comment_scope": "Минимальный knowledge_base под HAL-уровень кодогенерации RTC (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2), по образцу knowledge_base/timer32.json. RTC — единственный глобальный блок, без instance.",
+
+  "peripheral": "rtc",
+
+  "weekday_hal_enum": {
+    "1": "RTC_WEEKDAY_MONDAY",
+    "2": "RTC_WEEKDAY_TUESDAY",
+    "3": "RTC_WEEKDAY_WEDNESDAY",
+    "4": "RTC_WEEKDAY_THURSDAY",
+    "5": "RTC_WEEKDAY_FRIDAY",
+    "6": "RTC_WEEKDAY_SATURDAY",
+    "7": "RTC_WEEKDAY_SUNDAY"
+  },
+  "_comment_weekday_hal_enum": "mik32_hal_rtc.h, Defines: День недели (RTC_WEEKDAY_MONDAY=1..SUNDAY=7).",
+
+  "month_hal_enum": {
+    "1": "RTC_MONTH_JANUARY",
+    "2": "RTC_MONTH_FEBRUARY",
+    "3": "RTC_MONTH_MARCH",
+    "4": "RTC_MONTH_APRIL",
+    "5": "RTC_MONTH_MAY",
+    "6": "RTC_MONTH_JUNE",
+    "7": "RTC_MONTH_JULY",
+    "8": "RTC_MONTH_AUGUST",
+    "9": "RTC_MONTH_SEPTEMBER",
+    "10": "RTC_MONTH_OCTOBER",
+    "11": "RTC_MONTH_NOVEMBER",
+    "12": "RTC_MONTH_DECEMBER"
+  },
+  "_comment_month_hal_enum": "mik32_hal_rtc.h, Defines: Месяц (RTC_MONTH_JANUARY=1..DECEMBER=12).",
+
+  "alarm_compare_time_mask": {
+    "dow": "RTC_TALRM_CDOW_M",
+    "hours": "RTC_TALRM_CH_M",
+    "minutes": "RTC_TALRM_CM_M",
+    "seconds": "RTC_TALRM_CS_M"
+  },
+  "alarm_compare_date_mask": {
+    "century": "RTC_DALRM_CC_M",
+    "day": "RTC_DALRM_CD_M",
+    "month": "RTC_DALRM_CM_M",
+    "year": "RTC_DALRM_CY_M"
+  },
+  "_comment_alarm_compare_masks": "shared/periphery/rtc.h, RTC_TALRM_C*_M (время) и RTC_DALRM_C*_M (дата) — маска 'это поле должно совпасть, чтобы будильник сработал', не диапазон. Подтверждено обоими вендорными примерами (Hal_RTC, Hal_RTC_IRQ): sAlarm.MaskAlarmTime = RTC_TALRM_CDOW_M|CH_M|CM_M|CS_M, sAlarm.MaskAlarmDate = RTC_DALRM_CC_M|CD_M|CM_M|CY_M — все восемь выставлены в обоих примерах (полное совпадение)."
+}

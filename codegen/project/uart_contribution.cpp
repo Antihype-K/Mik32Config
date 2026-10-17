@@ -23,8 +23,7 @@ namespace
 ParseResult<PeripheralContribution> buildUartContribution(
     const UartConfig& config,
     const UartKnowledge& knowledge,
-    bool is_console,
-    bool emit_demo_loop)
+    bool is_console)
 {
     const std::string* uart_handle = findOrNull(knowledge.instance_handle, config.instance);
     const std::string* frame_enum = findOrNull(knowledge.data_bits_hal_enum, std::to_string(config.data_bits));
@@ -259,20 +258,6 @@ ParseResult<PeripheralContribution> buildUartContribution(
         contribution.helper_functions_text += helpers.str();
     }
     contribution.helper_functions_text += dma_helpers.str();
-
-    // Демо-логика: периодический текстовый лог. Только если передача вообще
-    // включена — при direction="rx" HAL_USART_Print писал бы в выключенный
-    // передатчик, то есть молча ничего не делал бы.
-    if (emit_demo_loop && transmitting == "Enable")
-    {
-        std::ostringstream loop;
-        loop << "            HAL_USART_Print(&" << handle_name << ", \"" << contribution.label
-             << ": MIK32-Configurator tick\\r\\n\", USART_TIMEOUT_DEFAULT);\n";
-        contribution.loop_body = loop.str();
-        contribution.wants_loop_delay = true;
-        contribution.main_c_includes = {"mik32_hal_usart.h"};
-        contribution.extern_declarations += "extern USART_HandleTypeDef " + handle_name + ";\n";
-    }
 
     return ParseResult<PeripheralContribution>{true, "", contribution};
 }

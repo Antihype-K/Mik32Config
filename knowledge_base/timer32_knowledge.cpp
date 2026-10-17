@@ -55,6 +55,12 @@ ParseResult<Timer32Knowledge> loadTimer32Knowledge(const std::string& file_path)
             knowledge.capture_edge_hal_enum[it.key()] = it.value().get<std::string>();
         }
 
+        for (auto it = root.at("clock_source_hal_enum").begin();
+             it != root.at("clock_source_hal_enum").end(); ++it)
+        {
+            knowledge.clock_source_hal_enum[it.key()] = it.value().get<std::string>();
+        }
+
         knowledge.sys_clk_hz = root.at("sys_clk_hz").get<long>();
 
         for (auto instance_it = root.at("instance_channel_fixed_pin").begin();

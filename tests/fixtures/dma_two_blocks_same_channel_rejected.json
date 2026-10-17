@@ -1,0 +1,4 @@
+{ "mcu": "MIK32", "version": "2.0", "peripherals": [
+  { "type": "dma", "instance": 1, "request": "spi_0", "direction": "peripheral_to_memory", "buffer_size_bytes": 16, "element_size": "byte" },
+  { "type": "dma", "instance": 1, "request": "spi_1", "direction": "peripheral_to_memory", "buffer_size_bytes": 16, "element_size": "byte" }
+]}

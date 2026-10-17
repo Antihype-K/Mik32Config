@@ -1,6 +1,7 @@
 #include "spi_contribution.h"
 #include "contribution_utils.h"
 #include <sstream>
+#include <map>
 
 namespace
 {
@@ -16,13 +17,29 @@ namespace
         // "cs2" -> "SPI_CS_2": последний символ chip_select — уже нужная цифра.
         return "SPI_CS_" + chip_select.substr(2);
     }
+
+    // "SPI_INT_STATUS_RX_FIFO_NOT_EMPTY_M" — HAL-маска прерывания
+    // (mik32_hal_spi.h:259-267, см. schemas/spi.json про допустимый набор).
+    std::string interruptMaskMacro(const std::string& interrupt)
+    {
+        static const std::map<std::string, std::string> kMacroByName = {
+            {"rx_fifo_not_empty", "SPI_INT_STATUS_RX_FIFO_NOT_EMPTY_M"},
+            {"tx_fifo_not_full", "SPI_INT_STATUS_TX_FIFO_NOT_FULL_M"},
+            {"rx_overflow", "SPI_INT_STATUS_RX_OVERFLOW_M"},
+            {"mode_fail", "SPI_INT_STATUS_MODE_FAIL_M"},
+        };
+        return kMacroByName.at(interrupt);
+    }
+
+    std::string irqHandlerFunctionName(int instance)
+    {
+        return "SPI_" + std::to_string(instance) + "_IRQHandler_Template";
+    }
 }
 
 ParseResult<PeripheralContribution> buildSpiContribution(
     const SpiConfig& config,
-    const SpiKnowledge& knowledge,
-    bool console_available,
-    bool emit_demo_loop)
+    const SpiKnowledge& knowledge)
 {
     const std::string* spi_handle = findOrNull(knowledge.instance_handle, config.instance);
     if (!spi_handle)
@@ -40,6 +57,10 @@ ParseResult<PeripheralContribution> buildSpiContribution(
     contribution.init_order = kInitOrderSpi;
     contribution.init_function_name = "SPI_" + suffix + "_Init";
     contribution.init_c_includes = {"mik32_hal_spi.h", "mik32_hal_pcc.h"};
+    if (!config.interrupts.empty())
+    {
+        contribution.init_c_includes.push_back("mik32_hal_irq.h");
+    }
     contribution.global_definitions = "SPI_HandleTypeDef " + handle_name + ";\n";
     contribution.public_prototypes = {
         "void " + contribution.init_function_name + "(void);"};
@@ -106,51 +127,56 @@ ParseResult<PeripheralContribution> buildSpiContribution(
               "    if (HAL_SPI_Init(&" << handle_name << ") != HAL_OK)\n"
               "    {\n"
               "        /* USER TODO: обработать ошибку инициализации SPI (SPI_Init_Error). */\n"
-              "    }\n"
-              "}\n";
+              "    }\n";
+
+    // Прерывания — единственный закрываемый пробел по SPI из
+    // AUDIT_TZ_PERIPHERY_GAPS.md. HAL_SPI_InterruptEnable пишет в
+    // INT_ENABLE маску выбранных флагов (mik32_hal_spi.h:259-267) — по
+    // образцу обоих вендорных примеров HAL_SPI_Master_IRQ/HAL_SPI_Slave_IRQ
+    // (main.c, SPIx_Init). Включение самой линии в EPIC
+    // (HAL_EPIC_MaskLevelSet(HAL_EPIC_SPI_x_MASK)) и HAL_IRQ_EnableInterrupts()
+    // остаются на стороне пользователя — тот же паттерн, что у GPIO IRQ
+    // (см. codegen/project/gpio_contribution.cpp).
+    if (!config.interrupts.empty())
+    {
+        std::ostringstream mask;
+        for (size_t i = 0; i < config.interrupts.size(); ++i)
+        {
+            if (i > 0)
+            {
+                mask << " |\n        ";
+            }
+            mask << interruptMaskMacro(config.interrupts[i]);
+        }
+        init_c << "\n"
+                  "    /*\n"
+                  "     * Включение прерываний SPI. Саму линию SPI_" << suffix << " в EPIC\n"
+                  "     * (HAL_EPIC_MaskLevelSet(HAL_EPIC_SPI_" << suffix << "_MASK)) и\n"
+                  "     * HAL_IRQ_EnableInterrupts() нужно включить отдельно на стороне\n"
+                  "     * пользователя, как и подключение " << irqHandlerFunctionName(config.instance)
+               << "() к своему raw_trap_handler.\n"
+                  "     */\n"
+                  "    HAL_SPI_InterruptEnable(&" << handle_name << ", " << mask.str() << ");\n";
+    }
+
+    init_c << "}\n";
     contribution.init_function_text = init_c.str();
 
-    if (!emit_demo_loop)
+    if (!config.interrupts.empty())
     {
-        return ParseResult<PeripheralContribution>{true, "", contribution};
+        std::ostringstream irq_template;
+        irq_template << "/*\n"
+                        " * Шаблон обработчика прерывания SPI_" << suffix << ". Вызовите его из своего\n"
+                        " * raw_trap_handler внутри if (EPIC_CHECK_SPI_" << suffix << "()) { ... } — см.\n"
+                        " * docs/examples/mik32-examples/HAL_SPI_Master_IRQ/src/main.c, trap_handler.\n"
+                        " */\n"
+                        "void " << irqHandlerFunctionName(config.instance) << "(void)\n"
+                        "{\n"
+                        "    HAL_SPI_IRQHandler(&" << handle_name << ");\n"
+                        "}\n";
+        contribution.helper_functions_text = irq_template.str();
+        contribution.irq_handler_function_name = irqHandlerFunctionName(config.instance);
     }
-
-    // Тело цикла: обмен фиксированным 4-байтным паттерном, как в обоих
-    // вендорных примерах (docs/examples/mik32-examples/HAL_SPI_Master/Slave,
-    // main.c) — HAL_SPI_Exchange (блокирующий, полнодуплексный). Печать в
-    // UART не обязательна: обмен наблюдаем и без консоли (MOSI/MISO/SCK на
-    // осциллографе/логическом анализаторе), в отличие от I2C-сканера.
-    std::ostringstream loop;
-    const std::string tx_pattern = is_master ? "0xA0, 0xA1, 0xA2, 0xA3" : "0xB0, 0xB1, 0xB2, 0xB3";
-    loop << "            uint8_t spi" << suffix << "_tx[4] = {" << tx_pattern << "};\n"
-            "            uint8_t spi" << suffix << "_rx[4];\n";
-    if (is_master && config.manual_cs)
-    {
-        loop << "            __HAL_SPI_ENABLE(&" << handle_name << ");\n"
-                "            HAL_SPI_CS_Enable(&" << handle_name << ", " << chipSelectMacro(config.chip_select) << ");\n";
-    }
-    loop << "            HAL_SPI_Exchange(&" << handle_name << ", spi" << suffix << "_tx, spi" << suffix
-         << "_rx, 4, SPI_TIMEOUT_DEFAULT);\n";
-    if (is_master && config.manual_cs)
-    {
-        loop << "            HAL_SPI_CS_Disable(&" << handle_name << ");\n"
-                "            __HAL_SPI_DISABLE(&" << handle_name << ");\n";
-    }
-    if (console_available)
-    {
-        loop << "            xprintf(\"" << contribution.label
-             << ": rx = %02X %02X %02X %02X\\r\\n\", spi" << suffix << "_rx[0], spi" << suffix
-             << "_rx[1], spi" << suffix << "_rx[2], spi" << suffix << "_rx[3]);\n";
-    }
-
-    contribution.loop_body = loop.str();
-    contribution.wants_loop_delay = true;
-    contribution.main_c_includes = {"mik32_hal_spi.h"};
-    if (console_available)
-    {
-        contribution.main_c_includes.push_back("xprintf.h");
-    }
-    contribution.extern_declarations = "extern SPI_HandleTypeDef " + handle_name + ";\n";
 
     return ParseResult<PeripheralContribution>{true, "", contribution};
 }

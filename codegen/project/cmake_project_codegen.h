@@ -55,10 +55,9 @@ struct GeneratedProjectFirmwareCmake
 // Спецификация этой сессии буквально просила сигнатуру без ParseResult
 // (`GeneratedProjectFirmwareCmake generateProjectFirmwareCmake(...)`), но
 // внутри эта функция обязана звать уже существующий generateProjectFirmware
-// (project_codegen.h), который может завершиться ошибкой (например,
-// I2C demo="scanner" без консольного UART — см.
-// ProjectCodegen.RejectsI2cScannerWithoutConsoleUart в tests/test_parsers.cpp).
-// Сигнатура без возможности сообщить об ошибке заставила бы либо тихо
+// (project_codegen.h), который может завершиться ошибкой (например, конфликт
+// выводов между блоками разных типов). Сигнатура без возможности сообщить об
+// ошибке заставила бы либо тихо
 // возвращать пустую структуру на ошибке (пользователь получил бы "проект
 // сгенерирован" с нерабочей прошивкой без единого сообщения — ровно то, что
 // запрещено комментарием в project_config.h про недопустимые типы периферии),
@@ -67,13 +66,9 @@ struct GeneratedProjectFirmwareCmake
 // Поэтому сознательное расхождение со спецификацией: возврат обёрнут в
 // ParseResult<T>, как и generateProjectFirmware. Задокументировано в
 // docs/implementations/cmake_toolchain.md.
-//
-// emit_demo_loops — тот же смысл и то же обоснование, что и у одноимённого
-// параметра generateProjectFirmware (project_codegen.h).
 ParseResult<GeneratedProjectFirmwareCmake> generateProjectFirmwareCmake(
     const ProjectConfig& config,
-    const ProjectKnowledge& knowledge,
-    bool emit_demo_loops = true);
+    const ProjectKnowledge& knowledge);
 
 // Транзакционная запись CMake-варианта проекта на диск (ТЗ §3.2.2).
 //

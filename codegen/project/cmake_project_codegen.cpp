@@ -93,7 +93,7 @@ namespace
     }
 
     ParseResult<ContributionsByType> buildContributionsByType(
-        const ProjectConfig& config, const ProjectKnowledge& knowledge, bool emit_demo_loops)
+        const ProjectConfig& config, const ProjectKnowledge& knowledge)
     {
         ContributionsByType result;
 
@@ -128,7 +128,7 @@ namespace
                 }
             }
             ParseResult<PeripheralContribution> r =
-                buildGpioContribution(blocks_of_instance, knowledge.gpio, emit_demo_loops);
+                buildGpioContribution(blocks_of_instance, knowledge.gpio);
             if (!r.success)
             {
                 return makeContributionsError(r.error);
@@ -140,7 +140,7 @@ namespace
         for (size_t i = 0; i < config.uart_blocks.size(); ++i)
         {
             ParseResult<PeripheralContribution> r = buildUartContribution(
-                config.uart_blocks[i], knowledge.uart, static_cast<int>(i) == console_index, emit_demo_loops);
+                config.uart_blocks[i], knowledge.uart, static_cast<int>(i) == console_index);
             if (!r.success)
             {
                 return makeContributionsError(r.error);
@@ -148,11 +148,10 @@ namespace
             result.uart.push_back(*r.config);
         }
 
-        const bool console_available = (console_index >= 0);
         for (const SpiConfig& block : config.spi_blocks)
         {
             ParseResult<PeripheralContribution> r =
-                buildSpiContribution(block, knowledge.spi, console_available, emit_demo_loops);
+                buildSpiContribution(block, knowledge.spi);
             if (!r.success)
             {
                 return makeContributionsError(r.error);
@@ -163,7 +162,7 @@ namespace
         for (const I2cConfig& block : config.i2c_blocks)
         {
             ParseResult<PeripheralContribution> r =
-                buildI2cContribution(block, knowledge.i2c, console_available, emit_demo_loops);
+                buildI2cContribution(block, knowledge.i2c);
             if (!r.success)
             {
                 return makeContributionsError(r.error);
@@ -555,14 +554,13 @@ namespace
 
 ParseResult<GeneratedProjectFirmwareCmake> generateProjectFirmwareCmake(
     const ProjectConfig& config,
-    const ProjectKnowledge& knowledge,
-    bool emit_demo_loops)
+    const ProjectKnowledge& knowledge)
 {
     // Валидация конфигурации (типы периферии, конфликты instance/DMA/GPIO
-    // IRQ, I2C-сканер без консоли и т.д.) и сборка main.c переиспользуются
-    // целиком из уже существующего generateProjectFirmware — не
-    // передублированы здесь ни строкой (см. .h).
-    ParseResult<GeneratedProjectFirmware> base = generateProjectFirmware(config, knowledge, emit_demo_loops);
+    // IRQ и т.д.) и сборка main.c переиспользуются целиком из уже
+    // существующего generateProjectFirmware — не передублированы здесь ни
+    // строкой (см. .h).
+    ParseResult<GeneratedProjectFirmware> base = generateProjectFirmware(config, knowledge);
     if (!base.success)
     {
         return makeError(base.error);
@@ -578,7 +576,7 @@ ParseResult<GeneratedProjectFirmwareCmake> generateProjectFirmwareCmake(
         return ParseResult<GeneratedProjectFirmwareCmake>{true, "", result};
     }
 
-    ParseResult<ContributionsByType> grouped = buildContributionsByType(config, knowledge, emit_demo_loops);
+    ParseResult<ContributionsByType> grouped = buildContributionsByType(config, knowledge);
     if (!grouped.success)
     {
         return makeError(grouped.error);

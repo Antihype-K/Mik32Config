@@ -5,7 +5,7 @@
 
 // Концепция: как и в остальных parser/*, правила ниже дословно повторяют
 // schemas/i2c.json. У I2C, в отличие от GPIO/UART/Timer16, часть полей
-// обязательна только в зависимости от mode/demo — эта условная логика тоже
+// обязательна только в зависимости от mode — эта условная логика тоже
 // зашита здесь и обязана совпадать со схемой.
 namespace
 {
@@ -16,12 +16,13 @@ namespace
     const std::set<int> kValidClockSpeeds = {100000, 400000, 1000000};
     const std::set<std::string> kValidAddressModes = {"7bit", "10bit"};
 
-    const std::set<std::string> kValidMasterDemos = {"scanner", "ping_pong"};
-    const std::set<std::string> kValidSlaveDemos = {"receive", "ping_pong", "scanner_target"};
-
     constexpr int kMaxAddress7Bit = 127;
     constexpr int kMaxAddress10Bit = 1023;
-    constexpr int kMaxTargetAddress = 127;
+
+    const std::set<int> kValidDigitalFilters = {0, 1, 2, 15};
+    constexpr int kMaxOwnAddress2 = 127;
+    const std::set<std::string> kValidOwnAddress2Masks = {
+        "none", "111111x", "11111xx", "1111xxx", "111xxxx", "11xxxxx", "1xxxxxx", "1111111"};
 
     ParseResult<I2cConfig> makeError(const std::string& message)
     {
@@ -104,37 +105,41 @@ ParseResult<I2cConfig> parseI2cBlock(const nlohmann::json& i2c)
         return makeError("Поле \"clock_speed\" содержит недопустимое значение (разрешено 100000, 400000, 1000000)");
     }
 
-    // "demo" необязателен — дефолт зависит от mode (schemas/i2c.json).
-    std::string demo;
-    if (i2c.contains("demo"))
-    {
-        if (!i2c["demo"].is_string())
-        {
-            return makeError("Поле \"demo\" должно быть строкой");
-        }
-        demo = i2c["demo"].get<std::string>();
-    }
-    else
-    {
-        demo = (mode == "master") ? "scanner" : "receive";
-    }
-
-    const std::set<std::string>& valid_demos_for_mode = (mode == "master") ? kValidMasterDemos : kValidSlaveDemos;
-    if (!valid_demos_for_mode.count(demo))
-    {
-        return makeError("Поле \"demo\" содержит недопустимое значение для этого mode "
-            "(master: scanner, ping_pong; slave: receive, ping_pong)");
-    }
-
     I2cConfig config;
     config.type = "i2c";
     config.instance = instance;
     config.mode = mode;
     config.clock_speed = i2c["clock_speed"].get<int>();
-    config.demo = demo;
     config.address_mode = "";
     config.own_address = 0;
-    config.target_address = 0;
+    config.digital_filter = 0;
+    config.analog_filter = false;
+    config.general_call = false;
+    config.no_stretch_mode = false;
+    config.dual_address_enabled = false;
+    config.own_address_2 = 0;
+    config.own_address_2_mask = "none";
+
+    // Общие поля master/slave, обе — необязательны, дефолт сохраняет прежнее
+    // хардкод-поведение кодогена (schemas/i2c.json: digital_filter/analog_filter).
+    if (i2c.contains("digital_filter"))
+    {
+        if (!i2c["digital_filter"].is_number_integer()
+            || !kValidDigitalFilters.count(i2c["digital_filter"].get<int>()))
+        {
+            return makeError("Поле \"digital_filter\" содержит недопустимое значение (разрешено 0, 1, 2, 15)");
+        }
+        config.digital_filter = i2c["digital_filter"].get<int>();
+    }
+
+    if (i2c.contains("analog_filter"))
+    {
+        if (!i2c["analog_filter"].is_boolean())
+        {
+            return makeError("Поле \"analog_filter\" должно быть булевым");
+        }
+        config.analog_filter = i2c["analog_filter"].get<bool>();
+    }
 
     if (mode == "slave")
     {
@@ -173,24 +178,73 @@ ParseResult<I2cConfig> parseI2cBlock(const nlohmann::json& i2c)
 
         config.address_mode = address_mode;
         config.own_address = own_address;
-    }
 
-    if (mode == "master" && demo == "ping_pong")
-    {
-        if (!i2c.contains("target_address"))
+        // general_call / no_stretch_mode / dual_address* — необязательны,
+        // дефолт сохраняет прежний хардкод (schemas/i2c.json).
+        if (i2c.contains("general_call"))
         {
-            return makeError("Для mode=\"master\" с demo=\"ping_pong\" обязательно поле \"target_address\"");
+            if (!i2c["general_call"].is_boolean())
+            {
+                return makeError("Поле \"general_call\" должно быть булевым");
+            }
+            config.general_call = i2c["general_call"].get<bool>();
         }
-        if (!i2c["target_address"].is_number_integer())
+
+        if (i2c.contains("no_stretch_mode"))
         {
-            return makeError("Поле \"target_address\" должно быть целым числом");
+            if (!i2c["no_stretch_mode"].is_boolean())
+            {
+                return makeError("Поле \"no_stretch_mode\" должно быть булевым");
+            }
+            config.no_stretch_mode = i2c["no_stretch_mode"].get<bool>();
         }
-        const int target_address = i2c["target_address"].get<int>();
-        if (target_address < 0 || target_address > kMaxTargetAddress)
+
+        if (i2c.contains("dual_address_enabled"))
         {
-            return makeError("Поле \"target_address\" вне диапазона 0-127");
+            if (!i2c["dual_address_enabled"].is_boolean())
+            {
+                return makeError("Поле \"dual_address_enabled\" должно быть булевым");
+            }
+            config.dual_address_enabled = i2c["dual_address_enabled"].get<bool>();
         }
-        config.target_address = target_address;
+
+        if (config.dual_address_enabled)
+        {
+            // mik32_hal_i2c.h, DualAddressMode: "Можно использовать, если
+            // длина основного адреса 7 бит" — отклоняем несовместимую
+            // комбинацию явно, а не тихо генерируем код с недокументированным
+            // поведением HAL при 10-битном основном адресе.
+            if (address_mode != "7bit")
+            {
+                return makeError("Поле \"dual_address_enabled\"=true требует address_mode=\"7bit\" "
+                    "(HAL поддерживает второй адрес только при 7-битном основном)");
+            }
+
+            if (!i2c.contains("own_address_2"))
+            {
+                return makeError("Для dual_address_enabled=true обязательно поле \"own_address_2\"");
+            }
+            if (!i2c["own_address_2"].is_number_integer())
+            {
+                return makeError("Поле \"own_address_2\" должно быть целым числом");
+            }
+            const int own_address_2 = i2c["own_address_2"].get<int>();
+            if (own_address_2 < 0 || own_address_2 > kMaxOwnAddress2)
+            {
+                return makeError("Поле \"own_address_2\" вне диапазона 0-127 (второй адрес всегда 7-битный)");
+            }
+            config.own_address_2 = own_address_2;
+
+            if (i2c.contains("own_address_2_mask"))
+            {
+                if (!i2c["own_address_2_mask"].is_string()
+                    || !kValidOwnAddress2Masks.count(i2c["own_address_2_mask"].get<std::string>()))
+                {
+                    return makeError("Поле \"own_address_2_mask\" содержит недопустимое значение");
+                }
+                config.own_address_2_mask = i2c["own_address_2_mask"].get<std::string>();
+            }
+        }
     }
 
     return ParseResult<I2cConfig>{true, "", config};

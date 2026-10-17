@@ -34,14 +34,8 @@ struct GeneratedProjectFirmwareRust
     std::string main_rs;
 };
 
-// emit_demo_loop — тот же смысл, что у одноимённого параметра
-// generateProjectFirmware (project_codegen.h): наблюдаемая demo-логика
-// (переключение выходных GPIO, периодическая строка в UART) для
-// обязательной HW-проверки (CLAUDE.md, hardware validation gate). true по
-// умолчанию — тот же дефолт, что у C-ветки.
 ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
-    const ProjectConfig& config,
-    bool emit_demo_loop = true);
+    const ProjectConfig& config);
 
 // Транзакционная запись Cargo-проекта на диск — тот же контракт
 // (временный каталог-брат output_project_dir, перенос только после того,

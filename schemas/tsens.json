@@ -1,0 +1,42 @@
+{
+  "peripheral_type": "tsens",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_hal_tsens.h: TSENS_HandleTypeDef.Instance = ANALOG_REG — единственный глобальный блок (как DAC/ADC), один физический датчик температуры.",
+  "required_fields": ["type", "clock_source", "frequency_hz"],
+  "fields": {
+    "clock_source": {
+      "type": "enum",
+      "values": ["sys_clk", "hclk", "osc32m", "hsi32m", "osc32k", "lsi32k"],
+      "_comment": "HAL_TSENS_ClockTypeDef (mik32_hal_tsens.h)."
+    },
+    "frequency_hz": {
+      "type": "integer",
+      "min": 1,
+      "max": 100000,
+      "_comment": "TSENS_HandleTypeDef.Frequency — «Значение этого параметра может быть не больше 100кГц» (mik32_hal_tsens.h). TSENS_OPTIMAL_FREQUENCY=40000 — рекомендованное значение по тому же заголовку, не навязывается схемой как дефолт (зависит от clock_source пользователя)."
+    },
+    "low_threshold_celsius": {
+      "type": "integer",
+      "min": -40,
+      "max": 125,
+      "optional": true,
+      "_comment": "HAL_TSENS_SetLowThreshold — порог нижнего прерывания в градусах Цельсия, диапазон -40..125 (mik32_hal_tsens.c, комментарий к параметру)."
+    },
+    "high_threshold_celsius": {
+      "type": "integer",
+      "min": -40,
+      "max": 125,
+      "optional": true,
+      "_comment": "HAL_TSENS_SetHiThreshold — порог верхнего прерывания в градусах Цельсия, диапазон -40..125."
+    },
+    "interrupts": {
+      "type": "array",
+      "optional": true,
+      "default": [],
+      "item_type": "enum",
+      "item_values": ["low", "high", "eoc"],
+      "_comment": "__HAL_TSENS_IRQ_ENABLE_LOWIRQ/HIIRQ/EOC (mik32_hal_tsens.h) — выход за нижний/верхний порог температуры, окончание преобразования. EPIC-маскирование и подключение к raw_trap_handler остаются на стороне пользователя, как и у SPI/RTC."
+    }
+  },
+  "_comment_no_auto_start": "Кодоген генерирует только настройку тактирования/порогов/прерываний — HAL_TSENS_SingleStart/ContinuousStart остаются за пользователем (тот же принцип 'только конфигурация', что у WDT/ADC/DAC: когда и как часто измерять температуру — решение приложения, не конфигуратора)."
+}

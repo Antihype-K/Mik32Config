@@ -1,0 +1,46 @@
+{
+  "peripheral_type": "dma",
+  "max_instances": 4,
+  "_comment_max_instances": "shared/periphery/dma_config.h: DMA_CHANNEL_COUNT=4 — ровно 4 физических канала ПДП на весь МК. instance здесь — номер канала (0-3), не отдельный физический блок на канал (как у Timer32/SPI/DAC), но то же соглашение переиспользуется, чтобы задействовать уже готовую проверку уникальности instance.",
+  "_comment_usart_excluded": "USART0/USART1 НЕ входят в enum \"request\" ниже — DMA для UART уже настраивается встроенным полем \"dma\" в schemas/uart.json (см. docs/implementations/dma.md), этот тип периферии — для ОСТАЛЬНЫХ периферийных запросов (I2C/SPI/CRYPTO/Timer32/DAC/SPIFI). Оба механизма делят один и тот же глобальный пул из 4 каналов — настройка одного и того же канала в обоих местах отклоняется на этапе разбора конфига.",
+  "required_fields": ["type", "instance", "direction", "buffer_size_bytes", "element_size"],
+  "fields": {
+    "instance": {
+      "type": "integer",
+      "min": 0,
+      "max": 3,
+      "_comment": "Номер канала ПДП (HAL_DMA_ChannelIndexTypeDef, mik32_hal_dma.h)."
+    },
+    "request": {
+      "type": "enum",
+      "values": ["crypto", "spi_0", "spi_1", "i2c_0", "i2c_1", "spifi", "timer32_0", "timer32_1", "timer32_2", "dac_0", "dac_1"],
+      "_comment": "HAL_DMA_ChannelRequestTypeDef (mik32_hal_dma.h, строки 90-111) без DMA_CHANNEL_USART_0/1_REQUEST — см. _comment_usart_excluded выше. Обязательно для direction=peripheral_to_memory/memory_to_peripheral, запрещено для memory_to_memory (проверяется в parser/dma/dma_parser.cpp)."
+    },
+    "direction": {
+      "type": "enum",
+      "values": ["peripheral_to_memory", "memory_to_peripheral", "memory_to_memory"],
+      "_comment": "peripheral_to_memory: ReadMode=PERIPHERY(request)/WriteMode=MEMORY(буфер, с инкрементом). memory_to_peripheral: ReadMode=MEMORY(буфер, с инкрементом)/WriteMode=PERIPHERY(request). memory_to_memory: обе стороны MEMORY, request не используется."
+    },
+    "buffer_size_bytes": {
+      "type": "integer",
+      "min": 1,
+      "_comment": "Размер статического буфера, который кодоген объявляет и передаёт в HAL_DMA_Start как Source/Destination (та сторона, что MEMORY)."
+    },
+    "element_size": {
+      "type": "enum",
+      "values": ["byte", "halfword", "word"],
+      "_comment": "HAL_DMA_ChannelSizeTypeDef — применяется к ОБЕИМ сторонам канала (ReadSize=WriteSize), тот же приём, что уже сделан для UART-DMA (codegen/project/uart_contribution.cpp)."
+    },
+    "priority": {
+      "type": "enum",
+      "values": ["low", "medium", "high", "very_high"],
+      "default": "very_high",
+      "_comment": "HAL_DMA_ChannelPriorityTypeDef. Дефолт — тот же, что зашит для UART-DMA (docs/implementations/dma.md, раздел Priority/Ack/BurstSize, по образцу вендорного примера)."
+    },
+    "irq_enable": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "HAL_DMA_LocalIRQEnable — генерировать вызов, включающий локальное прерывание канала по завершении передачи. По умолчанию выключено (как и у остальных необязательных прерываний в этом проекте — явный запрос пользователя, не дефолт)."
+    }
+  }
+}

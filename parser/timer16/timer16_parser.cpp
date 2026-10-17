@@ -13,8 +13,9 @@ namespace
     constexpr int kMinInstance = 0;
     constexpr int kMaxInstance = 2;
 
-    // schemas/timer16.json: "mode" — ТЗ §3.1.4 п.2, три режима работы.
-    const std::set<std::string> kValidModes = {"period", "one_shot", "external_event_count"};
+    // schemas/timer16.json: "mode" — ТЗ §3.1.4 п.2 (три режима) + "encoder",
+    // добавленный AUDIT_TZ_PERIPHERY_GAPS.md (Тир 1, вне ТЗ — по образцу I2C/SPI).
+    const std::set<std::string> kValidModes = {"period", "one_shot", "external_event_count", "encoder"};
 
     // schemas/timer16.json: "prescaler" enum_int — mik32_hal_timer16.h,
     // HAL_Timer16_PrescalerTypeDef (8 значений, степени двойки 1..128).
@@ -31,6 +32,20 @@ namespace
     // peripherals[], без доступа к top-level "clock") — известное
     // ограничение этой сессии, см. OVERNIGHT_FIELD_REFERENCE.md.
     constexpr double kSysClkHz = 32000000.0;
+
+    // schemas/timer16.json: "clock_source" — mik32_hal_timer16.h,
+    // HAL_Timer16_SourceTypeDef, минус EXTERNAL_INPUT1 (та альтернатива уже
+    // доступна через mode="external_event_count").
+    const std::set<std::string> kValidClockSources = {
+        "internal_system", "internal_ahb", "internal_osc32m",
+        "internal_hsi32m", "internal_osc32k", "internal_lsi32k"};
+
+    // schemas/timer16.json: "trigger_edge" — HAL_Timer16_Trigger_ActiveEdgeTypeDef.
+    const std::set<std::string> kValidTriggerEdges = {"software", "rising", "falling", "both"};
+
+    // schemas/timer16.json: "external_clock_filter"/"trigger_filter" —
+    // HAL_Timer16_FilterTypeDef (общий набор значений для обоих фильтров).
+    const std::set<std::string> kValidFilters = {"none", "2clock", "4clock", "8clock"};
 
     ParseResult<Timer16Config> makeError(const std::string& message)
     {
@@ -102,13 +117,63 @@ ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
 
     if (!timer16["mode"].is_string() || !kValidModes.count(timer16["mode"].get<std::string>()))
     {
-        return makeError("Поле \"mode\" содержит недопустимое значение (разрешено period, one_shot, external_event_count)");
+        return makeError("Поле \"mode\" содержит недопустимое значение (разрешено period, one_shot, external_event_count, encoder)");
     }
 
     Timer16Config config;
     config.type = "timer16";
     config.instance = instance;
     config.mode = timer16["mode"].get<std::string>();
+
+    // Тир 1 аудита: пять необязательных полей, общих для обеих ветвей ниже
+    // (raw-регистры и frequency_hz/duty_percent) — не связаны с выбором
+    // способа задания периода/скважности.
+    if (timer16.contains("clock_source"))
+    {
+        if (!timer16["clock_source"].is_string() || !kValidClockSources.count(timer16["clock_source"].get<std::string>()))
+        {
+            return makeError("Поле \"clock_source\" содержит недопустимое значение (разрешено internal_system, "
+                "internal_ahb, internal_osc32m, internal_hsi32m, internal_osc32k, internal_lsi32k)");
+        }
+        config.clock_source = timer16["clock_source"].get<std::string>();
+    }
+
+    if (timer16.contains("trigger_edge"))
+    {
+        if (!timer16["trigger_edge"].is_string() || !kValidTriggerEdges.count(timer16["trigger_edge"].get<std::string>()))
+        {
+            return makeError("Поле \"trigger_edge\" содержит недопустимое значение (разрешено software, rising, falling, both)");
+        }
+        config.trigger_edge = timer16["trigger_edge"].get<std::string>();
+    }
+
+    if (timer16.contains("external_clock_filter"))
+    {
+        if (!timer16["external_clock_filter"].is_string()
+            || !kValidFilters.count(timer16["external_clock_filter"].get<std::string>()))
+        {
+            return makeError("Поле \"external_clock_filter\" содержит недопустимое значение (разрешено none, 2clock, 4clock, 8clock)");
+        }
+        config.external_clock_filter = timer16["external_clock_filter"].get<std::string>();
+    }
+
+    if (timer16.contains("trigger_filter"))
+    {
+        if (!timer16["trigger_filter"].is_string() || !kValidFilters.count(timer16["trigger_filter"].get<std::string>()))
+        {
+            return makeError("Поле \"trigger_filter\" содержит недопустимое значение (разрешено none, 2clock, 4clock, 8clock)");
+        }
+        config.trigger_filter = timer16["trigger_filter"].get<std::string>();
+    }
+
+    if (timer16.contains("waveform_inverted"))
+    {
+        if (!timer16["waveform_inverted"].is_boolean())
+        {
+            return makeError("Поле \"waveform_inverted\" должно быть булевым");
+        }
+        config.waveform_inverted = timer16["waveform_inverted"].get<bool>();
+    }
 
     // OVERNIGHT_FIELD_REFERENCE.md: два взаимоисключающих способа задать
     // период/скважность — либо прямые регистры (prescaler+arr+cmp, как
@@ -125,6 +190,17 @@ ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
     if (has_frequency_field && has_raw_registers)
     {
         return makeError("Нельзя одновременно задавать \"frequency_hz\"/\"duty_percent\" и \"prescaler\"/\"arr\"/\"cmp\" — выберите один способ");
+    }
+
+    // Датащит, раздел «Режим энкодера» (mik32_datasheet_v2_2_3.pdf, стр.129,
+    // «Примечание»): предделитель обязан иметь начальное значение 1
+    // (PRESC[2:0]=0b000) — frequency_hz сам подбирает делитель под частоту
+    // ШИМ, что для энкодера не имеет смысла (частота задаётся внешним
+    // сигналом, а не программой) и может выбрать delitel != 1.
+    if (config.mode == "encoder" && has_frequency_field)
+    {
+        return makeError("Поле \"frequency_hz\"/\"duty_percent\" несовместимо с mode=\"encoder\" "
+            "— датащит требует prescaler=1 в режиме энкодера, задайте \"prescaler\"/\"arr\"/\"cmp\" явно");
     }
 
     if (has_frequency_field)
@@ -176,7 +252,16 @@ ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
         }
 
         const long arr_value = chosen_period_ticks - 1;
-        const long cmp_value = std::lround(static_cast<double>(chosen_period_ticks) * duty_percent / 100.0);
+        // Реальное железо (подтверждено двухточечным мультиметр-тестом,
+        // docs/implementations/timer16.md, раздел "Результат (2026-09-06)"):
+        // высокий уровень держится ARR-CMP+1 тактов из ARR+1, т.е. ОБРАТНО
+        // пропорционально CMP (большой CMP -> короткий высокий уровень), а
+        // не CMP/ARR напрямую. Без этой инверсии frequency_hz/duty_percent
+        // выдавал на выходе (100-duty_percent)% вместо duty_percent% —
+        // поймано мультиметром на реальной плате 2026-10-14 (запрошено 25%,
+        // измерено 75%).
+        const long cmp_value = chosen_period_ticks -
+            std::lround(static_cast<double>(chosen_period_ticks) * duty_percent / 100.0);
 
         config.has_frequency_duty = true;
         config.requested_frequency_hz = frequency_hz;
@@ -202,6 +287,11 @@ ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
         || !kValidPrescalers.count(timer16["prescaler"].get<int>()))
     {
         return makeError("Поле \"prescaler\" содержит недопустимое значение (разрешены степени двойки 1-128)");
+    }
+    if (config.mode == "encoder" && timer16["prescaler"].get<int>() != 1)
+    {
+        return makeError("Поле \"prescaler\" должно быть равно 1 для mode=\"encoder\" "
+            "(датащит, раздел «Режим энкодера»: PRESC[2:0] обязан иметь начальное значение)");
     }
 
     if (!timer16["arr"].is_number_integer())

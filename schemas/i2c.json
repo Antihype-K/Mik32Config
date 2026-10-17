@@ -19,11 +19,6 @@
       "values": [100000, 400000, 1000000],
       "_comment": "Standard/Fast/Fast+ — из черновика архитектуры §5.4. TIMINGR (PRESC/SCLDEL/SDADEL/SCLH/SCLL) не хранится в схеме и не считается кодогеном на этапе генерации — в сгенерированный код вставляется вызов реального HAL_I2C_calcFreqCoef(&hi2c) (mik32_hal_i2c.c:199-217), который сам вычисляет эти поля из Init.frequency=clock_speed и Init.duty_factor (хардкод =2 в кодогене, см. codegen/i2c/i2c_codegen.cpp)."
     },
-    "demo": {
-      "type": "enum",
-      "values": ["scanner", "ping_pong", "receive", "scanner_target"],
-      "_comment": "Не аппаратное поле HAL — переключатель поведения генерируемого main.c (пользовательское решение из /grill-me сессии). 'scanner' — только master (дефолт для master), требует блок uart в том же конфиге. 'receive' — только slave (дефолт для slave), пассивный приём (ждёт ЗАПИСЬ от master через HAL_I2C_Slave_Receive — НЕ отвечает на HAL_I2C_Master_Receive сканера, см. docs/implementations/i2c.md). 'scanner_target' — только slave, цикл HAL_I2C_Slave_Transmit с фиксированным байтом, специально чтобы ACK'ать чтение от сканера. 'ping_pong' — доступен для обоих режимов, парный демо-протокол master<->slave."
-    },
     "address_mode": {
       "type": "enum",
       "values": ["7bit", "10bit"],
@@ -38,11 +33,43 @@
       },
       "_comment": "Только для mode=slave. I2C_ADDRESS_7BIT_MAX=0x7F, I2C_ADDRESS_10BIT_MAX=0x3FF (mik32_hal_i2c.h:32-33)."
     },
-    "target_address": {
+    "digital_filter": {
+      "type": "enum_int",
+      "values": [0, 1, 2, 15],
+      "default": 0,
+      "_comment": "mik32_hal_i2c.h, HAL_I2C_DigitalFilterTypeDef: I2C_DIGITALFILTER_OFF/1CLOCKCYCLES/2CLOCKCYCLES/15CLOCKCYCLES — число тактов подавления импульсных помех на SDA/SCL. И master, и slave читают это поле (HAL_I2C_DigitalFilterInit вызывается из обеих веток HAL_I2C_Init, mik32_hal_i2c.c). Дефолт 0 сохраняет прежнее хардкод-поведение кодогена (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 1 / I2C)."
+    },
+    "analog_filter": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "mik32_hal_i2c.h, HAL_I2C_AnalogFilterTypeDef — ЗНАЧЕНИЯ ИНВЕРТИРОВАНЫ: I2C_ANALOGFILTER_ENABLE=0, I2C_ANALOGFILTER_DISABLE=1. Поле схемы true/false читается в обычном смысле ('фильтр включён'/'выключен'), инверсия скрыта в кодогене (codegen/project/i2c_contribution.cpp). И master, и slave читают (HAL_I2C_AnalogFilterInit вызывается из обеих веток). Дефолт false сохраняет прежний хардкод I2C_ANALOGFILTER_DISABLE."
+    },
+    "general_call": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "Только для mode=slave. mik32_hal_i2c.h, HAL_I2C_GeneralCallTypeDef — ACK на общий адрес вызова 0x00. Читается только HAL_I2C_SlaveInit (mik32_hal_i2c.c:178-191), master игнорирует. Дефолт false = прежний хардкод I2C_GENERALCALL_DISABLE."
+    },
+    "no_stretch_mode": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "Только для mode=slave (в master HAL всегда принудительно ставит I2C_NOSTRETCH_DISABLE — mik32_hal_i2c.h, комментарий к NoStretchMode). true включает I2C_NOSTRETCH_ENABLE (растягивание SCL слейвом выключено). ВНИМАНИЕ: Errata MIK32V2 v1.0.1 §4.1 — при NOSTRETCH=1 без прерываний/DMA возможна недозагрузка TXDR (флаг TXIS формируется в конце передачи байта, а не в начале); этот кодоген всегда генерирует только блокирующие Slave_Transmit/Receive (без прерываний), поэтому при no_stretch_mode=true в сгенерированный код вставляется явное предупреждение (codegen/project/i2c_contribution.cpp). Дефолт false = прежний хардкод."
+    },
+    "dual_address_enabled": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "Только для mode=slave. mik32_hal_i2c.h, HAL_I2C_DualAddressTypeDef / I2C_InitTypeDef.DualAddressMode. По HAL-комментарию совместим только с 7-битным основным адресом ('Можно использовать, если длина основного адреса 7 бит') — парсер отклоняет dual_address_enabled=true при address_mode=10bit."
+    },
+    "own_address_2": {
       "type": "integer",
       "min": 0,
       "max": 127,
-      "_comment": "Только для mode=master И demo=ping_pong — адрес парного slave-инстанса (обычно на второй плате или на второй шине I2C той же платы, соединённой перемычками SDA-SDA/SCL-SCL с master). 7-битный (ping_pong-демо не поддерживает 10-битную адресацию в этой сессии)."
+      "_comment": "Только для mode=slave И dual_address_enabled=true. Второй собственный 7-битный адрес (mik32_hal_i2c.h: 'Дополнительный 7 битный адрес')."
+    },
+    "own_address_2_mask": {
+      "type": "enum",
+      "values": ["none", "111111x", "11111xx", "1111xxx", "111xxxx", "11xxxxx", "1xxxxxx", "1111111"],
+      "default": "none",
+      "_comment": "Только для mode=slave И dual_address_enabled=true. mik32_hal_i2c.h, HAL_I2C_OwnAddress2MaskTypeDef (I2C_OWNADDRESS2_MASK_DISABLE..1111111) — число 'x' в имени = число младших бит OA2, маскируемых при сравнении. 'none' = I2C_OWNADDRESS2_MASK_DISABLE (точное сравнение, без маски)."
     }
   }
 }

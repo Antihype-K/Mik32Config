@@ -32,6 +32,66 @@ std::string findUnsupportedRustFeature(const ProjectConfig& config)
         return "Периферия \"spi\" не поддерживается в Rust-ветке конфигуратора"
                " (mik32-hal-main не содержит модуля SPI, см. docs/implementations/rust_codegen.md)";
     }
+    if (config.rtc_block.has_value())
+    {
+        return "Периферия \"rtc\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля RTC, AUDIT_TZ_PERIPHERY_GAPS.md — RTC добавлен только в C-ветке)";
+    }
+    if (config.crc_block.has_value())
+    {
+        return "Периферия \"crc\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля CRC, AUDIT_TZ_PERIPHERY_GAPS.md — CRC добавлен только в C-ветке)";
+    }
+    if (config.eeprom_block.has_value())
+    {
+        return "Периферия \"eeprom\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля EEPROM, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (config.wdt_block.has_value())
+    {
+        return "Периферия \"wdt\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля WDT, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (!config.dac_blocks.empty())
+    {
+        return "Периферия \"dac\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля DAC, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (config.adc_block.has_value())
+    {
+        return "Периферия \"adc\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля ADC, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (config.crypto_block.has_value())
+    {
+        return "Периферия \"crypto\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля CRYPTO, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (config.otp_block.has_value())
+    {
+        return "Периферия \"otp\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля OTP, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (config.tsens_block.has_value())
+    {
+        return "Периферия \"tsens\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля TSENS, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (config.pvd_block.has_value())
+    {
+        return "Периферия \"pvd\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля PVD, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (config.bus_watchdog_block.has_value())
+    {
+        return "Периферия \"bus_watchdog\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля bus watchdog, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
+    }
+    if (!config.dma_blocks.empty())
+    {
+        return "Периферия \"dma\" не поддерживается в Rust-ветке конфигуратора"
+               " (mik32-hal-main не содержит модуля DMA, docs/implementations/dma.md — добавлен только в C-ветке)";
+    }
     if (config.freertos.enabled)
     {
         return "FreeRTOS не поддерживается в Rust-ветке конфигуратора"

@@ -1,0 +1,22 @@
+{
+  "peripheral_type": "adc",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_hal_adc.h: ADC_HandleTypeDef.Instance = ANALOG_REG — единственный глобальный блок (как DAC — общий аналоговый регистровый блок), канал выбирается полем Sel, не отдельным instance.",
+  "required_fields": ["type", "channel", "ext_ref", "ext_clb"],
+  "fields": {
+    "channel": {
+      "type": "integer",
+      "min": 0,
+      "max": 7,
+      "_comment": "ADC_InitTypeDef.Sel -> ADC_CHANNEL0..7 (mik32_hal_adc.h) — начальный канал при инициализации. Переключение на другие каналы в рантайме (ADC_SEL_CHANNEL/HAL_ADC_SINGLE_AND_SET_CH) остаётся за пользователем — кодоген не может угадать порядок опроса каналов наперёд."
+    },
+    "ext_ref": {
+      "type": "boolean",
+      "_comment": "ADC_InitTypeDef.EXTRef -> ADC_EXTREF_OFF(false, встроенный ИОН 1.2В)/ADC_EXTREF_ON(true, внешний ИОН)."
+    },
+    "ext_clb": {
+      "type": "boolean",
+      "_comment": "ADC_InitTypeDef.EXTClb -> ADC_EXTCLB_CLBREF(false)/ADC_EXTCLB_ADCREF(true, внешний вывод ADC_REF=GPIO_1/PIN_11 для V2). Вывод занимается только при ext_ref=true И ext_clb=true одновременно (mik32_hal_adc.c, HAL_ADC_MspInit)."
+    }
+  }
+}

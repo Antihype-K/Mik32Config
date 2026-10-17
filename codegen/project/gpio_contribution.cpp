@@ -25,8 +25,7 @@ namespace
 
 ParseResult<PeripheralContribution> buildGpioContribution(
     const std::vector<GpioConfig>& blocks,
-    const GpioKnowledge& knowledge,
-    bool emit_demo_loop)
+    const GpioKnowledge& knowledge)
 {
     if (blocks.empty())
     {
@@ -175,33 +174,6 @@ ParseResult<PeripheralContribution> buildGpioContribution(
         irq_template << "}\n";
         contribution.helper_functions_text = irq_template.str();
         contribution.irq_handler_function_name = irqHandlerFunctionName(instance);
-    }
-
-    // Демо-логика: переключение только тех пинов, что настроены на выход —
-    // HAL_GPIO_TogglePin для входа физически ничего не даст (регистр
-    // OUTPUT у пина в режиме входа не управляет линией), а для serial/
-    // timer_serial/analog вывод вообще замультиплексирован на другую
-    // периферию, и запись в него конфликтует с её работой.
-    if (emit_demo_loop)
-    {
-        std::ostringstream loop;
-        for (const GpioConfig& block : blocks)
-        {
-            if (block.mode != "output")
-            {
-                continue;
-            }
-            loop << "            HAL_GPIO_TogglePin(" << *gpio_handle << ", "
-                 << buildPinMaskExpression(block.pins) << ");\n";
-        }
-        contribution.loop_body = loop.str();
-        if (!contribution.loop_body.empty())
-        {
-            contribution.wants_loop_delay = true;
-            // main.c обращается к HAL_GPIO_TogglePin и к константам
-            // GPIO_PIN_* — без этого заголовка имена не объявлены.
-            contribution.main_c_includes = {"mik32_hal_gpio.h"};
-        }
     }
 
     return ParseResult<PeripheralContribution>{true, "", contribution};

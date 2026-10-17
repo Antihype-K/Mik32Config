@@ -6,6 +6,7 @@
 #ifndef MIK32_CONFIGURATOR_SPI_PARSER_H
 #define MIK32_CONFIGURATOR_SPI_PARSER_H
 #include <string>
+#include <vector>
 #include "parse_result.h"
 #include "json.hpp"
 
@@ -25,6 +26,11 @@ struct SpiConfig
     bool manual_cs;
     bool decoder;
     std::string chip_select;    // "cs0".."cs3"
+
+    // Общее для master/slave, необязательное. Пусто — старое поведение
+    // (режим опроса). Допустимые значения — "rx_fifo_not_empty",
+    // "tx_fifo_not_full", "rx_overflow", "mode_fail" (см. schemas/spi.json).
+    std::vector<std::string> interrupts;
 };
 
 ParseResult<SpiConfig> parseSpiConfig(const std::string& file_name_path);

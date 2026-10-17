@@ -1,0 +1,7 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    { "type": "eeprom", "mode": "three_stage", "ecc_enabled": false, "single_error_interrupt_enabled": true }
+  ]
+}

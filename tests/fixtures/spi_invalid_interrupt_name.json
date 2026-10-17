@@ -1,0 +1,19 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "spi",
+      "instance": 0,
+      "mode": "master",
+      "clk_phase": "on",
+      "clk_polarity": "high",
+      "threshold_tx": 4,
+      "baud_rate_div": 64,
+      "manual_cs": false,
+      "decoder": false,
+      "chip_select": "cs0",
+      "interrupts": ["rx_fifo_not_empty", "tx_fifo_full"]
+    }
+  ]
+}

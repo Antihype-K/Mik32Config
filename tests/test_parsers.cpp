@@ -9,12 +9,41 @@
 #include <uart_knowledge.h>
 #include <user_code_markers.h>
 #include <cross_module_validator.h>
+#include <timer16_parser.h>
 #include <timer16_knowledge.h>
+#include <timer16_contribution.h>
+#include <i2c_parser.h>
 #include <i2c_knowledge.h>
 #include <timer32_parser.h>
 #include <timer32_knowledge.h>
 #include <spi_parser.h>
 #include <spi_knowledge.h>
+#include <rtc_parser.h>
+#include <rtc_knowledge.h>
+#include <rtc_contribution.h>
+#include <crc_parser.h>
+#include <crc_contribution.h>
+#include <eeprom_parser.h>
+#include <eeprom_contribution.h>
+#include <wdt_parser.h>
+#include <wdt_contribution.h>
+#include <dac_parser.h>
+#include <dac_knowledge.h>
+#include <dac_contribution.h>
+#include <adc_parser.h>
+#include <adc_contribution.h>
+#include <crypto_parser.h>
+#include <crypto_contribution.h>
+#include <otp_parser.h>
+#include <otp_contribution.h>
+#include <tsens_parser.h>
+#include <tsens_contribution.h>
+#include <pvd_parser.h>
+#include <pvd_contribution.h>
+#include <bus_watchdog_parser.h>
+#include <bus_watchdog_contribution.h>
+#include <dma_parser.h>
+#include <dma_contribution.h>
 #include <project_config.h>
 #include <project_codegen.h>
 #include <cmake_project_codegen.h>
@@ -110,6 +139,8 @@ namespace
         knowledge.i2c = *loadI2cKnowledge("../knowledge_base/i2c.json").config;
         knowledge.timer32 = *loadTimer32Knowledge("../knowledge_base/timer32.json").config;
         knowledge.spi = *loadSpiKnowledge("../knowledge_base/spi.json").config;
+        knowledge.rtc = *loadRtcKnowledge("../knowledge_base/rtc.json").config;
+        knowledge.dac = *loadDacKnowledge("../knowledge_base/dac.json").config;
         return knowledge;
     }
 
@@ -256,6 +287,213 @@ TEST(Timer16Parse, RejectsFrequencyUnreachableByAnyPrescaler)
     ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_frequency_too_low_unreachable.json");
 
     EXPECT_FALSE(result.success);
+}
+
+// ============================================================================
+// Timer16 — Тир 1 аудита (AUDIT_TZ_PERIPHERY_GAPS.md): clock_source (6 из 7
+// вариантов HAL, минус EXTERNAL_INPUT1 — тот уже доступен через
+// mode="external_event_count"), trigger_edge, external_clock_filter/
+// trigger_filter, waveform_inverted.
+// ============================================================================
+
+TEST(Timer16Parse, DefaultsNewFieldsToPreviousHardcodedBehavior)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->clock_source, "internal_system");
+    EXPECT_EQ(result.config->trigger_edge, "software");
+    EXPECT_EQ(result.config->external_clock_filter, "none");
+    EXPECT_EQ(result.config->trigger_filter, "none");
+    EXPECT_FALSE(result.config->waveform_inverted);
+}
+
+TEST(Timer16Parse, ParsesClockSourceAhb)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_clock_source_ahb.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->clock_source, "internal_ahb");
+}
+
+TEST(Timer16Parse, ParsesTriggerEdgeAndFilters)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_trigger_and_filters.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->trigger_edge, "rising");
+    EXPECT_EQ(result.config->external_clock_filter, "4clock");
+    EXPECT_EQ(result.config->trigger_filter, "8clock");
+}
+
+TEST(Timer16Parse, ParsesWaveformInverted)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_waveform_inverted.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->waveform_inverted);
+}
+
+// clock_source принимается и для external_event_count — парсер его не
+// отклоняет (значение проверяется позже кодогеном, который его игнорирует,
+// см. ProjectCodegen.Timer16IgnoresClockSourceForExternalEventCount).
+TEST(Timer16Parse, AcceptsClockSourceWithExternalEventCountMode)
+{
+    ParseResult<Timer16Config> result =
+        parseTimer16Config("fixtures/timer16_external_event_count_with_clock_source.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->mode, "external_event_count");
+    EXPECT_EQ(result.config->clock_source, "internal_ahb");
+}
+
+TEST(Timer16Parse, RejectsUnknownClockSource)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_invalid_clock_source.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(Timer16Parse, RejectsUnknownTriggerEdge)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_invalid_trigger_edge.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(Timer16Parse, RejectsUnknownFilterValue)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_invalid_filter.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+// Clock.Source при external_event_count всегда EXTERNAL_INPUT1 — смысл
+// режима в подсчёте внешних событий на этом входе, config.clock_source
+// (здесь internal_ahb) принят парсером выше, но кодоген его не читает.
+TEST(ProjectCodegen, Timer16IgnoresClockSourceForExternalEventCount)
+{
+    ParseResult<Timer16Config> config_result =
+        parseTimer16Config("fixtures/timer16_external_event_count_with_clock_source.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<Timer16Knowledge> knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<PeripheralContribution> contribution_result =
+        buildTimer16Contribution(*config_result.config, *knowledge_result.config);
+    ASSERT_TRUE(contribution_result.success) << contribution_result.error;
+
+    EXPECT_TRUE(contains(contribution_result.config->init_function_text,
+        ".Clock.Source = TIMER16_SOURCE_EXTERNAL_INPUT1;"));
+    EXPECT_FALSE(contains(contribution_result.config->init_function_text, "TIMER16_SOURCE_INTERNAL_AHB"));
+}
+
+// Waveform.Polarity игнорируется (но принят парсером) при
+// external_event_count — Waveform.Enable там DISABLE (mode_waveform_enable).
+TEST(ProjectCodegen, Timer16PeriodModeAppliesWaveformInverted)
+{
+    ParseResult<Timer16Config> config_result = parseTimer16Config("fixtures/timer16_waveform_inverted.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<Timer16Knowledge> knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<PeripheralContribution> contribution_result =
+        buildTimer16Contribution(*config_result.config, *knowledge_result.config);
+    ASSERT_TRUE(contribution_result.success) << contribution_result.error;
+
+    EXPECT_TRUE(contains(contribution_result.config->init_function_text,
+        ".Waveform.Polarity = TIMER16_WAVEFORM_POLARITY_INVERTED;"));
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Timer16 (2026-10-14) — режим энкодера.
+TEST(Timer16Parse, ParsesValidEncoderMode)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_encoder_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->mode, "encoder");
+    EXPECT_EQ(result.config->prescaler, 1);
+    EXPECT_EQ(result.config->arr, 999u);
+}
+
+// Датащит, раздел «Режим энкодера»: PRESC[2:0] обязан быть 0b000 (prescaler=1).
+TEST(Timer16Parse, RejectsEncoderModeWithPrescalerNotOne)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_encoder_prescaler_not_one.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(Timer16Parse, RejectsEncoderModeWithFrequencyHz)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_encoder_frequency_hz_rejected.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, Timer16EncoderModeSetsEncoderModeFieldAndCallsEncoderStart)
+{
+    ParseResult<Timer16Config> config_result = parseTimer16Config("fixtures/timer16_encoder_valid.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<Timer16Knowledge> knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<PeripheralContribution> contribution_result =
+        buildTimer16Contribution(*config_result.config, *knowledge_result.config);
+    ASSERT_TRUE(contribution_result.success) << contribution_result.error;
+
+    const std::string& init_c = contribution_result.config->init_function_text;
+    EXPECT_TRUE(contains(init_c, ".EncoderMode = TIMER16_ENCODER_ENABLE;"));
+    EXPECT_TRUE(contains(init_c, "HAL_Timer16_Encoder_Start(&htimer16_1, 999);"));
+    EXPECT_TRUE(contains(init_c, "Input1=GPIO_0/PIN_8, Input2=GPIO_0/PIN_9"));
+}
+
+// period/one_shot/external_event_count не должны неожиданно получить
+// EncoderMode=ENABLE — явная регрессия-защита для веток, не относящихся к encoder.
+TEST(ProjectCodegen, Timer16NonEncoderModeKeepsEncoderModeDisabled)
+{
+    ParseResult<Timer16Config> config_result = parseTimer16Config("fixtures/timer16_waveform_inverted.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<Timer16Knowledge> knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<PeripheralContribution> contribution_result =
+        buildTimer16Contribution(*config_result.config, *knowledge_result.config);
+    ASSERT_TRUE(contribution_result.success) << contribution_result.error;
+
+    EXPECT_TRUE(contains(contribution_result.config->init_function_text,
+        ".EncoderMode = TIMER16_ENCODER_DISABLE;"));
+}
+
+// Input2 (GPIO_0/PIN_9) занят Timer16_1 в режиме encoder — явный gpio-блок на
+// том же пине должен конфликтовать (та же физическая коллизия, что и у
+// ШИМ-вывода/SPI/Timer32, см. CrossModuleValidator.DetectsTimer32ChannelPinConflict).
+TEST(CrossModuleValidator, DetectsTimer16EncoderInput2GpioConflict)
+{
+    ParseResult<UartKnowledge> uart_knowledge_result = loadUartKnowledge("../knowledge_base/uart.json");
+    ASSERT_TRUE(uart_knowledge_result.success) << uart_knowledge_result.error;
+    ParseResult<Timer16Knowledge> timer16_knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(timer16_knowledge_result.success) << timer16_knowledge_result.error;
+    ParseResult<I2cKnowledge> i2c_knowledge_result = loadI2cKnowledge("../knowledge_base/i2c.json");
+    ASSERT_TRUE(i2c_knowledge_result.success) << i2c_knowledge_result.error;
+    ParseResult<Timer32Knowledge> timer32_knowledge_result = loadTimer32Knowledge("../knowledge_base/timer32.json");
+    ASSERT_TRUE(timer32_knowledge_result.success) << timer32_knowledge_result.error;
+    ParseResult<SpiKnowledge> spi_knowledge_result = loadSpiKnowledge("../knowledge_base/spi.json");
+    ASSERT_TRUE(spi_knowledge_result.success) << spi_knowledge_result.error;
+
+    CrossModuleValidationResult result = validatePinConflicts(
+        "fixtures/cross_timer16_encoder_input2_gpio_conflict.json", *uart_knowledge_result.config,
+        *timer16_knowledge_result.config, *i2c_knowledge_result.config, *timer32_knowledge_result.config,
+        *spi_knowledge_result.config);
+
+    ASSERT_TRUE(result.success) << result.error;
+    ASSERT_EQ(result.conflicts.size(), 1u);
+    EXPECT_EQ(result.conflicts[0].gpio_instance, 0);
+    EXPECT_EQ(result.conflicts[0].pin, 9);
 }
 
 TEST(UartParse, RejectsInvalidBaudRate)
@@ -540,41 +778,15 @@ TEST(ProjectCodegen, MergesGpioBlocksOfSameInstanceIntoOneFunction)
     EXPECT_EQ(clock_count, 1u);
 }
 
-// Каждая demo-логика получает собственную область видимости — иначе
-// одноимённые локальные переменные двух модулей столкнулись бы.
-TEST(ProjectCodegen, WrapsEachDemoLoopBodyInItsOwnScope)
+// Тело while(1) всегда пустое под маркерами ТЗ §3.1.7.3 — конфигуратор
+// настраивает периферию, а не пишет прикладную логику.
+TEST(ProjectCodegen, EmitsEmptyLoopUnderUserCodeMarkers)
 {
     ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_all_peripherals.json");
     ASSERT_TRUE(config_result.success) << config_result.error;
 
     ParseResult<GeneratedProjectFirmware> firmware_result =
         generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
-    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
-
-    const std::string& main_c = firmware_result.config->main_c;
-    EXPECT_TRUE(contains(main_c, "        /* GPIO_2 */\n        {\n"));
-    EXPECT_TRUE(contains(main_c, "        /* UART_0 */\n        {\n"));
-    EXPECT_TRUE(contains(main_c, "        /* I2C_0 */\n        {\n"));
-    // Задержка одна на весь цикл, а не по одной на модуль.
-    size_t delay_count = 0;
-    for (size_t at = main_c.find("        HAL_DelayMs(500);");
-         at != std::string::npos;
-         at = main_c.find("        HAL_DelayMs(500);", at + 1))
-    {
-        ++delay_count;
-    }
-    EXPECT_EQ(delay_count, 1u);
-}
-
-// emit_demo_loops=false — «чистая» генерация: только инициализация, пустое
-// тело while(1) под маркерами ТЗ §3.1.7.3.
-TEST(ProjectCodegen, EmitsEmptyLoopWhenDemoDisabled)
-{
-    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_all_peripherals.json");
-    ASSERT_TRUE(config_result.success) << config_result.error;
-
-    ParseResult<GeneratedProjectFirmware> firmware_result =
-        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests(), false);
     ASSERT_TRUE(firmware_result.success) << firmware_result.error;
 
     const std::string& main_c = firmware_result.config->main_c;
@@ -583,20 +795,6 @@ TEST(ProjectCodegen, EmitsEmptyLoopWhenDemoDisabled)
     EXPECT_FALSE(contains(main_c, "xprintf"));
     // Инициализация при этом остаётся полной.
     EXPECT_TRUE(contains(main_c, "    I2C_0_Init();"));
-}
-
-// Сканер I2C без UART печатать результат не может — кодоген обязан
-// отказаться, а не выпустить немой сканер.
-TEST(ProjectCodegen, RejectsI2cScannerWithoutConsoleUart)
-{
-    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_i2c_scanner_no_uart.json");
-    ASSERT_TRUE(config_result.success) << config_result.error;
-
-    ParseResult<GeneratedProjectFirmware> firmware_result =
-        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
-
-    EXPECT_FALSE(firmware_result.success);
-    EXPECT_TRUE(contains(firmware_result.error, "scanner")) << firmware_result.error;
 }
 
 // --- Timer32 (ТЗ §3.1.5) ----------------------------------------------------
@@ -686,6 +884,59 @@ TEST(Timer32Parse, RejectsChannelIndexOutOfRange)
     EXPECT_FALSE(result.success);
 }
 
+// AUDIT_TZ_PERIPHERY_GAPS.md, Timer32 — clock_source/overflow_interrupt/
+// underflow_interrupt, необязательные поля, общие для любого instance.
+TEST(Timer32Parse, DefaultsClockSourceToPrescalerWhenFieldAbsent)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_base_counter.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->clock_source, "prescaler");
+    EXPECT_FALSE(result.config->overflow_interrupt);
+    EXPECT_FALSE(result.config->underflow_interrupt);
+}
+
+TEST(Timer32Parse, ParsesClockSourceTim1Hclk)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_clock_source_tim1_hclk.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->clock_source, "tim1_hclk");
+}
+
+TEST(Timer32Parse, ParsesClockSourceTim2Lsi32k)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_clock_source_tim2_lsi32k.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->clock_source, "tim2_lsi32k");
+}
+
+TEST(Timer32Parse, RejectsUnknownClockSource)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_invalid_clock_source.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(Timer32Parse, ParsesOverflowInterruptOnBaseCounter)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_base_counter_with_overflow_interrupt.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->overflow_interrupt);
+    EXPECT_FALSE(result.config->underflow_interrupt);
+}
+
+TEST(Timer32Parse, ParsesBothOverflowAndUnderflowInterrupts)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_base_counter_with_both_interrupts.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->overflow_interrupt);
+    EXPECT_TRUE(result.config->underflow_interrupt);
+}
+
 // Канал 0 модуля Timer32_1 закреплён за GPIO_0/PIN_0 (ТЗ §3.1.5 п.4) — тот же
 // вывод, явно занятый GPIO-блоком, должен считаться конфликтом.
 TEST(CrossModuleValidator, DetectsTimer32ChannelPinConflict)
@@ -748,17 +999,957 @@ TEST(ProjectCodegen, Timer32ChannelConfigEmitsErrataWarningAndIrqTemplate)
     EXPECT_TRUE(contains(init_c, "Errata п. 9.1"));
     EXPECT_TRUE(contains(init_c, "HAL_Timer32_PWM_Start_IT(&htimer32_1, &htimer32_1_ch0);"));
     EXPECT_TRUE(contains(init_c, "void TIMER32_1_IRQHandler_Template(void)"));
-    // ТЗ §3.1.5 п.3: сброс флага — первое действие тела функции-обработчика.
+    // Errata §9.1, полный обход: читаем статус ДО очистки, отключаем маску
+    // ТОЛЬКО сработавшего источника и сбрасываем ТОЛЬКО его флаг (не общий
+    // HAL_Timer32_InterruptFlags_Clear — тот сбросил бы вообще все флаги разом).
     const size_t handler_at = init_c.find("void TIMER32_1_IRQHandler_Template(void)");
     ASSERT_NE(handler_at, std::string::npos);
     const size_t body_open = init_c.find('{', handler_at);
-    const size_t clear_at = init_c.find("HAL_Timer32_InterruptFlags_Clear(&htimer32_1);", body_open);
-    ASSERT_NE(clear_at, std::string::npos);
-    // Никакого другого исполняемого выражения (не считая пустых строк) между
-    // открывающей скобкой и вызовом очистки флага быть не должно.
-    const std::string between = init_c.substr(body_open + 1, clear_at - (body_open + 1));
+    const size_t flags_decl_at = init_c.find(
+        "const uint32_t flags = HAL_Timer32_InterruptFlags_Get(&htimer32_1);", body_open);
+    ASSERT_NE(flags_decl_at, std::string::npos);
+    // Между открывающей скобкой и чтением статуса — только пустые строки:
+    // чтение статуса первое, буквально по примеру errata (читает ДО очистки).
+    const std::string between = init_c.substr(body_open + 1, flags_decl_at - (body_open + 1));
     EXPECT_TRUE(std::all_of(between.begin(), between.end(),
         [](char c) { return c == ' ' || c == '\n' || c == '\t' || c == '\r'; }));
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_InterruptMask_Clear(&htimer32_1, TIMER32_INT_OVERFLOW_M);"));
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_InterruptFlags_ClearMask(&htimer32_1, TIMER32_INT_OVERFLOW_M);"));
+    EXPECT_TRUE(contains(init_c, "void TIMER32_1_ReenableAfterErrata91_Template(void)"));
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_InterruptMask_Set(&htimer32_1, TIMER32_INT_OVERFLOW_M);"));
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Timer32 — clock_source: без поля поведение не
+// меняется (старый хардкод TIMER32_SOURCE_PRESCALER).
+TEST(ProjectCodegen, Timer32WithoutClockSourceFieldStaysOnPrescaler)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/timer32_base_counter.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    EXPECT_TRUE(contains(firmware_result.config->mik32_init_c, "htimer32_0.Clock.Source = TIMER32_SOURCE_PRESCALER;"));
+}
+
+TEST(ProjectCodegen, Timer32ClockSourceTim1HclkIsKnownFrequency)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/timer32_clock_source_tim1_hclk.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "htimer32_0.Clock.Source = TIMER32_SOURCE_TIM1_HCLK;"));
+    EXPECT_TRUE(contains(init_c, "Расчётная частота счёта"));
+}
+
+// clock_source=tim2_lsi32k — внешний/некалиброванный источник, частота не
+// должна выдумываться (тот же принцип, что у Timer16 osc32k/lsi32k).
+TEST(ProjectCodegen, Timer32ClockSourceTim2Lsi32kDoesNotComputeFrequency)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/timer32_clock_source_tim2_lsi32k.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "htimer32_0.Clock.Source = TIMER32_SOURCE_TIM2_LSI32K;"));
+    EXPECT_TRUE(contains(init_c, "частота счёта не вычислена"));
+    EXPECT_FALSE(contains(init_c, "Расчётная частота счёта"));
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Timer32 — overflow_interrupt на базовом
+// счётчике (раньше такого способа не было вообще, только HAL_Timer32_Start).
+TEST(ProjectCodegen, Timer32BaseCounterWithOverflowInterruptUsesStartIT)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/timer32_base_counter_with_overflow_interrupt.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_Start_IT(&htimer32_0, TIMER32_INT_OVERFLOW_M);"));
+    EXPECT_TRUE(contains(init_c, "void TIMER32_0_IRQHandler_Template(void)"));
+    EXPECT_TRUE(contains(init_c, "void TIMER32_0_ReenableAfterErrata91_Template(void)"));
+    EXPECT_FALSE(contains(init_c, "HAL_Timer32_Start(&htimer32_0);"));
+}
+
+TEST(ProjectCodegen, Timer32BaseCounterWithBothInterruptsCombinesMask)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/timer32_base_counter_with_both_interrupts.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    EXPECT_TRUE(contains(firmware_result.config->mik32_init_c,
+        "HAL_Timer32_Start_IT(&htimer32_1, TIMER32_INT_OVERFLOW_M | TIMER32_INT_UNDERFLOW_M);"));
+}
+
+// Канал уже включает OVERFLOW сам (PWM_Start_IT) — underflow_interrupt
+// добавляется дополнительным вызовом HAL_Timer32_InterruptMask_Set.
+TEST(ProjectCodegen, Timer32ChannelWithExtraUnderflowInterruptAddsSeparateMaskCall)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/timer32_channel_pwm_with_underflow_interrupt.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_PWM_Start_IT(&htimer32_1, &htimer32_1_ch0);"));
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_InterruptMask_Set(&htimer32_1, TIMER32_INT_UNDERFLOW_M);"));
+}
+
+// Errata §9.1, обход с ДВУМЯ независимыми источниками (ШИМ-канал делит
+// TIMER32_INT_OVERFLOW_M + отдельный underflow_interrupt) — именно тот
+// случай, где важно не продублировать overflow дважды в списке источников
+// и не дать одному сработавшему источнику затереть флаг другого.
+TEST(ProjectCodegen, Timer32Errata91WorkaroundHandlesTwoIndependentSources)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/timer32_channel_pwm_with_underflow_interrupt.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    ASSERT_TRUE(contains(init_c, "void TIMER32_1_IRQHandler_Template(void)"));
+    ASSERT_TRUE(contains(init_c, "void TIMER32_1_ReenableAfterErrata91_Template(void)"));
+
+    // Ровно один источник OVERFLOW (не продублирован ШИМ-каналом и
+    // underflow_interrupt отдельно) — считаем вхождения mask_expr в условии "if".
+    const size_t overflow_if_count = [&]()
+    {
+        size_t count = 0, pos = 0;
+        while ((pos = init_c.find("if (flags & TIMER32_INT_OVERFLOW_M)", pos)) != std::string::npos)
+        {
+            ++count;
+            pos += 1;
+        }
+        return count;
+    }();
+    EXPECT_EQ(overflow_if_count, 1u);
+
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_InterruptMask_Clear(&htimer32_1, TIMER32_INT_OVERFLOW_M);"));
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_InterruptFlags_ClearMask(&htimer32_1, TIMER32_INT_OVERFLOW_M);"));
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_InterruptMask_Clear(&htimer32_1, TIMER32_INT_UNDERFLOW_M);"));
+    EXPECT_TRUE(contains(init_c, "HAL_Timer32_InterruptFlags_ClearMask(&htimer32_1, TIMER32_INT_UNDERFLOW_M);"));
+
+    // Повторное включение в шаблоне для основного цикла — оба источника,
+    // каждый под своей отдельной проверкой "флаг реально нулевой".
+    const size_t reenable_at = init_c.find("void TIMER32_1_ReenableAfterErrata91_Template(void)");
+    const std::string reenable_body = init_c.substr(reenable_at);
+    EXPECT_TRUE(contains(reenable_body, "if ((flags & TIMER32_INT_OVERFLOW_M) == 0)"));
+    EXPECT_TRUE(contains(reenable_body, "if ((flags & TIMER32_INT_UNDERFLOW_M) == 0)"));
+}
+
+// ============================================================================
+// RTC — AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. Единственный глобальный блок
+// (нет instance). mik32_hal_rtc.h/.c + оба вендорных примера Hal_RTC/Hal_RTC_IRQ.
+// ============================================================================
+
+TEST(RtcParse, ParsesValidConfigWithoutAlarm)
+{
+    ParseResult<RtcConfig> result = parseRtcConfig("fixtures/rtc_valid_no_alarm.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->dow, 2);
+    EXPECT_EQ(result.config->hours, 20);
+    EXPECT_EQ(result.config->century, 20);
+    EXPECT_EQ(result.config->day, 19);
+    EXPECT_EQ(result.config->month, 7);
+    EXPECT_FALSE(result.config->has_alarm);
+}
+
+TEST(RtcParse, ParsesAlarmWithDefaultFullCompareFields)
+{
+    ParseResult<RtcConfig> result = parseRtcConfig("fixtures/rtc_valid_with_alarm_full_compare.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    ASSERT_TRUE(result.config->has_alarm);
+    EXPECT_EQ(result.config->alarm_seconds, 5);
+    ASSERT_EQ(result.config->alarm_compare_fields.size(), 8u);
+    EXPECT_TRUE(result.config->alarm_interrupt_enabled);
+}
+
+TEST(RtcParse, ParsesAlarmWithPartialCompareFields)
+{
+    ParseResult<RtcConfig> result = parseRtcConfig("fixtures/rtc_valid_with_alarm_partial_compare.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    ASSERT_TRUE(result.config->has_alarm);
+    ASSERT_EQ(result.config->alarm_compare_fields.size(), 3u);
+    EXPECT_FALSE(result.config->alarm_interrupt_enabled);
+}
+
+// Датащит/HAL RTC_DateTypeDef: день месяца валидируется относительно
+// month/year с учётом високосного года — 2023 не високосный, 29 февраля нет.
+TEST(RtcParse, RejectsFeb29OnNonLeapYear)
+{
+    ParseResult<RtcConfig> result = parseRtcConfig("fixtures/rtc_invalid_feb29_non_leap.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(RtcParse, AcceptsFeb29OnLeapYear)
+{
+    ParseResult<RtcConfig> result = parseRtcConfig("fixtures/rtc_valid_feb29_leap.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->day, 29);
+}
+
+TEST(RtcParse, RejectsDowOutOfRange)
+{
+    ParseResult<RtcConfig> result = parseRtcConfig("fixtures/rtc_invalid_dow_out_of_range.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(RtcParse, RejectsHoursOutOfRange)
+{
+    ParseResult<RtcConfig> result = parseRtcConfig("fixtures/rtc_invalid_hours_out_of_range.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+// RTC — единственный глобальный блок (нет instance) — второй блок type="rtc"
+// в одном проекте не имеет физического смысла.
+TEST(ProjectConfigParse, RejectsSecondRtcBlock)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/rtc_two_blocks_rejected.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, RtcWithoutAlarmSetsTimeAndDateOnly)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/rtc_valid_no_alarm.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hrtc.Instance = RTC;"));
+    EXPECT_TRUE(contains(init_c, "sTime.Dow = RTC_WEEKDAY_TUESDAY;"));
+    EXPECT_TRUE(contains(init_c, "sDate.Month = RTC_MONTH_JULY;"));
+    EXPECT_TRUE(contains(init_c, "HAL_RTC_Enable(&hrtc);"));
+    EXPECT_FALSE(contains(init_c, "RTC_AlarmTypeDef"));
+    EXPECT_FALSE(contains(init_c, "HAL_RTC_InterruptInit"));
+}
+
+TEST(ProjectCodegen, RtcWithFullCompareAlarmSetsAllMaskBitsAndInterrupt)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/rtc_valid_with_alarm_full_compare.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "sAlarm.MaskAlarmTime = RTC_TALRM_CDOW_M | RTC_TALRM_CH_M | RTC_TALRM_CM_M | RTC_TALRM_CS_M;"));
+    EXPECT_TRUE(contains(init_c, "sAlarm.MaskAlarmDate = RTC_DALRM_CC_M | RTC_DALRM_CD_M | RTC_DALRM_CM_M | RTC_DALRM_CY_M;"));
+    EXPECT_TRUE(contains(init_c, "hrtc.Interrupts.Alarm = RTC_ALARM_IRQ_ENABLE;"));
+    EXPECT_TRUE(contains(init_c, "HAL_RTC_InterruptInit(&hrtc);"));
+    EXPECT_TRUE(contains(init_c, "Errata п. 6.1"));
+    // Найдено на реальной плате: обработчик обязан звать HAL_RTC_ClearAlrmFlag,
+    // иначе уровневое прерывание вешает прошивку в момент срабатывания.
+    EXPECT_TRUE(contains(init_c, "void RTC_IRQHandler_Template(void)"));
+    EXPECT_TRUE(contains(init_c, "HAL_RTC_ClearAlrmFlag(&hrtc);"));
+}
+
+TEST(ProjectCodegen, RtcWithPartialCompareAlarmOnlyMasksSelectedFields)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/rtc_valid_with_alarm_partial_compare.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "sAlarm.MaskAlarmTime = RTC_TALRM_CH_M | RTC_TALRM_CM_M | RTC_TALRM_CS_M;"));
+    EXPECT_TRUE(contains(init_c, "sAlarm.MaskAlarmDate = 0;"));
+    EXPECT_FALSE(contains(init_c, "HAL_RTC_InterruptInit"));
+    EXPECT_FALSE(contains(init_c, "RTC_IRQHandler_Template"));
+}
+
+// ============================================================================
+// CRC — AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. Единственный глобальный блок
+// (нет instance). mik32_hal_crc32.h/.c + вендорный пример HAL_CRC32.
+// ============================================================================
+
+TEST(CrcParse, ParsesValidRawFields)
+{
+    ParseResult<CrcConfig> result = parseCrcConfig("fixtures/crc_valid_raw_fields.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->poly, 305419896u);
+    EXPECT_EQ(result.config->init, 4294967295u);
+    EXPECT_TRUE(result.config->input_reverse);
+    EXPECT_FALSE(result.config->output_reverse);
+    EXPECT_TRUE(result.config->output_inversion);
+    EXPECT_TRUE(result.config->requested_preset.empty());
+}
+
+// Поля preset и mik32_hal_crc32.h (строки 240-283): CRC-32Q — poly=0x814141AB,
+// init=0, input/output_reverse=false, output_inversion=off.
+TEST(CrcParse, ParsesPresetCrc32Q)
+{
+    ParseResult<CrcConfig> result = parseCrcConfig("fixtures/crc_valid_preset_crc32q.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->poly, 0x814141ABu);
+    EXPECT_EQ(result.config->init, 0u);
+    EXPECT_FALSE(result.config->input_reverse);
+    EXPECT_FALSE(result.config->output_reverse);
+    EXPECT_FALSE(result.config->output_inversion);
+    EXPECT_EQ(result.config->requested_preset, "crc32q");
+}
+
+TEST(CrcParse, ParsesPresetCrc32)
+{
+    ParseResult<CrcConfig> result = parseCrcConfig("fixtures/crc_valid_preset_crc32.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->poly, 0x04C11DB7u);
+    EXPECT_EQ(result.config->init, 0xFFFFFFFFu);
+    EXPECT_TRUE(result.config->input_reverse);
+    EXPECT_TRUE(result.config->output_reverse);
+    EXPECT_TRUE(result.config->output_inversion);
+}
+
+TEST(CrcParse, RejectsPresetTogetherWithRawFields)
+{
+    ParseResult<CrcConfig> result = parseCrcConfig("fixtures/crc_invalid_preset_and_raw_fields.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(CrcParse, RejectsMissingEverything)
+{
+    ParseResult<CrcConfig> result = parseCrcConfig("fixtures/crc_invalid_missing_everything.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondCrcBlock)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/crc_two_blocks_rejected.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, CrcRawFieldsGenerateExpectedInitCode)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/crc_valid_raw_fields.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hcrc.Instance = CRC;"));
+    EXPECT_TRUE(contains(init_c, "hcrc.Poly = 0x12345678;"));
+    EXPECT_TRUE(contains(init_c, "hcrc.Init = 0xffffffff;"));
+    EXPECT_TRUE(contains(init_c, "hcrc.InputReverse = CRC_REFIN_TRUE;"));
+    EXPECT_TRUE(contains(init_c, "hcrc.OutputReverse = CRC_REFOUT_FALSE;"));
+    EXPECT_TRUE(contains(init_c, "hcrc.OutputInversion = CRC_OUTPUTINVERSION_ON;"));
+    EXPECT_TRUE(contains(init_c, "HAL_CRC_Init(&hcrc);"));
+}
+
+TEST(ProjectCodegen, CrcPresetGeneratesCommentNamingThePreset)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/crc_valid_preset_crc32q.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hcrc.Poly = 0x814141ab;"));
+    EXPECT_TRUE(contains(init_c, "preset=\"crc32q\""));
+}
+
+// ============================================================================
+// EEPROM — AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. Единственный глобальный блок
+// (нет instance). mik32_hal_eeprom.h/.c + вендорный пример HAL_EEPROM.
+// ============================================================================
+
+TEST(EepromParse, ParsesValidTwoStageWithDefaults)
+{
+    ParseResult<EepromConfig> result = parseEepromConfig("fixtures/eeprom_valid_two_stage.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->mode, "two_stage");
+    EXPECT_TRUE(result.config->ecc_enabled);
+    EXPECT_FALSE(result.config->single_error_interrupt_enabled);
+}
+
+TEST(EepromParse, ParsesThreeStageWithCustomFields)
+{
+    ParseResult<EepromConfig> result = parseEepromConfig("fixtures/eeprom_valid_three_stage_custom.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->mode, "three_stage");
+    EXPECT_FALSE(result.config->ecc_enabled);
+    EXPECT_TRUE(result.config->single_error_interrupt_enabled);
+}
+
+TEST(EepromParse, RejectsUnknownMode)
+{
+    ParseResult<EepromConfig> result = parseEepromConfig("fixtures/eeprom_invalid_mode.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(EepromParse, RejectsMissingMode)
+{
+    ParseResult<EepromConfig> result = parseEepromConfig("fixtures/eeprom_missing_mode.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondEepromBlock)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/eeprom_two_blocks_rejected.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, EepromTwoStageDefaultsGenerateExpectedInitCode)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/eeprom_valid_two_stage.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "heeprom.Instance = EEPROM_REGS;"));
+    EXPECT_TRUE(contains(init_c, "heeprom.Mode = HAL_EEPROM_MODE_TWO_STAGE;"));
+    EXPECT_TRUE(contains(init_c, "heeprom.ErrorCorrection = HAL_EEPROM_ECC_ENABLE;"));
+    EXPECT_TRUE(contains(init_c, "heeprom.EnableInterrupt = HAL_EEPROM_SERR_DISABLE;"));
+    EXPECT_TRUE(contains(init_c, "HAL_EEPROM_Init(&heeprom);"));
+    EXPECT_TRUE(contains(init_c, "HAL_EEPROM_CalculateTimings(&heeprom, 32000000);"));
+}
+
+TEST(ProjectCodegen, EepromThreeStageCustomFieldsFlipAllThreeConstants)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/eeprom_valid_three_stage_custom.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "heeprom.Mode = HAL_EEPROM_MODE_THREE_STAGE;"));
+    EXPECT_TRUE(contains(init_c, "heeprom.ErrorCorrection = HAL_EEPROM_ECC_DISABLE;"));
+    EXPECT_TRUE(contains(init_c, "heeprom.EnableInterrupt = HAL_EEPROM_SERR_ENABLE;"));
+}
+
+// ============================================================================
+// WDT — AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. Единственный глобальный блок
+// (нет instance). mik32_hal_wdt.h/.c + вендорный пример HAL_WDT.
+// ============================================================================
+
+TEST(WdtParse, ParsesValid32MClockSource)
+{
+    ParseResult<WdtConfig> result = parseWdtConfig("fixtures/wdt_valid_32m.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->clock_source, "osc32m");
+    EXPECT_EQ(result.config->reload_ms, 500u);
+}
+
+TEST(WdtParse, ParsesValid32KClockSource)
+{
+    ParseResult<WdtConfig> result = parseWdtConfig("fixtures/wdt_valid_32k.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->clock_source, "osc32k");
+    EXPECT_EQ(result.config->reload_ms, 100000u);
+}
+
+// mik32_hal_wdt.h: WDT_MAX_VALUE_CLOCK32M=524мс — 600 превышает для 32МГц-источников.
+TEST(WdtParse, RejectsReloadMsTooHighFor32MClockSource)
+{
+    ParseResult<WdtConfig> result = parseWdtConfig("fixtures/wdt_invalid_reload_ms_too_high_for_32m.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+// WDT_MAX_VALUE_CLOCK32K=511875мс — 600000 превышает даже для 32кГц-источников.
+TEST(WdtParse, RejectsReloadMsTooHighFor32KClockSource)
+{
+    ParseResult<WdtConfig> result = parseWdtConfig("fixtures/wdt_invalid_reload_ms_too_high_for_32k.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(WdtParse, RejectsUnknownClockSource)
+{
+    ParseResult<WdtConfig> result = parseWdtConfig("fixtures/wdt_invalid_clock_source.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondWdtBlock)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/wdt_two_blocks_rejected.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, WdtGeneratesInitOnlyNeverStartOrRefresh)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/wdt_valid_32m.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hwdt.Instance = WDT;"));
+    EXPECT_TRUE(contains(init_c, "hwdt.Init.Clock = HAL_WDT_OSC32M;"));
+    EXPECT_TRUE(contains(init_c, "hwdt.Init.ReloadMs = 500;"));
+    EXPECT_TRUE(contains(init_c, "HAL_WDT_Init(&hwdt, WDT_TIMEOUT_DEFAULT)"));
+    // Безопасность: кодоген никогда не запускает и не обновляет WDT сам
+    // (упоминания без "(" допустимы — это объяснительный комментарий).
+    EXPECT_FALSE(contains(init_c, "HAL_WDT_Start("));
+    EXPECT_FALSE(contains(init_c, "HAL_WDT_Refresh("));
+}
+
+TEST(ProjectCodegen, WdtLsi32kClockSourceMapsToCorrectMacro)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/wdt_valid_32k.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    EXPECT_TRUE(contains(firmware_result.config->mik32_init_c, "hwdt.Init.Clock = HAL_WDT_OSC32K;"));
+}
+
+// ============================================================================
+// DAC — AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. Два физических канала (instance
+// 0/1). mik32_hal_dac.h/.c + вендорный пример HAL_DAC.
+// ============================================================================
+
+TEST(DacParse, ParsesValidInstance0)
+{
+    ParseResult<DacConfig> result = parseDacConfig("fixtures/dac_valid_instance0.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->instance, 0);
+    EXPECT_EQ(result.config->div, 31);
+    EXPECT_FALSE(result.config->ext_ref);
+    EXPECT_TRUE(result.config->ext_clb);
+}
+
+TEST(DacParse, RejectsInstanceOutOfRange)
+{
+    ParseResult<DacConfig> result = parseDacConfig("fixtures/dac_invalid_instance.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectConfigParse, RejectsDuplicateDacInstance)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/dac_duplicate_instance_rejected.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, DacInstance0GeneratesExpectedInitCode)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/dac_valid_instance0.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hdac0.Instance = ANALOG_REG;"));
+    EXPECT_TRUE(contains(init_c, "hdac0.Instance_dac = HAL_DAC0;"));
+    EXPECT_TRUE(contains(init_c, "hdac0.Init.DIV = 31;"));
+    EXPECT_TRUE(contains(init_c, "hdac0.Init.EXTRef = DAC_EXTREF_OFF;"));
+    EXPECT_TRUE(contains(init_c, "hdac0.Init.EXTClb = DAC_EXTCLB_DACREF;"));
+    EXPECT_TRUE(contains(init_c, "HAL_DAC_Init(&hdac0);"));
+}
+
+TEST(ProjectCodegen, DacInstance1WithExtRefMentionsDacRefPin)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/dac_valid_instance1_extref.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hdac1.Instance_dac = HAL_DAC1;"));
+    EXPECT_TRUE(contains(init_c, "DAC_REF"));
+    EXPECT_TRUE(contains(init_c, "GPIO_1/PIN_11"));
+}
+
+// ============================================================================
+// ADC/CRYPTO/OTP/TSENS — AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. Все четыре —
+// единственные глобальные блоки, без knowledge_base.
+// ============================================================================
+
+TEST(AdcParse, ParsesValidChannel)
+{
+    ParseResult<AdcConfig> result = parseAdcConfig("fixtures/adc_valid.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->channel, 3);
+    EXPECT_FALSE(result.config->ext_ref);
+    EXPECT_TRUE(result.config->ext_clb);
+}
+
+TEST(AdcParse, RejectsChannelOutOfRange)
+{
+    EXPECT_FALSE(parseAdcConfig("fixtures/adc_invalid_channel.json").success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondAdcBlock)
+{
+    EXPECT_FALSE(parseProjectConfig("fixtures/adc_two_blocks_rejected.json").success);
+}
+
+TEST(ProjectCodegen, AdcGeneratesExpectedInitCode)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/adc_valid.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hadc.Instance = ANALOG_REG;"));
+    EXPECT_TRUE(contains(init_c, "hadc.Init.Sel = ADC_CHANNEL3;"));
+    EXPECT_TRUE(contains(init_c, "hadc.Init.EXTRef = ADC_EXTREF_OFF;"));
+    EXPECT_TRUE(contains(init_c, "hadc.Init.EXTClb = ADC_EXTCLB_ADCREF;"));
+    EXPECT_TRUE(contains(init_c, "HAL_ADC_Init(&hadc);"));
+}
+
+TEST(CryptoParse, ParsesValidAesCtrWithDefaults)
+{
+    ParseResult<CryptoConfig> result = parseCryptoConfig("fixtures/crypto_valid_aes_ctr.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->algorithm, "aes");
+    EXPECT_EQ(result.config->cipher_mode, "ctr");
+    EXPECT_EQ(result.config->swap_mode, "none");
+    EXPECT_EQ(result.config->order_mode, "lsw");
+}
+
+TEST(CryptoParse, ParsesCustomSwapAndOrderMode)
+{
+    ParseResult<CryptoConfig> result = parseCryptoConfig("fixtures/crypto_valid_kuznechik_cbc_custom.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->swap_mode, "byte");
+    EXPECT_EQ(result.config->order_mode, "msw");
+}
+
+TEST(CryptoParse, RejectsUnknownAlgorithm)
+{
+    EXPECT_FALSE(parseCryptoConfig("fixtures/crypto_invalid_algorithm.json").success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondCryptoBlock)
+{
+    EXPECT_FALSE(parseProjectConfig("fixtures/crypto_two_blocks_rejected.json").success);
+}
+
+TEST(ProjectCodegen, CryptoGeneratesExpectedInitCodeWithoutKeyOrIv)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/crypto_valid_kuznechik_cbc_custom.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hcrypto.Instance = CRYPTO;"));
+    EXPECT_TRUE(contains(init_c, "hcrypto.Algorithm = CRYPTO_ALG_KUZNECHIK;"));
+    EXPECT_TRUE(contains(init_c, "hcrypto.CipherMode = CRYPTO_CIPHER_MODE_CBC;"));
+    EXPECT_TRUE(contains(init_c, "hcrypto.SwapMode = CRYPTO_SWAP_MODE_BYTE;"));
+    EXPECT_TRUE(contains(init_c, "hcrypto.OrderMode = CRYPTO_ORDER_MODE_MSW;"));
+    EXPECT_TRUE(contains(init_c, "HAL_Crypto_Init(&hcrypto);"));
+    // Безопасность: ключ/IV никогда не генерируются.
+    EXPECT_FALSE(contains(init_c, "HAL_Crypto_SetKey("));
+    EXPECT_FALSE(contains(init_c, "HAL_Crypto_SetIV("));
+}
+
+TEST(OtpParse, ParsesValidTwoStages)
+{
+    ParseResult<OtpConfig> result = parseOtpConfig("fixtures/otp_valid_two_stages.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->read_mode, "two_stages");
+}
+
+TEST(OtpParse, RejectsUnknownReadMode)
+{
+    EXPECT_FALSE(parseOtpConfig("fixtures/otp_invalid_read_mode.json").success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondOtpBlock)
+{
+    EXPECT_FALSE(parseProjectConfig("fixtures/otp_two_blocks_rejected.json").success);
+}
+
+TEST(ProjectCodegen, OtpTwoStagesGeneratesExpectedInitCode)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/otp_valid_two_stages.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hotp.Instance = OTP;"));
+    EXPECT_TRUE(contains(init_c, "hotp.ReadMode = OPT_READ_2STAGES;"));
+    EXPECT_TRUE(contains(init_c, "HAL_OTP_Init(&hotp);"));
+    // Безопасность: запись никогда не генерируется (OTP необратима). "(" —
+    // чтобы не ловить упоминание "HAL_OTP_Write*" в объяснительном комментарии.
+    EXPECT_FALSE(contains(init_c, "HAL_OTP_Write("));
+}
+
+TEST(ProjectCodegen, OtpThreeStagesMapsToCorrectMacro)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/otp_valid_three_stages.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    EXPECT_TRUE(contains(firmware_result.config->mik32_init_c, "hotp.ReadMode = OPT_READ_3STAGES;"));
+}
+
+TEST(TsensParse, ParsesMinimalValid)
+{
+    ParseResult<TsensConfig> result = parseTsensConfig("fixtures/tsens_valid_minimal.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->clock_source, "sys_clk");
+    EXPECT_EQ(result.config->frequency_hz, 40000u);
+    EXPECT_FALSE(result.config->has_low_threshold);
+    EXPECT_TRUE(result.config->interrupts.empty());
+}
+
+TEST(TsensParse, ParsesThresholdsAndInterrupts)
+{
+    ParseResult<TsensConfig> result = parseTsensConfig("fixtures/tsens_valid_with_thresholds_and_interrupts.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->has_low_threshold);
+    EXPECT_EQ(result.config->low_threshold_celsius, -10);
+    EXPECT_TRUE(result.config->has_high_threshold);
+    EXPECT_EQ(result.config->high_threshold_celsius, 85);
+    ASSERT_EQ(result.config->interrupts.size(), 3u);
+}
+
+TEST(TsensParse, RejectsFrequencyTooHigh)
+{
+    EXPECT_FALSE(parseTsensConfig("fixtures/tsens_invalid_frequency_too_high.json").success);
+}
+
+TEST(TsensParse, RejectsThresholdOutOfRange)
+{
+    EXPECT_FALSE(parseTsensConfig("fixtures/tsens_invalid_threshold_out_of_range.json").success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondTsensBlock)
+{
+    EXPECT_FALSE(parseProjectConfig("fixtures/tsens_two_blocks_rejected.json").success);
+}
+
+TEST(ProjectCodegen, TsensMinimalGeneratesInitWithoutThresholdsOrInterrupts)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/tsens_valid_minimal.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "htsens.Instance = ANALOG_REG;"));
+    EXPECT_TRUE(contains(init_c, "htsens.Clock = HAL_TSENS_SYS_CLK;"));
+    EXPECT_TRUE(contains(init_c, "htsens.Frequency = 40000;"));
+    EXPECT_TRUE(contains(init_c, "HAL_TSENS_Init(&htsens)"));
+    EXPECT_FALSE(contains(init_c, "SetLowThreshold"));
+    EXPECT_FALSE(contains(init_c, "SetHiThreshold"));
+    EXPECT_FALSE(contains(init_c, "IRQ_ENABLE"));
+}
+
+TEST(ProjectCodegen, TsensWithThresholdsAndInterruptsGeneratesAllThree)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/tsens_valid_with_thresholds_and_interrupts.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "htsens.Clock = HAL_TSENS_HCLK;"));
+    EXPECT_TRUE(contains(init_c, "HAL_TSENS_SetLowThreshold(&htsens, -10);"));
+    EXPECT_TRUE(contains(init_c, "HAL_TSENS_SetHiThreshold(&htsens, 85);"));
+    EXPECT_TRUE(contains(init_c, "__HAL_TSENS_IRQ_ENABLE_LOWIRQ(&htsens);"));
+    EXPECT_TRUE(contains(init_c, "__HAL_TSENS_IRQ_ENABLE_HIIRQ(&htsens);"));
+    EXPECT_TRUE(contains(init_c, "__HAL_TSENS_IRQ_ENABLE_EOC(&htsens);"));
+}
+
+// --- PVD (монитор напряжения, Тир 3) ---------------------------------------
+
+TEST(PvdParse, ParsesMinimalValid)
+{
+    ParseResult<PvdConfig> result = parsePvdConfig("fixtures/pvd_valid_minimal.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->under_threshold, 3);
+    EXPECT_EQ(result.config->over_threshold, 12);
+    EXPECT_EQ(result.config->digital_filter_value, 100);
+    EXPECT_FALSE(result.config->enable_reference_calibration);
+}
+
+TEST(PvdParse, ParsesCalibrationFlag)
+{
+    ParseResult<PvdConfig> result = parsePvdConfig("fixtures/pvd_valid_with_calibration.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->enable_reference_calibration);
+}
+
+TEST(PvdParse, RejectsThresholdOutOfRange)
+{
+    EXPECT_FALSE(parsePvdConfig("fixtures/pvd_invalid_threshold_out_of_range.json").success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondPvdBlock)
+{
+    EXPECT_FALSE(parseProjectConfig("fixtures/pvd_two_blocks_rejected.json").success);
+}
+
+TEST(ProjectCodegen, PvdGeneratesClockEnableAndRegisterWrites)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/pvd_valid_minimal.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "__HAL_PCC_PVD_CONTROL_CLK_ENABLE();"));
+    EXPECT_TRUE(contains(init_c, "PVD_CONTROL->DPF_VALUE = 100;"));
+    EXPECT_TRUE(contains(init_c, "PVD_CONTROL->CONFIG = pvd_config;"));
+    // Биты сброса-по-порогу (NRESETU/NRESETO) кодоген никогда не трогает —
+    // см. schemas/pvd.json, _comment_no_reset_fields. Само слово встречается
+    // в пояснительном комментарии (ожидаемо), но не в реальной записи бита.
+    EXPECT_FALSE(contains(init_c, "PVD_CONFIG_NRESETU_M"));
+    EXPECT_FALSE(contains(init_c, "PVD_CONFIG_NRESETO_M"));
+}
+
+TEST(ProjectCodegen, PvdWithCalibrationSetsEnVrefClbBit)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/pvd_valid_with_calibration.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    EXPECT_TRUE(contains(firmware_result.config->mik32_init_c, "pvd_config |= PVD_CONFIG_EN_VREFCLB_M;"));
+}
+
+// --- Bus Watchdog (сторожевой таймер шины, Тир 3) --------------------------
+
+TEST(BusWatchdogParse, ParsesMinimalValidAllDisabled)
+{
+    ParseResult<BusWatchdogConfig> result = parseBusWatchdogConfig("fixtures/bus_watchdog_valid_minimal.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_FALSE(result.config->eeprom_enabled);
+    EXPECT_FALSE(result.config->spifi_enabled);
+    EXPECT_FALSE(result.config->dom3_enabled);
+    EXPECT_EQ(result.config->timeout, 0u);
+}
+
+TEST(BusWatchdogParse, ParsesAllLinesEnabledWithTimeout)
+{
+    ParseResult<BusWatchdogConfig> result = parseBusWatchdogConfig("fixtures/bus_watchdog_valid_all_enabled.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->eeprom_enabled);
+    EXPECT_TRUE(result.config->spifi_enabled);
+    EXPECT_TRUE(result.config->dom3_enabled);
+    EXPECT_EQ(result.config->timeout, 15u);
+}
+
+TEST(BusWatchdogParse, RejectsEnabledLineWithoutTimeout)
+{
+    EXPECT_FALSE(parseBusWatchdogConfig("fixtures/bus_watchdog_invalid_enabled_without_timeout.json").success);
+}
+
+TEST(BusWatchdogParse, RejectsTimeoutOutOfRange)
+{
+    // WDT_BUS->TIMEOUT реально реализован только 4 битами (0-15), несмотря на
+    // 32-битное объявление в wdt_bus.h — подтверждено HW-тестом 2026-10-14
+    // (запись 0xFFFFFFFF считалась обратно как 0x0000000F; timeout=1000000
+    // обрезался до эффективного 0 и вешал плату через dom3-линию). См.
+    // schemas/bus_watchdog.json.
+    EXPECT_FALSE(parseBusWatchdogConfig("fixtures/bus_watchdog_invalid_timeout_out_of_range.json").success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondBusWatchdogBlock)
+{
+    EXPECT_FALSE(parseProjectConfig("fixtures/bus_watchdog_two_blocks_rejected.json").success);
+}
+
+TEST(ProjectCodegen, BusWatchdogMinimalGeneratesClockEnableAndZeroEnable)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/bus_watchdog_valid_minimal.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "__HAL_PCC_WDT_BUS_CLK_ENABLE();"));
+    EXPECT_TRUE(contains(init_c, "WDT_BUS->TIMEOUT = 0u;"));
+    EXPECT_TRUE(contains(init_c, "WDT_BUS->ENABLE = bus_watchdog_enable;"));
+    EXPECT_FALSE(contains(init_c, "WDT_BUS_EEPROM_S"));
+    EXPECT_FALSE(contains(init_c, "WDT_BUS_SPIFI_S"));
+    EXPECT_FALSE(contains(init_c, "WDT_BUS_DOM3_S"));
+}
+
+TEST(ProjectCodegen, BusWatchdogAllEnabledGeneratesAllThreeBits)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/bus_watchdog_valid_all_enabled.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "WDT_BUS->TIMEOUT = 15u;"));
+    EXPECT_TRUE(contains(init_c, "bus_watchdog_enable |= (1 << WDT_BUS_EEPROM_S);"));
+    EXPECT_TRUE(contains(init_c, "bus_watchdog_enable |= (1 << WDT_BUS_SPIFI_S);"));
+    EXPECT_TRUE(contains(init_c, "bus_watchdog_enable |= (1 << WDT_BUS_DOM3_S);"));
 }
 
 // --- GPIO IRQ / LINE_MUX (ТЗ §3.1.2 п.5-7) ---------------------------------
@@ -936,6 +2127,92 @@ TEST(ProjectCodegen, UartDmaEmitsSharedInitAndPerDirectionHelpers)
     EXPECT_TRUE(contains(main_c, "extern uint8_t husart_0_rx_dma_buffer[16];"));
 }
 
+// --- standalone DMA (docs/implementations/dma.md) --------------------------
+
+TEST(DmaParse, ParsesValidPeripheralToMemory)
+{
+    ParseResult<DmaConfig> result = parseDmaConfig("fixtures/dma_valid_peripheral_to_memory.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->instance, 2);
+    EXPECT_EQ(result.config->request, "i2c_0");
+    EXPECT_EQ(result.config->direction, "peripheral_to_memory");
+    EXPECT_EQ(result.config->buffer_size_bytes, 16);
+    EXPECT_EQ(result.config->priority, "very_high");
+}
+
+TEST(DmaParse, ParsesValidMemoryToMemoryWithoutRequest)
+{
+    ParseResult<DmaConfig> result = parseDmaConfig("fixtures/dma_valid_memory_to_memory.json");
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->request.empty());
+    EXPECT_EQ(result.config->priority, "high");
+}
+
+TEST(DmaParse, RejectsRequestFieldOnMemoryToMemory)
+{
+    EXPECT_FALSE(parseDmaConfig("fixtures/dma_invalid_memory_to_memory_with_request.json").success);
+}
+
+TEST(DmaParse, RejectsMissingRequestWhenRequired)
+{
+    EXPECT_FALSE(parseDmaConfig("fixtures/dma_invalid_missing_request.json").success);
+}
+
+TEST(DmaParse, RejectsInstanceOutOfRange)
+{
+    EXPECT_FALSE(parseDmaConfig("fixtures/dma_invalid_instance_out_of_range.json").success);
+}
+
+TEST(ProjectConfigParse, RejectsTwoDmaBlocksOnSameChannel)
+{
+    EXPECT_FALSE(parseProjectConfig("fixtures/dma_two_blocks_same_channel_rejected.json").success);
+}
+
+TEST(ProjectConfigParse, RejectsStandaloneDmaChannelConflictingWithUartEmbeddedDma)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/dma_cross_uart_embedded_channel_conflict.json");
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(contains(result.error, "DMA channel 0")) << result.error;
+}
+
+TEST(ProjectCodegen, StandaloneDmaGeneratesChannelInitAndSharedDmaInit)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/dma_valid_peripheral_to_memory.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "DMA_InitTypeDef hdma;"));
+    EXPECT_TRUE(contains(init_c, "void DMA_Init(void)"));
+    EXPECT_TRUE(contains(init_c, "DMA_ChannelHandleTypeDef hdma_channel2;"));
+    EXPECT_TRUE(contains(init_c, "uint8_t dma_channel2_buffer[16];"));
+    EXPECT_TRUE(contains(init_c, "hdma_channel2.ChannelInit.Channel = DMA_CHANNEL_2;"));
+    EXPECT_TRUE(contains(init_c, "hdma_channel2.ChannelInit.ReadMode = DMA_CHANNEL_MODE_PERIPHERY;"));
+    EXPECT_TRUE(contains(init_c, "hdma_channel2.ChannelInit.ReadRequest = DMA_CHANNEL_I2C_0_REQUEST;"));
+    EXPECT_TRUE(contains(init_c, "hdma_channel2.ChannelInit.WriteMode = DMA_CHANNEL_MODE_MEMORY;"));
+
+    const std::string& main_c = firmware_result.config->main_c;
+    EXPECT_TRUE(contains(main_c, "extern uint8_t dma_channel2_buffer[16];"));
+}
+
+TEST(ProjectCodegen, StandaloneDmaMemoryToMemoryOmitsRequestFields)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/dma_valid_memory_to_memory.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hdma_channel3.ChannelInit.ReadMode = DMA_CHANNEL_MODE_MEMORY;"));
+    EXPECT_TRUE(contains(init_c, "hdma_channel3.ChannelInit.WriteMode = DMA_CHANNEL_MODE_MEMORY;"));
+    EXPECT_TRUE(contains(init_c, "hdma_channel3.ChannelInit.Priority = DMA_CHANNEL_PRIORITY_HIGH;"));
+    EXPECT_FALSE(contains(init_c, "hdma_channel3.ChannelInit.ReadRequest"));
+    EXPECT_FALSE(contains(init_c, "hdma_channel3.ChannelInit.WriteRequest"));
+}
+
 // Без единого блока uart, запросившего dma, DMA_Init/hdma не должны
 // появляться вообще — иначе #include "mik32_hal_dma.h" был бы мёртвым
 // кодом в самом частом (не-DMA) случае.
@@ -950,6 +2227,111 @@ TEST(ProjectCodegen, OmitsDmaBoilerplateWhenNoUartRequestsIt)
 
     EXPECT_FALSE(contains(firmware_result.config->mik32_init_c, "DMA_Init"));
     EXPECT_FALSE(contains(firmware_result.config->mik32_init_c, "mik32_hal_dma.h"));
+}
+
+// ============================================================================
+// I2C — ТЗ по I2C молчит (см. docs/implementations/i2c.md), источники:
+// черновик архитектуры §5.4 и реальный HAL (mik32_hal_i2c.h/.c).
+// Тир 1 аудита (AUDIT_TZ_PERIPHERY_GAPS.md): digital_filter/analog_filter
+// (общие master+slave), general_call/no_stretch_mode/dual_address_enabled/
+// own_address_2/own_address_2_mask (только slave).
+// ============================================================================
+
+TEST(I2cParse, ParsesValidMasterConfigWithFilterDefaults)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_master_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->mode, "master");
+    // Поля не запрошены — дефолт сохраняет прежнее хардкод-поведение кодогена
+    // (schemas/i2c.json).
+    EXPECT_EQ(result.config->digital_filter, 0);
+    EXPECT_FALSE(result.config->analog_filter);
+}
+
+TEST(I2cParse, ParsesMasterDigitalAndAnalogFilter)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_master_with_filters.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->digital_filter, 15);
+    EXPECT_TRUE(result.config->analog_filter);
+}
+
+TEST(I2cParse, ParsesSlaveGeneralCallAndNoStretchMode)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_slave_general_call_no_stretch.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->general_call);
+    EXPECT_TRUE(result.config->no_stretch_mode);
+}
+
+TEST(I2cParse, SlaveWithoutOptionalFieldsKeepsThemAtHardcodedDefaults)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_slave_receive.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_FALSE(result.config->general_call);
+    EXPECT_FALSE(result.config->no_stretch_mode);
+    EXPECT_FALSE(result.config->dual_address_enabled);
+}
+
+TEST(I2cParse, ParsesSlaveDualAddressWithExplicitMask)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_slave_dual_address.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->dual_address_enabled);
+    EXPECT_EQ(result.config->own_address_2, 55);
+    EXPECT_EQ(result.config->own_address_2_mask, "11111xx");
+}
+
+// own_address_2_mask необязателен даже при dual_address_enabled=true —
+// дефолт "none" (I2C_OWNADDRESS2_MASK_DISABLE, точное совпадение).
+TEST(I2cParse, DualAddressWithoutMaskDefaultsToNone)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_slave_dual_address_default_mask.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->own_address_2_mask, "none");
+}
+
+TEST(I2cParse, RejectsDigitalFilterOutsideAllowedSet)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_invalid_digital_filter.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(I2cParse, RejectsUnknownOwnAddress2Mask)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_invalid_own_address_2_mask.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+// mik32_hal_i2c.h: DualAddressMode требует 7-битный основной адрес —
+// dual_address_enabled=true с address_mode=10bit должен быть отклонён.
+TEST(I2cParse, RejectsDualAddressWithTenBitAddressMode)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_dual_address_requires_7bit.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(I2cParse, RejectsDualAddressEnabledWithoutOwnAddress2)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_dual_address_missing_own_address_2.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(I2cParse, RejectsOwnAddress2OutOfRange)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_own_address_2_out_of_range.json");
+
+    EXPECT_FALSE(result.success);
 }
 
 // ============================================================================
@@ -999,6 +2381,49 @@ TEST(SpiParse, RejectsWrongInstance)
     EXPECT_FALSE(result.success);
 }
 
+TEST(SpiParse, ParsesMasterWithAllFourInterrupts)
+{
+    ParseResult<SpiConfig> result = parseSpiConfig("fixtures/spi_master_with_interrupts.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    ASSERT_EQ(result.config->interrupts.size(), 4u);
+    EXPECT_EQ(result.config->interrupts[0], "rx_fifo_not_empty");
+    EXPECT_EQ(result.config->interrupts[1], "tx_fifo_not_full");
+    EXPECT_EQ(result.config->interrupts[2], "rx_overflow");
+    EXPECT_EQ(result.config->interrupts[3], "mode_fail");
+}
+
+TEST(SpiParse, ParsesSlaveWithSingleInterrupt)
+{
+    ParseResult<SpiConfig> result = parseSpiConfig("fixtures/spi_slave_with_single_interrupt.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    ASSERT_EQ(result.config->interrupts.size(), 1u);
+    EXPECT_EQ(result.config->interrupts[0], "rx_fifo_not_empty");
+}
+
+TEST(SpiParse, DefaultsToEmptyInterruptsWhenFieldAbsent)
+{
+    ParseResult<SpiConfig> result = parseSpiConfig("fixtures/spi_master_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->interrupts.empty());
+}
+
+TEST(SpiParse, RejectsUnknownInterruptName)
+{
+    ParseResult<SpiConfig> result = parseSpiConfig("fixtures/spi_invalid_interrupt_name.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(SpiParse, RejectsInterruptsNotArray)
+{
+    ParseResult<SpiConfig> result = parseSpiConfig("fixtures/spi_interrupts_not_array.json");
+
+    EXPECT_FALSE(result.success);
+}
+
 // SPI_0 master резервирует SCK/MOSI/MISO/SS_IN на GPIO_0/PIN_0-3 (независимо
 // от mode) — явный gpio-блок на GPIO_0/PIN_1 (MOSI) должен конфликтовать.
 TEST(CrossModuleValidator, DetectsSpiGpioPinConflict)
@@ -1042,6 +2467,56 @@ TEST(ProjectCodegen, SpiMasterInitUsesHalFieldsForMode)
     EXPECT_TRUE(contains(init_c, "hspi0.Init.ManualCS = SPI_MANUALCS_OFF;"));
     EXPECT_TRUE(contains(init_c, "hspi0.Init.ChipSelect = SPI_CS_0;"));
     EXPECT_TRUE(contains(init_c, "HAL_SPI_Init(&hspi0)"));
+}
+
+// Прерывания SPI — единственный закрываемый пробел по SPI из
+// AUDIT_TZ_PERIPHERY_GAPS.md. Без поля "interrupts" поведение не меняется:
+// ни HAL_SPI_InterruptEnable, ни шаблон IRQ-обработчика не появляются.
+TEST(ProjectCodegen, SpiWithoutInterruptsStaysPollingOnly)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/spi_master_valid.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_FALSE(contains(init_c, "HAL_SPI_InterruptEnable"));
+    EXPECT_FALSE(contains(init_c, "SPI_0_IRQHandler_Template"));
+}
+
+TEST(ProjectCodegen, SpiMasterWithInterruptsGeneratesEnableCallAndHandlerTemplate)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/spi_master_with_interrupts.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "HAL_SPI_InterruptEnable(&hspi0, SPI_INT_STATUS_RX_FIFO_NOT_EMPTY_M |"));
+    EXPECT_TRUE(contains(init_c, "SPI_INT_STATUS_TX_FIFO_NOT_FULL_M"));
+    EXPECT_TRUE(contains(init_c, "SPI_INT_STATUS_RX_OVERFLOW_M"));
+    EXPECT_TRUE(contains(init_c, "SPI_INT_STATUS_MODE_FAIL_M"));
+    EXPECT_TRUE(contains(init_c, "void SPI_0_IRQHandler_Template(void)"));
+    EXPECT_TRUE(contains(init_c, "HAL_SPI_IRQHandler(&hspi0);"));
+}
+
+TEST(ProjectCodegen, SpiSlaveWithSingleInterruptGeneratesOnlyThatMask)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/spi_slave_with_single_interrupt.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "HAL_SPI_InterruptEnable(&hspi1, SPI_INT_STATUS_RX_FIFO_NOT_EMPTY_M);"));
+    EXPECT_FALSE(contains(init_c, "SPI_INT_STATUS_TX_FIFO_NOT_FULL_M"));
+    EXPECT_TRUE(contains(init_c, "void SPI_1_IRQHandler_Template(void)"));
 }
 
 // Поля master-only (BaudRateDiv/Decoder/ManualCS/ChipSelect) не должны
@@ -1197,6 +2672,100 @@ TEST(ProjectCodegen, GeneratedSystemClockConfigReflectsCustomClockFields)
     EXPECT_NE(main_c.find("PCC_OscInit.AHBDivider = 1;"), std::string::npos);
     EXPECT_NE(main_c.find("PCC_OscInit.APBMDivider = 3;"), std::string::npos);
     EXPECT_NE(main_c.find("PCC_OscInit.APBPDivider = 7;"), std::string::npos);
+}
+
+// AUDIT_TZ_PERIPHERY_GAPS.md, Clock/PCC — добавлено 2026-10-14: calibration/
+// RTC/oscillator_enable/ForceOscSys/Force32KClk.
+TEST(ProjectConfigParse, KeepsNewClockDefaultsWhenFieldsAbsent)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_all_peripherals.json");
+    ASSERT_TRUE(result.success) << result.error;
+
+    EXPECT_EQ(result.config->clock.hsi32m_calibration, 128);
+    EXPECT_EQ(result.config->clock.lsi32k_calibration, 8);
+    EXPECT_EQ(result.config->clock.rtc_clock_source, "auto");
+    EXPECT_EQ(result.config->clock.rtc_clock_cpu_source, "osc32k");
+    ASSERT_EQ(result.config->clock.oscillator_enable.size(), 4u);
+    EXPECT_FALSE(result.config->clock.force_osc_sys);
+    EXPECT_EQ(result.config->clock.force_32k_clk, "osc32k");
+}
+
+TEST(ProjectConfigParse, ParsesFullCustomClockFields)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_clock_full_custom.json");
+    ASSERT_TRUE(result.success) << result.error;
+
+    EXPECT_EQ(result.config->clock.hsi32m_calibration, 200);
+    EXPECT_EQ(result.config->clock.lsi32k_calibration, 12);
+    EXPECT_EQ(result.config->clock.rtc_clock_source, "lsi32k");
+    EXPECT_EQ(result.config->clock.rtc_clock_cpu_source, "lsi32k");
+    ASSERT_EQ(result.config->clock.oscillator_enable.size(), 2u);
+    EXPECT_EQ(result.config->clock.oscillator_enable[0], "hsi32m");
+    EXPECT_EQ(result.config->clock.oscillator_enable[1], "lsi32k");
+    EXPECT_TRUE(result.config->clock.force_osc_sys);
+    EXPECT_EQ(result.config->clock.force_32k_clk, "lsi32k");
+}
+
+// Защита от "выключил источник, от которого сам тактируешься" — см.
+// project_config.cpp, комментарий над этой проверкой.
+TEST(ProjectConfigParse, RejectsOscillatorEnableWithoutOscillatorSystem)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_clock_oscillator_enable_without_system.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectConfigParse, RejectsHsi32mCalibrationOutOfRange)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_clock_invalid_hsi32m_calibration.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectConfigParse, RejectsLsi32kCalibrationOutOfRange)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/project_clock_invalid_lsi32k_calibration.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, GeneratedSystemClockConfigReflectsFullCustomClockFields)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_clock_full_custom.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& main_c = firmware_result.config->main_c;
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.OscillatorEnable = PCC_OSCILLATORTYPE_HSI32M | PCC_OSCILLATORTYPE_LSI32K;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.FreqMon.ForceOscSys = PCC_FORCE_OSC_SYS_FIXED;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.FreqMon.Force32KClk = PCC_FREQ_MONITOR_SOURCE_LSI32K;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.HSI32MCalibrationValue = 200;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.LSI32KCalibrationValue = 12;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.RTCClockSelection = PCC_RTC_CLOCK_SOURCE_LSI32K;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.RTCClockCPUSelection = PCC_CPU_RTC_CLOCK_SOURCE_LSI32K;"));
+}
+
+TEST(ProjectCodegen, GeneratedSystemClockConfigKeepsOldDefaultsWhenFieldsAbsent)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_all_peripherals.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& main_c = firmware_result.config->main_c;
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.OscillatorEnable = PCC_OSCILLATORTYPE_HSI32M | PCC_OSCILLATORTYPE_OSC32M "
+        "| PCC_OSCILLATORTYPE_LSI32K | PCC_OSCILLATORTYPE_OSC32K;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.FreqMon.ForceOscSys = PCC_FORCE_OSC_SYS_UNFIXED;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.FreqMon.Force32KClk = PCC_FREQ_MONITOR_SOURCE_OSC32K;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.HSI32MCalibrationValue = 128;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.LSI32KCalibrationValue = 8;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.RTCClockSelection = PCC_RTC_CLOCK_SOURCE_AUTO;"));
+    EXPECT_TRUE(contains(main_c, "PCC_OscInit.RTCClockCPUSelection = PCC_CPU_RTC_CLOCK_SOURCE_OSC32K;"));
 }
 
 TEST(ProjectConfigParse, RejectsInvalidToolchainValue)

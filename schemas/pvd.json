@@ -1,0 +1,32 @@
+{
+  "peripheral_type": "pvd",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 3. shared/periphery/pvd_control.h: PVD_CONTROL_TypeDef — единственный глобальный блок монитора напряжения (VCC/AVCC), нет instance.",
+  "_comment_no_reset_fields": "CONFIG.NRESETU/NRESETO (сброс по порогу) сознательно НЕ вынесены в схему: в доступных HAL-заголовках и примерах нет ни одного места, которое использует эти биты и подтверждает их полярность (включает сброс при 1 или при 0) — см. docs/implementations/pvd.md. Кодоген не трогает эти биты (оставляет значение после reset), чтобы не угадывать настройку, которая может вызвать необоснованный сброс платы.",
+  "required_fields": ["type", "under_threshold", "over_threshold", "digital_filter_value"],
+  "fields": {
+    "under_threshold": {
+      "type": "integer",
+      "min": 0,
+      "max": 15,
+      "_comment": "CONFIG.UNDER_THRESH (4 бита, pvd_control.h) — код порога срабатывания \"напряжение ниже\". В доступных материалах нет таблицы код->милливольты, поэтому поле принимает сырой код регистра, а не милливольты (чтобы не писать в сгенерированный код выдуманную формулу)."
+    },
+    "over_threshold": {
+      "type": "integer",
+      "min": 0,
+      "max": 15,
+      "_comment": "CONFIG.OVER_THRESH (4 бита, pvd_control.h) — код порога срабатывания \"напряжение выше\". Та же оговорка про сырой код, что и у under_threshold."
+    },
+    "digital_filter_value": {
+      "type": "integer",
+      "min": 0,
+      "max": 65535,
+      "_comment": "DPF_VALUE (16 бит, pvd_control.h) — цифровой фильтр дребезга компаратора порога."
+    },
+    "enable_reference_calibration": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "CONFIG.EN_VREFCLB — включить калибровку внутреннего источника опорного напряжения монитора. Необязательное поле, по умолчанию выключено."
+    }
+  }
+}

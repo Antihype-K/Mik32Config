@@ -1,0 +1,26 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "uart",
+      "instance": 0,
+      "baud_rate": 38400,
+      "data_bits": 8,
+      "stop_bits": 1,
+      "parity": "none",
+      "flow_control": false,
+      "direction": "duplex"
+    },
+    {
+      "type": "rtc",
+      "time": { "dow": 5, "hours": 23, "minutes": 59, "seconds": 55 },
+      "date": { "century": 20, "day": 14, "month": 10, "year": 26 },
+      "alarm": {
+        "time": { "dow": 6, "hours": 0, "minutes": 0, "seconds": 5 },
+        "date": { "century": 20, "day": 15, "month": 10, "year": 26 },
+        "interrupt_enabled": true
+      }
+    }
+  ]
+}

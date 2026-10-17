@@ -47,6 +47,27 @@ constexpr int kInitOrderTimer16 = 40;
 // сконфигурированных каналах, генерировать прерывания) сразу внутри своей
 // init-функции.
 constexpr int kInitOrderTimer32 = 50;
+// RTC после Timer32 — не зависит от остальной периферии по данным, просто
+// занимает следующий свободный зазор (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2).
+constexpr int kInitOrderRtc = 60;
+// CRC после RTC — не зависит от остальной периферии по данным, просто
+// занимает следующий свободный зазор (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2).
+constexpr int kInitOrderCrc = 70;
+constexpr int kInitOrderEeprom = 80;
+constexpr int kInitOrderWdt = 90;
+constexpr int kInitOrderDac = 100;
+constexpr int kInitOrderAdc = 110;
+constexpr int kInitOrderCrypto = 120;
+constexpr int kInitOrderOtp = 130;
+constexpr int kInitOrderTsens = 140;
+// PVD/Bus Watchdog после TSENS — Тир 3, не зависят от остальной периферии по
+// данным, просто занимают следующий свободный зазор (AUDIT_TZ_PERIPHERY_GAPS.md).
+constexpr int kInitOrderPvd = 150;
+constexpr int kInitOrderBusWatchdog = 160;
+// Standalone DMA-каналы (docs/implementations/dma.md) — после всех
+// contribution-типов, которые могли бы ссылаться на &hdma, но это не
+// критично: сами standalone-каналы ни от кого не зависят по данным.
+constexpr int kInitOrderDma = 170;
 
 template <typename ValueT>
 const ValueT* findOrNull(const std::map<std::string, ValueT>& map, const std::string& key)

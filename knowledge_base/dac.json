@@ -1,0 +1,20 @@
+{
+  "_comment_scope": "Минимальный knowledge_base под HAL-уровень кодогенерации DAC (AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2).",
+
+  "peripheral": "dac",
+
+  "instance_handle": {
+    "0": "HAL_DAC0",
+    "1": "HAL_DAC1"
+  },
+  "_comment_instance_handle": "mik32_hal_dac.h: #define HAL_DAC0 &(ANALOG_REG->DAC0), HAL_DAC1 &(ANALOG_REG->DAC1).",
+
+  "instance_fixed_pin": {
+    "0": { "gpio_instance": 1, "pin": 12 },
+    "1": { "gpio_instance": 1, "pin": 13 }
+  },
+  "_comment_instance_fixed_pin": "mik32_hal_dac.h: DAC0_PORT_1_12/DAC1_PORT_1_13. Подтверждено mik32_hal_dac.c, HAL_DAC_MspInit — GPIO_PIN_12/13 на GPIO_1 в HAL_GPIO_MODE_ANALOG, настраивается безусловно для соответствующего instance.",
+
+  "dac_ref_pin": { "gpio_instance": 1, "pin": 11 },
+  "_comment_dac_ref_pin": "mik32_hal_dac.h: DAC_REF_PORT_1_11. Занимается ТОЛЬКО когда ext_ref=true И ext_clb=true одновременно (mik32_hal_dac.c, HAL_DAC_MspInit: условие (EXTClb==DACREF)&&(EXTRef==ON)) — общий для обоих instance вывод, не per-instance."
+}

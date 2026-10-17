@@ -59,6 +59,31 @@ private:
     void buildTimer32ChannelRow(QVBoxLayout* channels_layout, int block_index,
                                 int channel_position, const nlohmann::json& channel,
                                 int instance);
+    // Тир 2/3 (AUDIT_TZ_PERIPHERY_GAPS.md) — 11 новых типов, добавленных
+    // одним заходом. rtc/crc/eeprom/wdt/adc/crypto/otp/tsens/pvd/bus_watchdog
+    // единственные глобальные блоки (instance всегда 0, тот же приём, что
+    // уже применяется к "Clock" в дереве) — int instance в сигнатуре не
+    // нужен для них, но оставлен у dac (два физических канала, как Timer32/SPI).
+    void buildRtcForm(QVBoxLayout* layout);
+    void buildCrcForm(QVBoxLayout* layout);
+    void buildEepromForm(QVBoxLayout* layout);
+    void buildWdtForm(QVBoxLayout* layout);
+    void buildDacForm(QVBoxLayout* layout, int instance);
+    void buildAdcForm(QVBoxLayout* layout);
+    void buildCryptoForm(QVBoxLayout* layout);
+    void buildOtpForm(QVBoxLayout* layout);
+    void buildTsensForm(QVBoxLayout* layout);
+    void buildPvdForm(QVBoxLayout* layout);
+    void buildBusWatchdogForm(QVBoxLayout* layout);
+    // Standalone DMA-канал (docs/implementations/dma.md) — instance это
+    // номер канала (0-3), как у dac выше.
+    void buildDmaForm(QVBoxLayout* layout, int instance);
+    // FreeRTOS — верхнеуровневый ключ документа "freertos", не peripherals[]
+    // (см. комментарий в refresh()). Перенесено сюда из ProjectManagerScreen
+    // по требованию пользователя: в STM32CubeMX middleware выбирается в
+    // дереве слева, а не вкладкой внутри Project Manager.
+    void buildFreertosForm(QVBoxLayout* layout);
+
     void buildDisabledPlaceholder(QVBoxLayout* layout, int instance);
 
     void clearForm();

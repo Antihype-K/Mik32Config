@@ -30,12 +30,8 @@
 
 // blocks — непустой список блоков с ОДИНАКОВЫМ instance (группировку делает
 // вызывающий, codegen/project/project_codegen.cpp).
-// emit_demo_loop — добавлять ли в тело while(1) переключение пинов
-// (HAL_GPIO_TogglePin) для блоков в режиме "output". См. обоснование флага в
-// codegen/project/project_codegen.h.
 ParseResult<PeripheralContribution> buildGpioContribution(
     const std::vector<GpioConfig>& blocks,
-    const GpioKnowledge& knowledge,
-    bool emit_demo_loop);
+    const GpioKnowledge& knowledge);
 
 #endif //MIK32_CONFIGURATOR_GPIO_CONTRIBUTION_H

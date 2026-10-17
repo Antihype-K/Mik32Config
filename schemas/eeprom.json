@@ -1,0 +1,25 @@
+{
+  "peripheral_type": "eeprom",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_hal_eeprom.h: HAL_EEPROM_Init проверяет eeprom->Instance == EEPROM_REGS — единственный глобальный блок, без нумерации 0/1/2, как RTC и CRC.",
+  "required_fields": ["type", "mode"],
+  "fields": {
+    "mode": {
+      "type": "enum",
+      "values": ["two_stage", "three_stage"],
+      "_comment": "mik32_hal_eeprom.h, HAL_EEPROM_ModeTypeDef. two_stage — запись в 2 этапа (стирание отдельно не нужно читать статус между операциями), three_stage — в 3 этапа (с ожиданием HAL_EEPROM_WaitBusy между Erase/Write). Вендорный пример (HAL_EEPROM/src/main.c) использует two_stage по умолчанию, временно переключается на three_stage только для демонстрации записи чётных/нечётных страниц."
+    },
+    "ecc_enabled": {
+      "type": "boolean",
+      "optional": true,
+      "default": true,
+      "_comment": "mik32_hal_eeprom.h, HAL_EEPROM_ErrorCorrectionTypeDef — true -> HAL_EEPROM_ECC_ENABLE (=0b00), false -> HAL_EEPROM_ECC_DISABLE (=0b01). Названия HAL-констант инвертированы относительно обычного булева смысла (ENABLE=0), схема хранит человеческое значение, кодоген сам подбирает нужную константу. Дефолт true — так делает вендорный пример (схема коррекции одиночных ошибок включена)."
+    },
+    "single_error_interrupt_enabled": {
+      "type": "boolean",
+      "optional": true,
+      "default": false,
+      "_comment": "mik32_hal_eeprom.h, HAL_EEPROM_EnableInterruptTypeDef -> HAL_EEPROM_SERR_ENABLE/DISABLE (EESTA.SERR — обнаружена одиночная исправленная ошибка ECC). EPIC-маскирование и подключение к raw_trap_handler остаются на стороне пользователя, как и у RTC/SPI."
+    }
+  }
+}

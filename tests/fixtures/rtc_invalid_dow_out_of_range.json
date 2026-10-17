@@ -1,0 +1,11 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "rtc",
+      "time": { "dow": 8, "hours": 0, "minutes": 0, "seconds": 0 },
+      "date": { "century": 20, "day": 1, "month": 1, "year": 22 }
+    }
+  ]
+}

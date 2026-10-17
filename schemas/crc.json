@@ -1,0 +1,39 @@
+{
+  "peripheral_type": "crc",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_memory_map.h: #define CRC ((CRC_TypeDef*)CRC_BASE_ADDRESS) — единственный глобальный блок, без нумерации 0/1/2, как и RTC.",
+  "required_fields": ["type"],
+  "_comment_required_fields": "Все настройки алгоритма необязательны по отдельности, но обязательны как группа (poly+init+input_reverse+output_reverse+output_inversion) либо через \"preset\" — взаимоисключающе, см. parser/crc/crc_parser.cpp. Отсутствие и preset, и всей группы — ошибка (нечем инициализировать CRC).",
+  "fields": {
+    "preset": {
+      "type": "enum",
+      "optional": true,
+      "values": ["crc32", "crc32_bzip2", "crc32c", "crc32d", "crc32_jamcrc", "crc32_mpeg2", "crc32_posix", "crc32q", "crc32_xfer"],
+      "_comment": "Готовые комбинации poly/init/input_reverse/output_reverse/output_inversion из mik32_hal_crc32.h (строки 240-283, девять закомментированных блоков под каждый стандартный алгоритм CRC-32). Взаимоисключающе с явной группой полей ниже — тот же приём, что frequency_hz/prescaler у Timer16/Timer32."
+    },
+    "poly": {
+      "type": "integer",
+      "min": 0,
+      "max": 4294967295,
+      "_comment": "mik32_hal_crc32.h, CRC_HandleTypeDef.Poly — 32-битное значение порождающего многочлена."
+    },
+    "init": {
+      "type": "integer",
+      "min": 0,
+      "max": 4294967295,
+      "_comment": "CRC_HandleTypeDef.Init — 32-битное стартовое значение."
+    },
+    "input_reverse": {
+      "type": "boolean",
+      "_comment": "CRC_HandleTypeDef.InputReverse. HAL официально документирует только два значения этого поля (не весь 4-состояний CRC_REVERSE_*): false -> CRC_REFIN_FALSE (=CRC_REVERSE_BYTES), true -> CRC_REFIN_TRUE (=CRC_REVERSE_BITS_BYTES). Схема ограничивает выбор этими двумя — тем же контрактом, что заявляет сам HAL в комментарии к полю."
+    },
+    "output_reverse": {
+      "type": "boolean",
+      "_comment": "CRC_HandleTypeDef.OutputReverse. false -> CRC_REFOUT_FALSE (=CRC_REVERSE_OFF), true -> CRC_REFOUT_TRUE (=CRC_REVERSE_BITS_BYTES) — та же пара документированных значений, что и у input_reverse."
+    },
+    "output_inversion": {
+      "type": "boolean",
+      "_comment": "CRC_HandleTypeDef.OutputInversion -> CRC_OUTPUTINVERSION_OFF/ON (XorOut)."
+    }
+  }
+}

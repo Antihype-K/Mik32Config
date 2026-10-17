@@ -18,6 +18,7 @@
 #ifndef MIK32_CONFIGURATOR_PROJECT_CONFIG_H
 #define MIK32_CONFIGURATOR_PROJECT_CONFIG_H
 
+#include <optional>
 #include <string>
 #include <vector>
 #include "parse_result.h"
@@ -29,6 +30,18 @@
 #include "timer32_parser.h"
 #include "spi_parser.h"
 #include "freertos_parser.h"
+#include "rtc_parser.h"
+#include "crc_parser.h"
+#include "eeprom_parser.h"
+#include "wdt_parser.h"
+#include "dac_parser.h"
+#include "adc_parser.h"
+#include "crypto_parser.h"
+#include "otp_parser.h"
+#include "tsens_parser.h"
+#include "pvd_parser.h"
+#include "bus_watchdog_parser.h"
+#include "dma_parser.h"
 
 // Выбор способа упаковки сгенерированной прошивки — второй, независимый от
 // PlatformIO путь (codegen/project/cmake_project_codegen.h). PlatformIO
@@ -82,6 +95,24 @@ struct ClockConfig
     int ahb_divider = 0;
     int apbm_divider = 0;
     int apbp_divider = 0;
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Clock/PCC — добавлено 2026-10-14.
+    // Необязательные поля, дефолты воспроизводят старый хардкод
+    // project_codegen.cpp побайтово.
+    int hsi32m_calibration = 128;  // PCC_InitTypeDef.HSI32MCalibrationValue, 0-255
+    int lsi32k_calibration = 8;    // PCC_InitTypeDef.LSI32KCalibrationValue, 0-15
+    std::string rtc_clock_source = "auto";         // "auto"/"lsi32k"/"osc32k" -> PCC_RTCClockSourceTypeDef
+    std::string rtc_clock_cpu_source = "osc32k";    // "osc32k"/"lsi32k" -> PCC_CPURTCClockSourceTypeDef
+    // Маска включённых осцилляторов (PCC_InitTypeDef.OscillatorEnable).
+    // Дефолт — все четыре (старое поведение, PCC_OSCILLATORTYPE_ALL).
+    // ВАЖНО: oscillator_system обязан входить в эту маску — HAL_PCC_Config
+    // сначала настраивает систему на oscillator_system, а ПОТОМ выключает
+    // всё, что не попало в маску (mik32_hal_pcc.c:345-370) — убрать из маски
+    // источник, от которого реально тактируется ядро, значит заглушить
+    // кристалл. Парсер проверяет это условие и отказывает, а не кодоген.
+    std::vector<std::string> oscillator_enable = {"hsi32m", "osc32m", "lsi32k", "osc32k"};
+    bool force_osc_sys = false;    // PCC_ForceOscSysTypeDef: false=UNFIXED (старое поведение), true=FIXED
+    std::string force_32k_clk = "osc32k"; // "auto"/"lsi32k"/"osc32k" -> PCC_FreqMonitorSourceTypeDef, дефолт = старый хардкод
 };
 
 struct ProjectConfig
@@ -99,6 +130,45 @@ struct ProjectConfig
     std::vector<I2cConfig> i2c_blocks;
     std::vector<Timer32Config> timer32_blocks;
     std::vector<SpiConfig> spi_blocks;
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. RTC — единственный глобальный блок
+    // (нет instance, schemas/rtc.json) — optional, не vector: допустим
+    // максимум один блок type="rtc" на проект (проверено в project_config.cpp).
+    std::optional<RtcConfig> rtc_block;
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. CRC — тоже единственный глобальный
+    // блок (нет instance, schemas/crc.json).
+    std::optional<CrcConfig> crc_block;
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. EEPROM — тоже единственный
+    // глобальный блок (нет instance, schemas/eeprom.json).
+    std::optional<EepromConfig> eeprom_block;
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. WDT — тоже единственный глобальный
+    // блок (нет instance, schemas/wdt.json).
+    std::optional<WdtConfig> wdt_block;
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. DAC — два физических канала (0/1),
+    // как Timer32/SPI — вектор, не optional.
+    std::vector<DacConfig> dac_blocks;
+
+    // ADC/CRYPTO/OTP/TSENS — все единственные глобальные блоки, нет instance.
+    std::optional<AdcConfig> adc_block;
+    std::optional<CryptoConfig> crypto_block;
+    std::optional<OtpConfig> otp_block;
+    std::optional<TsensConfig> tsens_block;
+
+    // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 3 (регистровая работа, нет HAL-обёртки
+    // конфигурации — только макросы включения тактирования). PVD/Bus
+    // Watchdog — тоже единственные глобальные блоки, нет instance.
+    std::optional<PvdConfig> pvd_block;
+    std::optional<BusWatchdogConfig> bus_watchdog_block;
+
+    // standalone DMA-каналы (docs/implementations/dma.md) — instance это
+    // номер канала (0-3), не отдельный физический блок на канал, но то же
+    // соглашение, что у Timer32/SPI/DAC. Делят глобальный пул из 4 каналов
+    // с встроенным полем "dma" у UART (project_config.cpp, used_dma_channels).
+    std::vector<DmaConfig> dma_blocks;
 
     // --- Поля упаковки проекта (codegen/project/cmake_project_codegen.h) ---
     // Все пять — необязательные поля верхнего уровня JSON-документа, со

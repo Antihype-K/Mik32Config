@@ -1,0 +1,15 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "timer32",
+      "instance": 1,
+      "prescaler": 0,
+      "count_mode": "bidirectional",
+      "top": 999,
+      "overflow_interrupt": true,
+      "underflow_interrupt": true
+    }
+  ]
+}

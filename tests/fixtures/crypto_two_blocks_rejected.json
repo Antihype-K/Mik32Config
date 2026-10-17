@@ -1,0 +1,4 @@
+{ "mcu": "MIK32", "version": "2.0", "peripherals": [
+  { "type": "crypto", "algorithm": "aes", "cipher_mode": "ecb" },
+  { "type": "crypto", "algorithm": "magma", "cipher_mode": "cbc" }
+]}

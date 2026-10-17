@@ -188,17 +188,36 @@ CrossModuleValidationResult validatePinConflictsInDocument(
             // knowledge_base/timer16.json, mode_waveform_enable, и
             // codegen/project/timer16_contribution.cpp).
             auto waveform_it = timer16_knowledge.mode_waveform_enable.find(mode);
-            if (waveform_it == timer16_knowledge.mode_waveform_enable.end() || !waveform_it->second)
+            const bool waveform_pin_used = (waveform_it != timer16_knowledge.mode_waveform_enable.end()) && waveform_it->second;
+
+            if (waveform_pin_used)
             {
-                continue;
+                auto fixed_pin_it = timer16_knowledge.instance_fixed_pwm_pin.find(instance);
+                if (fixed_pin_it != timer16_knowledge.instance_fixed_pwm_pin.end())
+                {
+                    addTimer16Claim(claims, fixed_pin_it->second, instance);
+                }
             }
 
-            auto fixed_pin_it = timer16_knowledge.instance_fixed_pwm_pin.find(instance);
-            if (fixed_pin_it == timer16_knowledge.instance_fixed_pwm_pin.end())
+            // AUDIT_TZ_PERIPHERY_GAPS.md, Timer16 (2026-10-14): Input1 занят
+            // и external_event_count, и encoder (тот же физический пин,
+            // mik32_hal_timer16.c, HAL_TIMER16_MspInit); Input2 — только encoder.
+            if (mode == "external_event_count" || mode == "encoder")
             {
-                continue;  // невалидный instance — parseTimer16Config это отловит раньше.
+                auto input1_it = timer16_knowledge.instance_fixed_input1_pin.find(instance);
+                if (input1_it != timer16_knowledge.instance_fixed_input1_pin.end())
+                {
+                    addTimer16Claim(claims, input1_it->second, instance);
+                }
             }
-            addTimer16Claim(claims, fixed_pin_it->second, instance);
+            if (mode == "encoder")
+            {
+                auto input2_it = timer16_knowledge.instance_fixed_input2_pin.find(instance);
+                if (input2_it != timer16_knowledge.instance_fixed_input2_pin.end())
+                {
+                    addTimer16Claim(claims, input2_it->second, instance);
+                }
+            }
         }
         else if (type == "i2c")
         {

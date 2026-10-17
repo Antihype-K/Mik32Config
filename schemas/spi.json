@@ -47,6 +47,14 @@
       "type": "enum",
       "values": ["cs0", "cs1", "cs2", "cs3"],
       "_comment": "Только для mode=master. SPI_CS_0..SPI_CS_3 (mik32_hal_spi.h:22-26). Определяет физический вывод CS в HAL_SPI_MspInit (mik32_hal_spi.c:21-42/62-79) НЕЗАВИСИМО от manual_cs — в ручном режиме это поле всё равно задаёт, какой вывод MspInit сконфигурирует под управление вручную через HAL_SPI_CS_Enable. ⚠ Errata MIK32V2 v1.0.1 §7.1: на SPI_0 в автоматическом режиме (manual_cs=false) chip_select=cs3 дублирует cs2 (SPI0_n_ss_out_3 не работает) — конфигуратор не блокирует эту комбинацию (ситуации из Errata — Предупреждение, не Ошибка), но помечает её комментарием в сгенерированном коде (см. codegen/project/spi_contribution.cpp)."
+    },
+    "interrupts": {
+      "type": "array",
+      "item_type": "enum",
+      "item_values": ["rx_fifo_not_empty", "tx_fifo_not_full", "rx_overflow", "mode_fail"],
+      "optional": true,
+      "default": [],
+      "_comment": "Необязательное поле, общее для master/slave. HAL_SPI_InterruptEnable принимает маску SPI_INT_STATUS_*_M (mik32_hal_spi.h:259-267). Разрешён ровно тот набор из четырёх флагов, который реально включают оба вендорных примера HAL_SPI_Master_IRQ/HAL_SPI_Slave_IRQ (main.c, trap_handler): rx_fifo_not_empty/tx_fifo_not_full как рабочие прерывания обмена, rx_overflow/mode_fail как прерывания ошибок (HAL_SPI_RXOverflow_IRQ/HAL_SPI_ModeFail_IRQ). TX_FIFO_UNDERFLOW/RX_FIFO_FULL/TX_FIFO_FULL в примерах нигде не включаются отдельно — только читаются как статусные флаги внутри HAL_SPI_GetInterruptStatus, поэтому не выставлены как допустимые значения здесь. Пустой/отсутствующий список — старое поведение (режим опроса), как и раньше (единственный закрываемый пробел по SPI из AUDIT_TZ_PERIPHERY_GAPS.md)."
     }
   }
 }

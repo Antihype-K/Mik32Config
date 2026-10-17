@@ -1,0 +1,14 @@
+{
+  "peripheral_type": "otp",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_hal_otp.h: OTP_HandleTypeDef.Instance = OTP — единственный глобальный блок, как RTC/CRC/EEPROM/WDT/CRYPTO.",
+  "required_fields": ["type", "read_mode"],
+  "fields": {
+    "read_mode": {
+      "type": "enum",
+      "values": ["two_stages", "three_stages"],
+      "_comment": "OTP_HandleTypeDef.ReadMode -> OPT_READ_2STAGES(0, такты ожидания APB)/OPT_READ_3STAGES(1, опрос флага BSY, без тактов ожидания) (mik32_hal_otp.h)."
+    }
+  },
+  "_comment_write_is_destructive": "Кодоген генерирует ТОЛЬКО HAL_OTP_Init (конфигурация режима чтения) — HAL_OTP_Write/WriteTestColumn/WriteTestRow/WriteTestBit НИКОГДА не вызываются автоматически. OTP — однократно программируемая память: запись физически необратима (прожигает биты), автоматическая генерация кода, который бы писал в OTP без явного запроса пользователя на каждое конкретное значение, недопустима (см. docs/implementations/otp.md). Errata п.5.1 (mik32v2errataV1_0_1_1): при чтении в 2 этапа данные читаются по ПРЕДЫДУЩЕМУ адресу — обход: после записи адреса в OTPA прочитать OTPDAT 2 раза (HAL_OTP_Read уже делает это сама, см. codegen/project/otp_contribution.cpp)."
+}

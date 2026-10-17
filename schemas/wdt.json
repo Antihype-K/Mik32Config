@@ -1,0 +1,20 @@
+{
+  "peripheral_type": "wdt",
+  "max_instances": 1,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_hal_wdt.h: HAL_WDT_Init проверяет hwdt->Instance == WDT — единственный глобальный блок, без нумерации, как RTC/CRC/EEPROM.",
+  "required_fields": ["type", "clock_source", "reload_ms"],
+  "fields": {
+    "clock_source": {
+      "type": "enum",
+      "values": ["osc32m", "hsi32m", "osc32k", "lsi32k"],
+      "_comment": "mik32_hal_wdt.h, HAL_WDT_Clocks."
+    },
+    "reload_ms": {
+      "type": "integer",
+      "min": 1,
+      "max": 511875,
+      "_comment": "WDT_InitTypeDef.ReloadMs — время до перезагрузки в мс. Верхняя граница зависит от clock_source (mik32_hal_wdt.h: «Значение не должно превышать 524 мс при тактировании от источника 32 МГц и 511875 мс при тактировании от источника 32 кГц» — WDT_MAX_VALUE_CLOCK32M/WDT_MAX_VALUE_CLOCK32K). Схема хранит общий верхний предел (511875, самый большой из двух) — точная проверка относительно выбранного clock_source реализована в parser/wdt/wdt_parser.cpp (межполевая зависимость, как cmp/max_field у Timer16/Timer32)."
+    }
+  },
+  "_comment_no_start_no_refresh": "Кодоген генерирует ТОЛЬКО HAL_WDT_Init (конфигурация источника тактирования и времени перезагрузки) — HAL_WDT_Start/HAL_WDT_Refresh сознательно НЕ вызываются автоматически. Автозапуск сторожевого таймера без гарантии, что пользовательский main() будет регулярно вызывать HAL_WDT_Refresh в своём цикле, привёл бы к безусловному циклическому сбросу платы сразу после старта — слишком опасное поведение для автоматической генерации (см. docs/implementations/wdt.md)."
+}

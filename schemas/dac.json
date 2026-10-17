@@ -1,0 +1,28 @@
+{
+  "peripheral_type": "dac",
+  "max_instances": 2,
+  "_comment_max_instances": "AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2. mik32_hal_dac.h: HAL_DAC0/HAL_DAC1 — два физических канала ЦАП (не глобальный блок, в отличие от RTC/CRC/EEPROM/WDT).",
+  "required_fields": ["type", "instance", "div", "ext_ref", "ext_clb"],
+  "fields": {
+    "instance": {
+      "type": "integer",
+      "min": 0,
+      "max": 1,
+      "_comment": "mik32_hal_dac.h: HAL_DAC0 (PORT_1_12) / HAL_DAC1 (PORT_1_13)."
+    },
+    "div": {
+      "type": "integer",
+      "min": 0,
+      "max": 255,
+      "_comment": "DAC_InitTypeDef.DIV — делитель тактового сигнала, F_ЦАП = F_IN/(DIV+1) (mik32_hal_dac.h)."
+    },
+    "ext_ref": {
+      "type": "boolean",
+      "_comment": "DAC_InitTypeDef.EXTRef -> DAC_EXTREF_OFF(false, встроенный ИОН 1.2В)/DAC_EXTREF_ON(true, внешний ИОН)."
+    },
+    "ext_clb": {
+      "type": "boolean",
+      "_comment": "DAC_InitTypeDef.EXTClb -> DAC_EXTCLB_CLBREF(false, настраиваемый ОИН)/DAC_EXTCLB_DACREF(true, внешний вывод DAC_REF=GPIO_1/PIN_11). Физически вывод DAC_REF занимается только когда ext_ref=true И ext_clb=true одновременно (mik32_hal_dac.c, HAL_DAC_MspInit: условие (EXTClb==DACREF)&&(EXTRef==ON)) — см. knowledge_base/dac.json и validation/cross_module_validator.cpp."
+    }
+  }
+}

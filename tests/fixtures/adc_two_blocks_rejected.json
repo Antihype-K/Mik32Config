@@ -1,0 +1,4 @@
+{ "mcu": "MIK32", "version": "2.0", "peripherals": [
+  { "type": "adc", "channel": 0, "ext_ref": false, "ext_clb": false },
+  { "type": "adc", "channel": 1, "ext_ref": false, "ext_clb": false }
+]}

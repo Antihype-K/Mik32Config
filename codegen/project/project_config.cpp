@@ -1,6 +1,7 @@
 #include "project_config.h"
 #include "win_file_io.h"
 #include "json.hpp"
+#include <algorithm>
 #include <set>
 #include <sstream>
 
@@ -308,6 +309,119 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
             }
             *field.target = value;
         }
+
+        // AUDIT_TZ_PERIPHERY_GAPS.md, Clock/PCC — добавлено 2026-10-14.
+        if (clock.contains("hsi32m_calibration"))
+        {
+            if (!clock["hsi32m_calibration"].is_number_integer())
+            {
+                return makeError("Поле \"clock.hsi32m_calibration\" должно быть целым числом");
+            }
+            const int value = clock["hsi32m_calibration"].get<int>();
+            if (value < 0 || value > 255)
+            {
+                return makeError("Поле \"clock.hsi32m_calibration\" вне диапазона 0-255 (PCC_InitTypeDef.HSI32MCalibrationValue)");
+            }
+            project.clock.hsi32m_calibration = value;
+        }
+
+        if (clock.contains("lsi32k_calibration"))
+        {
+            if (!clock["lsi32k_calibration"].is_number_integer())
+            {
+                return makeError("Поле \"clock.lsi32k_calibration\" должно быть целым числом");
+            }
+            const int value = clock["lsi32k_calibration"].get<int>();
+            if (value < 0 || value > 15)
+            {
+                return makeError("Поле \"clock.lsi32k_calibration\" вне диапазона 0-15 (PCC_InitTypeDef.LSI32KCalibrationValue)");
+            }
+            project.clock.lsi32k_calibration = value;
+        }
+
+        if (clock.contains("rtc_clock_source"))
+        {
+            if (!clock["rtc_clock_source"].is_string())
+            {
+                return makeError("Поле \"clock.rtc_clock_source\" должно быть строкой");
+            }
+            const std::string value = clock["rtc_clock_source"].get<std::string>();
+            if (value != "auto" && value != "lsi32k" && value != "osc32k")
+            {
+                return makeError("Поле \"clock.rtc_clock_source\" содержит недопустимое значение (разрешено auto, lsi32k, osc32k)");
+            }
+            project.clock.rtc_clock_source = value;
+        }
+
+        if (clock.contains("rtc_clock_cpu_source"))
+        {
+            if (!clock["rtc_clock_cpu_source"].is_string())
+            {
+                return makeError("Поле \"clock.rtc_clock_cpu_source\" должно быть строкой");
+            }
+            const std::string value = clock["rtc_clock_cpu_source"].get<std::string>();
+            if (value != "osc32k" && value != "lsi32k")
+            {
+                return makeError("Поле \"clock.rtc_clock_cpu_source\" содержит недопустимое значение (разрешено osc32k, lsi32k)");
+            }
+            project.clock.rtc_clock_cpu_source = value;
+        }
+
+        if (clock.contains("oscillator_enable"))
+        {
+            if (!clock["oscillator_enable"].is_array() || clock["oscillator_enable"].empty())
+            {
+                return makeError("Поле \"clock.oscillator_enable\" должно быть непустым массивом строк");
+            }
+            std::vector<std::string> enabled;
+            const std::set<std::string> valid_oscillators = {"hsi32m", "osc32m", "lsi32k", "osc32k"};
+            for (const auto& item : clock["oscillator_enable"])
+            {
+                if (!item.is_string() || !valid_oscillators.count(item.get<std::string>()))
+                {
+                    return makeError("Поле \"clock.oscillator_enable\" содержит недопустимое значение "
+                        "(разрешено hsi32m, osc32m, lsi32k, osc32k)");
+                }
+                enabled.push_back(item.get<std::string>());
+            }
+            project.clock.oscillator_enable = enabled;
+        }
+
+        // Защита от "выключил источник, от которого сам тактируешься" —
+        // HAL_PCC_Config настраивает систему на oscillator_system, а ПОТОМ
+        // выключает всё, что не попало в OscillatorEnable (mik32_hal_pcc.c:
+        // 345-370) — если oscillator_system не в маске, сгенерированная
+        // прошивка заглушит себе кристалл сразу после HAL_PCC_Config.
+        if (std::find(project.clock.oscillator_enable.begin(), project.clock.oscillator_enable.end(),
+                project.clock.oscillator_system) == project.clock.oscillator_enable.end())
+        {
+            return makeError("Поле \"clock.oscillator_enable\" не содержит \"" + project.clock.oscillator_system
+                + "\" (clock.oscillator_system) — HAL_PCC_Config выключит именно тот генератор, "
+                  "от которого тактируется ядро, и прошивка зависнет сразу после SystemClock_Config()");
+        }
+
+        if (clock.contains("force_osc_sys"))
+        {
+            if (!clock["force_osc_sys"].is_boolean())
+            {
+                return makeError("Поле \"clock.force_osc_sys\" должно быть булевым");
+            }
+            project.clock.force_osc_sys = clock["force_osc_sys"].get<bool>();
+        }
+
+        if (clock.contains("force_32k_clk"))
+        {
+            if (!clock["force_32k_clk"].is_string())
+            {
+                return makeError("Поле \"clock.force_32k_clk\" должно быть строкой");
+            }
+            const std::string value = clock["force_32k_clk"].get<std::string>();
+            if (value != "auto" && value != "lsi32k" && value != "osc32k")
+            {
+                return makeError("Поле \"clock.force_32k_clk\" содержит недопустимое значение (разрешено auto, lsi32k, osc32k)");
+            }
+            project.clock.force_32k_clk = value;
+        }
     }
 
     // Занятые instance — только для типов, где повторное вхождение
@@ -317,6 +431,7 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
     std::set<int> used_i2c_instances;
     std::set<int> used_timer32_instances;
     std::set<int> used_spi_instances;
+    std::set<int> used_dac_instances;
     std::set<int> used_gpio_irq_lines;
     std::set<int> used_dma_channels;
 
@@ -444,6 +559,192 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
             }
             project.spi_blocks.push_back(*block_result.config);
         }
+        else if (type == "rtc")
+        {
+            // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2: RTC — единственный глобальный
+            // блок (нет instance), допустим максимум один на проект.
+            if (project.rtc_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок rtc — RTC в МИК32 один физический блок, "
+                      "второй блок type=\"rtc\" не имеет смысла");
+            }
+            ParseResult<RtcConfig> block_result = parseRtcBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.rtc_block = *block_result.config;
+        }
+        else if (type == "crc")
+        {
+            if (project.crc_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок crc — CRC в МИК32 один физический блок, "
+                      "второй блок type=\"crc\" не имеет смысла");
+            }
+            ParseResult<CrcConfig> block_result = parseCrcBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.crc_block = *block_result.config;
+        }
+        else if (type == "eeprom")
+        {
+            if (project.eeprom_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок eeprom — EEPROM в МИК32 один физический блок, "
+                      "второй блок type=\"eeprom\" не имеет смысла");
+            }
+            ParseResult<EepromConfig> block_result = parseEepromBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.eeprom_block = *block_result.config;
+        }
+        else if (type == "wdt")
+        {
+            if (project.wdt_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок wdt — WDT в МИК32 один физический блок, "
+                      "второй блок type=\"wdt\" не имеет смысла");
+            }
+            ParseResult<WdtConfig> block_result = parseWdtBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.wdt_block = *block_result.config;
+        }
+        else if (type == "dac")
+        {
+            ParseResult<DacConfig> block_result = parseDacBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            if (!used_dac_instances.insert(block_result.config->instance).second)
+            {
+                return makeError(blockPrefix(block_index, type) + "instance "
+                    + std::to_string(block_result.config->instance)
+                    + " уже настроен другим блоком dac (один физический канал ЦАП нельзя настроить дважды)");
+            }
+            project.dac_blocks.push_back(*block_result.config);
+        }
+        else if (type == "adc")
+        {
+            if (project.adc_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок adc — АЦП в МИК32 один физический блок, "
+                      "второй блок type=\"adc\" не имеет смысла");
+            }
+            ParseResult<AdcConfig> block_result = parseAdcBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.adc_block = *block_result.config;
+        }
+        else if (type == "crypto")
+        {
+            if (project.crypto_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок crypto — CRYPTO в МИК32 один физический блок, "
+                      "второй блок type=\"crypto\" не имеет смысла");
+            }
+            ParseResult<CryptoConfig> block_result = parseCryptoBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.crypto_block = *block_result.config;
+        }
+        else if (type == "otp")
+        {
+            if (project.otp_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок otp — OTP в МИК32 один физический блок, "
+                      "второй блок type=\"otp\" не имеет смысла");
+            }
+            ParseResult<OtpConfig> block_result = parseOtpBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.otp_block = *block_result.config;
+        }
+        else if (type == "tsens")
+        {
+            if (project.tsens_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок tsens — датчик температуры в МИК32 один физический блок, "
+                      "второй блок type=\"tsens\" не имеет смысла");
+            }
+            ParseResult<TsensConfig> block_result = parseTsensBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.tsens_block = *block_result.config;
+        }
+        else if (type == "pvd")
+        {
+            if (project.pvd_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок pvd — монитор напряжения в МИК32 один физический блок, "
+                      "второй блок type=\"pvd\" не имеет смысла");
+            }
+            ParseResult<PvdConfig> block_result = parsePvdBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.pvd_block = *block_result.config;
+        }
+        else if (type == "bus_watchdog")
+        {
+            if (project.bus_watchdog_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок bus_watchdog — сторожевой таймер шины в МИК32 один физический блок, "
+                      "второй блок type=\"bus_watchdog\" не имеет смысла");
+            }
+            ParseResult<BusWatchdogConfig> block_result = parseBusWatchdogBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.bus_watchdog_block = *block_result.config;
+        }
+        else if (type == "dma")
+        {
+            ParseResult<DmaConfig> block_result = parseDmaBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            // Тот же глобальный пул из 4 каналов, что и у встроенного поля
+            // "dma" у UART (см. ветку type == "uart" выше, used_dma_channels) —
+            // канал нельзя занять дважды ни внутри одного механизма, ни между
+            // ними (docs/implementations/dma.md, schemas/dma.json).
+            if (!used_dma_channels.insert(block_result.config->instance).second)
+            {
+                return makeError(blockPrefix(block_index, type) + "DMA channel "
+                    + std::to_string(block_result.config->instance)
+                    + " уже занят другим блоком (у контроллера DMA всего 4 канала на весь конфиг)");
+            }
+            project.dma_blocks.push_back(*block_result.config);
+        }
         else
         {
             // Тихо пропускать нельзя: пользователь получил бы прошивку без
@@ -452,7 +753,7 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
             // этой веткой, пока модуль не реализован.
             return makeError("Блок #" + std::to_string(block_index + 1)
                 + ": тип периферии \"" + type + "\" пока не поддерживается "
-                  "(реализованы: gpio, uart, timer16, i2c, timer32, spi)");
+                  "(реализованы: gpio, uart, timer16, i2c, timer32, spi, rtc, crc, eeprom, wdt, dac, adc, crypto, otp, tsens, pvd, bus_watchdog, dma)");
         }
     }
 
@@ -462,7 +763,12 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
     if (!project.freertos.enabled
         && project.gpio_blocks.empty() && project.uart_blocks.empty()
         && project.timer16_blocks.empty() && project.i2c_blocks.empty()
-        && project.timer32_blocks.empty() && project.spi_blocks.empty())
+        && project.timer32_blocks.empty() && project.spi_blocks.empty()
+        && !project.rtc_block.has_value() && !project.crc_block.has_value() && !project.eeprom_block.has_value() && !project.wdt_block.has_value() && project.dac_blocks.empty()
+        && !project.adc_block.has_value() && !project.crypto_block.has_value()
+        && !project.otp_block.has_value() && !project.tsens_block.has_value()
+        && !project.pvd_block.has_value() && !project.bus_watchdog_block.has_value()
+        && project.dma_blocks.empty())
     {
         return makeError("Массив \"peripherals\" пуст — нечего генерировать");
     }

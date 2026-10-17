@@ -1,0 +1,8 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    { "type": "dac", "instance": 0, "div": 31, "ext_ref": false, "ext_clb": false },
+    { "type": "dac", "instance": 0, "div": 10, "ext_ref": true, "ext_clb": true }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "timer16",
+      "instance": 1,
+      "mode": "encoder",
+      "prescaler": 1,
+      "arr": 999,
+      "cmp": 0
+    }
+  ]
+}
