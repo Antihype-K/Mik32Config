@@ -71,11 +71,14 @@ std::optional<bool> mapNoiseFilterEnum(const std::string& raw)
     return std::nullopt;
 }
 
+// feedback_reverse_import_unresolved_fields_policy: поле не найдено вовсе —
+// вместо тихого дефолта подсвечиваем и блокируем кодоген.
 FieldProvenance synthesizedProvenance(const std::string& json_field)
 {
     FieldProvenance provenance;
     provenance.json_field = json_field;
     provenance.editable = false;
+    provenance.unresolved = true;
     return provenance;
 }
 
@@ -87,6 +90,7 @@ FieldProvenance fromAssignmentProvenance(const std::string& json_field, const Ra
     provenance.original_raw_value_text = assignment.raw_value_text;
     provenance.original_full_line_text = assignment.full_line_text;
     provenance.editable = editable;
+    provenance.unresolved = !editable;
     return provenance;
 }
 

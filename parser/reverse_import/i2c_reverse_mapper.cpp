@@ -169,6 +169,26 @@ FieldProvenance makeSyntheticProvenance(const std::string& json_field)
     return provenance;
 }
 
+// feedback_reverse_import_unresolved_fields_policy: поле не найдено или не
+// распознано — вместо тихого дефолта подсвечиваем и блокируем кодоген.
+FieldProvenance makeUnresolvedProvenance(const std::string& json_field)
+{
+    FieldProvenance provenance;
+    provenance.json_field = json_field;
+    provenance.editable = false;
+    provenance.unresolved = true;
+    return provenance;
+}
+
+FieldProvenance makeUnresolvedProvenance(const std::string& json_field, const RawFieldAssignment& assignment)
+{
+    FieldProvenance provenance = makeUnresolvedProvenance(json_field);
+    provenance.location = assignment.location;
+    provenance.original_raw_value_text = assignment.raw_value_text;
+    provenance.original_full_line_text = assignment.full_line_text;
+    return provenance;
+}
+
 // Таблица известных комбинаций TIMINGR при HSI=32МГц (задание, проверено
 // по mik32_fixed_v3): {PRESC, SCLDEL, SDADEL, SCLH, SCLL} -> clock_speed.
 struct TimingRow
@@ -212,8 +232,9 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
         {
             result.json_block["instance"] = 0;
             result.notes.push_back(
-                "instance не найден: среди присваиваний блока нет строки \"Instance = ...;\", взят 0 по умолчанию.");
-            result.provenance.push_back(makeSyntheticProvenance("instance"));
+                "instance не найден: среди присваиваний блока нет строки \"Instance = ...;\" — "
+                "конфигуратор не смог определить instance, укажите значение явно.");
+            result.provenance.push_back(makeUnresolvedProvenance("instance"));
         }
         else
         {
@@ -243,7 +264,7 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
                 result.notes.push_back(
                     "Не удалось разобрать номер instance из \"" + effective->raw_value_text +
                     "\" (" + effective->location.file + ":" + std::to_string(effective->location.line) +
-                    "), взят 0 по умолчанию.");
+                    ") — конфигуратор не смог определить instance, укажите значение явно.");
             }
             if (ambiguous)
             {
@@ -264,8 +285,14 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
             }
             for (const RawFieldAssignment* occurrence : occurrences)
             {
-                const bool editable = parsePrefixedNumber(occurrence->raw_value_text).has_value();
-                result.provenance.push_back(makeProvenance("instance", *occurrence, editable));
+                if (parsePrefixedNumber(occurrence->raw_value_text).has_value())
+                {
+                    result.provenance.push_back(makeProvenance("instance", *occurrence, true));
+                }
+                else
+                {
+                    result.provenance.push_back(makeUnresolvedProvenance("instance", *occurrence));
+                }
             }
         }
     }
@@ -277,8 +304,9 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
         if (assignment == nullptr)
         {
             result.json_block["mode"] = "master";
-            result.notes.push_back("Init.Mode не найден, mode взят \"master\" по умолчанию.");
-            result.provenance.push_back(makeSyntheticProvenance("mode"));
+            result.notes.push_back(
+                "Init.Mode не найден — конфигуратор не смог определить mode, укажите значение явно.");
+            result.provenance.push_back(makeUnresolvedProvenance("mode"));
         }
         else
         {
@@ -293,9 +321,9 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
             {
                 result.json_block["mode"] = "master";
                 result.notes.push_back(
-                    "Init.Mode=\"" + assignment->raw_value_text + "\" не распознан как HAL_I2C_MODE_MASTER/SLAVE, "
-                    "mode взят \"master\" по умолчанию.");
-                result.provenance.push_back(makeProvenance("mode", *assignment, false));
+                    "Init.Mode=\"" + assignment->raw_value_text + "\" не распознан как HAL_I2C_MODE_MASTER/SLAVE "
+                    "— конфигуратор не смог определить mode, укажите значение явно.");
+                result.provenance.push_back(makeUnresolvedProvenance("mode", *assignment));
             }
         }
     }
@@ -309,9 +337,10 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
             result.json_block["own_address"] = 0;
             result.json_block["address_mode"] = "7bit";
             result.notes.push_back(
-                "mode=\"slave\", но Init.OwnAddress1 не найден — own_address взят 0, address_mode взят \"7bit\" по умолчанию.");
-            result.provenance.push_back(makeSyntheticProvenance("own_address"));
-            result.provenance.push_back(makeSyntheticProvenance("address_mode"));
+                "mode=\"slave\", но Init.OwnAddress1 не найден — конфигуратор не смог определить "
+                "own_address/address_mode, укажите значения явно.");
+            result.provenance.push_back(makeUnresolvedProvenance("own_address"));
+            result.provenance.push_back(makeUnresolvedProvenance("address_mode"));
         }
         else
         {
@@ -351,9 +380,10 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
                 result.notes.push_back(
                     "Init.OwnAddress1=\"" + assignment->raw_value_text + "\" (" + assignment->location.file + ":" +
                     std::to_string(assignment->location.line) +
-                    ") — не числовой литерал, own_address/address_mode взяты 0/\"7bit\" по умолчанию.");
-                result.provenance.push_back(makeProvenance("own_address", *assignment, false));
-                result.provenance.push_back(makeProvenance("address_mode", *assignment, false));
+                    ") — не числовой литерал, конфигуратор не смог определить own_address/address_mode, "
+                    "укажите значения явно.");
+                result.provenance.push_back(makeUnresolvedProvenance("own_address", *assignment));
+                result.provenance.push_back(makeUnresolvedProvenance("address_mode", *assignment));
             }
         }
     }
@@ -379,8 +409,9 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
         {
             result.json_block["clock_speed"] = 100000;
             result.notes.push_back(
-                "Не найдены все 5 полей Clock.PRESC/SCLDEL/SDADEL/SCLH/SCLL — clock_speed взят 100000 по умолчанию.");
-            result.provenance.push_back(makeSyntheticProvenance("clock_speed"));
+                "Не найдены все 5 полей Clock.PRESC/SCLDEL/SDADEL/SCLH/SCLL — конфигуратор не смог "
+                "определить clock_speed, укажите значение явно.");
+            result.provenance.push_back(makeUnresolvedProvenance("clock_speed"));
         }
         else
         {
@@ -423,9 +454,9 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
             {
                 result.json_block["clock_speed"] = 100000;
                 result.notes.push_back(
-                    "Не удалось определить clock_speed по TIMINGR, использован дефолт 100 кГц. Последняя "
-                    "по порядку появления пятёрка не совпала ни с одной известной комбинацией (HSI=32МГц): " +
-                    quintet_text + ".");
+                    "Не удалось определить clock_speed по TIMINGR — последняя по порядку появления "
+                    "пятёрка не совпала ни с одной известной комбинацией (HSI=32МГц): " + quintet_text +
+                    ". Конфигуратор не смог определить clock_speed, укажите значение явно.");
             }
 
             // editable=false ВСЕГДА для clock_speed, независимо от того,
@@ -434,7 +465,14 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
             // пятёрки) как самую близкую к "текущему" эффективному
             // значению — исключительно для навигации в GUI ("перейти к
             // исходнику"), не для записи правки.
-            result.provenance.push_back(makeProvenance("clock_speed", *scll, false));
+            if (matched != nullptr)
+            {
+                result.provenance.push_back(makeProvenance("clock_speed", *scll, false));
+            }
+            else
+            {
+                result.provenance.push_back(makeUnresolvedProvenance("clock_speed", *scll));
+            }
         }
     }
 

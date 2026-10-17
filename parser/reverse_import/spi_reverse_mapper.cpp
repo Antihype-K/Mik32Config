@@ -21,11 +21,15 @@ std::string trim(const std::string& text)
     return text.substr(begin, end - begin + 1);
 }
 
+// Поле не найдено в блоке вовсе — feedback_reverse_import_unresolved_
+// fields_policy: вместо тихого дефолта помечаем unresolved, GUI подсветит
+// красным и блокирует кодоген всего проекта.
 FieldProvenance synthesizedProvenance(const std::string& json_field)
 {
     FieldProvenance provenance;
     provenance.json_field = json_field;
     provenance.editable = false;
+    provenance.unresolved = true;
     return provenance;
 }
 
@@ -124,9 +128,10 @@ void mapEnumField(
     {
         mapped.json_block[json_field] = fallback;
         provenance.editable = false;
+        provenance.unresolved = true;
         mapped.notes.push_back(
             "не удалось распознать " + assignment.field_path + " = \"" + assignment.raw_value_text +
-            "\" — подставлен дефолт для " + json_field + ", проверьте блок руками");
+            "\" — конфигуратор не смог определить " + json_field + ", укажите значение явно.");
     }
     mapped.provenance.push_back(provenance);
 }
@@ -170,9 +175,10 @@ std::optional<MappedBlock> mapSpiBlock(const RawInitBlock& block)
             {
                 mapped.json_block["instance"] = 0;
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось определить instance из Instance = \"" + assignment.raw_value_text +
-                    "\" — подставлена заглушка 0, проверьте блок руками");
+                    "\" — конфигуратор не смог определить instance, укажите значение явно.");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -219,9 +225,10 @@ std::optional<MappedBlock> mapSpiBlock(const RawInitBlock& block)
             {
                 mapped.json_block["threshold_tx"] = 4;
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось распознать Init.ThresholdTX = \"" + assignment.raw_value_text +
-                    "\" как число — подставлена заглушка 4, проверьте блок руками");
+                    "\" как число — конфигуратор не смог определить threshold_tx, укажите значение явно.");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -264,9 +271,10 @@ std::optional<MappedBlock> mapSpiBlock(const RawInitBlock& block)
             {
                 mapped.json_block["chip_select"] = "cs0";
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось распознать Init.ChipSelect = \"" + assignment.raw_value_text +
-                    "\" — подставлена заглушка cs0, проверьте блок руками");
+                    "\" — конфигуратор не смог определить chip_select, укажите значение явно.");
             }
             mapped.provenance.push_back(provenance);
             continue;

@@ -104,6 +104,7 @@ set(CORE_SOURCES
         parser/reverse_import/timer16_reverse_mapper.cpp
         parser/reverse_import/gpio_reverse_mapper.cpp
         parser/reverse_import/spi_reverse_mapper.cpp
+        parser/reverse_import/adc_reverse_mapper.cpp
         parser/reverse_import/reverse_patch_writer.cpp
         parser/reverse_import/reverse_import.cpp
         parser/reverse_import/reverse_import_apply.cpp
@@ -275,6 +276,7 @@ if(BUILD_TESTING)
             tests/test_reverse_import_timer16.cpp
             tests/test_reverse_import_spi.cpp
             tests/test_reverse_import_timer32_channel.cpp
+            tests/test_reverse_import_adc.cpp
             tests/test_freertos.cpp
             tests/test_rust_project_codegen.cpp
     )

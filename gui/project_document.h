@@ -26,6 +26,7 @@
 #ifndef MIK32_CONFIGURATOR_PROJECT_DOCUMENT_H
 #define MIK32_CONFIGURATOR_PROJECT_DOCUMENT_H
 
+#include <map>
 #include <string>
 #include <vector>
 #include "json.hpp"
@@ -141,10 +142,25 @@ public:
     std::vector<std::pair<int, int>> claimedPins(int block_index,
                                                  const ProjectKnowledge& knowledge) const;
 
+    // --- Unresolved-поля reverse-import ---------------------------------
+    // См. feedback_reverse_import_unresolved_fields_policy в памяти
+    // ассистента: поля, которые reverse-import не смог разобрать, не
+    // получают угаданный дефолт — вызывающий (MainWindow::onImportProject)
+    // передаёт сюда их имена по индексу блока сразу после loadFromDocument.
+    // Индексация соответствует document()["peripherals"] НА МОМЕНТ импорта
+    // — как и block_provenance в reverse_import::ImportedProject, этот
+    // список не переживает удаление/переупорядочивание блоков.
+    void setUnresolvedFields(int block_index, std::vector<std::string> field_names);
+    void clearUnresolvedFields();
+    std::vector<std::string> unresolvedFieldNames(int block_index) const;
+    bool blockHasUnresolvedFields(int block_index) const;
+    bool hasAnyUnresolvedFields() const;
+
 private:
     nlohmann::json document_;
     std::string file_path_;
     bool modified_ = false;
+    std::map<int, std::vector<std::string>> unresolved_fields_;
 };
 
 #endif //MIK32_CONFIGURATOR_PROJECT_DOCUMENT_H

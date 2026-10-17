@@ -14,6 +14,7 @@
 #include "timer16_reverse_mapper.h"
 #include "gpio_reverse_mapper.h"
 #include "spi_reverse_mapper.h"
+#include "adc_reverse_mapper.h"
 
 namespace reverse_import
 {
@@ -43,7 +44,8 @@ const std::string* canonicalInitFunctionFor(const std::string& handle_type)
         {"TIMER32_CHANNEL_HandleTypeDef", "HAL_Timer32_Channel_Init"},
         {"Timer16_HandleTypeDef", "HAL_Timer16_Init"},
         {"GPIO_InitTypeDef", "HAL_GPIO_Init"},
-        {"SPI_HandleTypeDef", "HAL_SPI_Init"}};
+        {"SPI_HandleTypeDef", "HAL_SPI_Init"},
+        {"ADC_HandleTypeDef", "HAL_ADC_Init"}};
 
     const auto it = kCanonical.find(handle_type);
     return it == kCanonical.end() ? nullptr : &it->second;
@@ -286,6 +288,10 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         {
             mapped = mapSpiBlock(block);
         }
+        else if (block.handle_type == "ADC_HandleTypeDef")
+        {
+            mapped = mapAdcBlock(block);
+        }
         else
         {
             result.notes.push_back(
@@ -293,7 +299,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
                 "\") в " + block.init_call_location.file + ":" +
                 std::to_string(block.init_call_location.line) +
                 " — это не один из поддерживаемых типов периферии MIK32 (UART/I2C/Timer32/"
-                "Timer16/GPIO/SPI), пропущено.");
+                "Timer16/GPIO/SPI/ADC), пропущено.");
             continue;
         }
 

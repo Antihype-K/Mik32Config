@@ -164,3 +164,65 @@ TEST(Timer16ReverseMapper, SerializeModeArrCmpAlwaysNullopt)
     EXPECT_FALSE(serializeTimer16FieldValue("arr", 100, "").has_value());
     EXPECT_FALSE(serializeTimer16FieldValue("cmp", 50, "").has_value());
 }
+
+namespace
+{
+const FieldProvenance* findProvenance(const MappedBlock& mapped, const std::string& field)
+{
+    for (const auto& provenance : mapped.provenance)
+    {
+        if (provenance.json_field == field)
+        {
+            return &provenance;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+// ---- unresolved-политика (feedback_reverse_import_unresolved_fields_policy) ----
+
+TEST(Timer16ReverseMapper, MissingInstanceIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "htimer16_0";
+    block.handle_type = "Timer16_HandleTypeDef";
+    block.assignments = {makeAssignment("Clock.Prescaler", "TIMER16_PRESCALER_1", 1)};
+
+    const std::optional<MappedBlock> mapped = mapTimer16Block(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "instance");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}
+
+TEST(Timer16ReverseMapper, NoRecognizedTrailingCallMarksModeArrCmpUnresolved)
+{
+    RawInitBlock block = buildRealTimer16_0Block();  // без trailing_calls вовсе
+
+    const std::optional<MappedBlock> mapped = mapTimer16Block(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    for (const char* field : {"mode", "arr", "cmp"})
+    {
+        const FieldProvenance* provenance = findProvenance(*mapped, field);
+        ASSERT_NE(provenance, nullptr) << field;
+        EXPECT_TRUE(provenance->unresolved) << field;
+    }
+}
+
+TEST(Timer16ReverseMapper, UnparseableArrArgumentIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block = buildRealTimer16_0Block();
+    block.trailing_calls.push_back(RawTrailingCall{
+        "HAL_Timer16_StartPWM", {"htimer16_0", "config.period", "500"},
+        SourceLocation{"mik32_init.c", 166}, "    HAL_Timer16_StartPWM(&htimer16_0, config.period, 500);"});
+
+    const std::optional<MappedBlock> mapped = mapTimer16Block(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* arr = findProvenance(*mapped, "arr");
+    ASSERT_NE(arr, nullptr);
+    EXPECT_TRUE(arr->unresolved);
+}

@@ -115,6 +115,8 @@ std::optional<std::string> mapDriveStrengthEnum(const std::string& raw)
     return std::nullopt;
 }
 
+// feedback_reverse_import_unresolved_fields_policy: поле не найдено в блоке
+// вовсе — вместо тихого дефолта подсвечиваем и блокируем кодоген.
 FieldProvenance synthesizedProvenance(const std::string& json_field)
 {
     // location.file пустой => синтезировано мапером, не взято из строки
@@ -122,6 +124,7 @@ FieldProvenance synthesizedProvenance(const std::string& json_field)
     FieldProvenance provenance;
     provenance.json_field = json_field;
     provenance.editable = false;
+    provenance.unresolved = true;
     return provenance;
 }
 
@@ -169,8 +172,10 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
         else
         {
             mapped.json_block["instance"] = 0;
+            provenance.unresolved = true;
             mapped.notes.push_back(
-                "не удалось определить instance порта из аргумента HAL_GPIO_Init"
+                "не удалось определить instance порта из аргумента HAL_GPIO_Init — "
+                "конфигуратор не смог определить instance, укажите значение явно"
                 + (block.init_call_args.empty()
                        ? std::string(" (вызов не имеет аргументов)")
                        : (" (получено: \"" + arg_text + "\")")));
@@ -210,11 +215,12 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
                 // а не тихая потеря блока.
                 mapped.json_block["pins"] = std::vector<int>{0};
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
-                    "ВНИМАНИЕ: не удалось разобрать номер(а) пина из \"" +
+                    "не удалось разобрать номер(а) пина из \"" +
                     assignment.raw_value_text + "\" (" + assignment.location.file + ":" +
-                    std::to_string(assignment.location.line) + ") — подставлено ФИКТИВНОЕ "
-                    "значение pins=[0], проверьте и исправьте блок руками");
+                    std::to_string(assignment.location.line) + ") — конфигуратор не смог "
+                    "определить pins, укажите значение явно");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -240,9 +246,10 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
             {
                 mapped.json_block["mode"] = "input";
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось распознать mode из \"" + assignment.raw_value_text +
-                    "\" — подставлен дефолт \"input\", проверьте блок руками");
+                    "\" — конфигуратор не смог определить mode, укажите значение явно");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -268,9 +275,10 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
             {
                 mapped.json_block["pull"] = "none";
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось распознать pull из \"" + assignment.raw_value_text +
-                    "\" — подставлен дефолт \"none\", проверьте блок руками");
+                    "\" — конфигуратор не смог определить pull, укажите значение явно");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -296,9 +304,10 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
             {
                 mapped.json_block["drive_strength"] = "4mA";
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось распознать drive_strength из \"" + assignment.raw_value_text +
-                    "\" — подставлен дефолт \"4mA\", проверьте блок руками");
+                    "\" — конфигуратор не смог определить drive_strength, укажите значение явно");
             }
             mapped.provenance.push_back(provenance);
             continue;

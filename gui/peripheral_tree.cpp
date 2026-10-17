@@ -137,7 +137,8 @@ QTreeWidgetItem* PeripheralTree::addLeaf(QTreeWidgetItem* parent, const QString&
     return item;
 }
 
-void PeripheralTree::refreshState(const QSet<QString>& enabled, const QHash<QString, QString>& names)
+void PeripheralTree::refreshState(const QSet<QString>& enabled, const QHash<QString, QString>& names,
+                                   const QSet<QString>& unresolved)
 {
     QTreeWidgetItemIterator iterator(tree_);
     while (*iterator)
@@ -162,10 +163,14 @@ void PeripheralTree::refreshState(const QSet<QString>& enabled, const QHash<QStr
         const QString custom_name = names.value(key);
         item->setText(0, custom_name.isEmpty() ? title : QString("%1 (%2)").arg(title, custom_name));
 
+        const bool is_unresolved = unresolved.contains(key);
+
         QFont item_font = item->font(0);
-        item_font.setBold(is_enabled);
+        item_font.setBold(is_enabled || is_unresolved);
         item->setFont(0, item_font);
-        item->setForeground(0, is_enabled ? QBrush(QColor(0x3d, 0x8b, 0xfd)) : QBrush());
+        item->setForeground(0, is_unresolved ? QBrush(QColor(0xd9, 0x2d, 0x20))
+                                 : is_enabled ? QBrush(QColor(0x3d, 0x8b, 0xfd))
+                                              : QBrush());
     }
 }
 

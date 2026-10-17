@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+using reverse_import::FieldProvenance;
+
 namespace
 {
 
@@ -115,4 +117,75 @@ TEST(SpiReverseMapper, SerializeAllFieldsRoundTrip)
     EXPECT_EQ(serializeSpiFieldValue("chip_select", "cs3", ""), "SPI_CS_3");
     EXPECT_FALSE(serializeSpiFieldValue("threshold_tx", 9, "").has_value());
     EXPECT_FALSE(serializeSpiFieldValue("baud_rate_div", 3, "").has_value());
+}
+
+namespace
+{
+const FieldProvenance* findProvenance(const MappedBlock& mapped, const std::string& field)
+{
+    for (const auto& provenance : mapped.provenance)
+    {
+        if (provenance.json_field == field)
+        {
+            return &provenance;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+// ---- unresolved-политика (feedback_reverse_import_unresolved_fields_policy) ----
+
+TEST(SpiReverseMapper, MissingInstanceIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "hspi0";
+    block.handle_type = "SPI_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("Init.SPI_Mode", "HAL_SPI_MODE_MASTER", 1),
+    };
+
+    const std::optional<MappedBlock> mapped = mapSpiBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "instance");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}
+
+TEST(SpiReverseMapper, UnparseableChipSelectIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "hspi0";
+    block.handle_type = "SPI_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("Instance", "SPI_0", 1),
+        makeAssignment("Init.SPI_Mode", "HAL_SPI_MODE_MASTER", 2),
+        makeAssignment("Init.ChipSelect", "config.cs", 3),
+    };
+
+    const std::optional<MappedBlock> mapped = mapSpiBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "chip_select");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}
+
+TEST(SpiReverseMapper, MissingMasterOnlyFieldIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "hspi0";
+    block.handle_type = "SPI_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("Instance", "SPI_0", 1),
+        makeAssignment("Init.SPI_Mode", "HAL_SPI_MODE_MASTER", 2),
+    };
+
+    const std::optional<MappedBlock> mapped = mapSpiBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "baud_rate_div");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
 }

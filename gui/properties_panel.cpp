@@ -13,6 +13,7 @@
 //
 #include "properties_panel.h"
 #include "freertos_settings_widget.h"
+#include <algorithm>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -459,7 +460,27 @@ void PropertiesPanel::buildGpioForm(QVBoxLayout* layout, int instance)
     QGroupBox* fields_box = new QGroupBox(QString::fromUtf8("Параметры группы"));
     QFormLayout* form = new QFormLayout(fields_box);
 
-    form->addRow(QString::fromUtf8("Режим:"), stringCombo(
+    // feedback_reverse_import_unresolved_fields_policy: поле, которое
+    // reverse-import не смог разобрать, подсвечивается красным прямо в
+    // форме — не только в дереве периферии.
+    const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
+    auto isUnresolved = [&unresolved_fields](const char* field_name)
+    {
+        return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
+    };
+    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    {
+        QLabel* label = new QLabel(text);
+        if (isUnresolved(field_name))
+        {
+            label->setStyleSheet("color: #d92d20; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
+        return label;
+    };
+
+    form->addRow(fieldLabel("mode", QString::fromUtf8("Режим:")), stringCombo(
         kGpioModes, document_->field(block_index, "mode").is_string()
                         ? document_->field(block_index, "mode").get<std::string>() : "output",
         [this, block_index](const std::string& value)
@@ -468,7 +489,7 @@ void PropertiesPanel::buildGpioForm(QVBoxLayout* layout, int instance)
             emit documentChanged();
         }));
 
-    form->addRow(QString::fromUtf8("Подтяжка:"), stringCombo(
+    form->addRow(fieldLabel("pull", QString::fromUtf8("Подтяжка:")), stringCombo(
         kGpioPulls, document_->field(block_index, "pull").is_string()
                         ? document_->field(block_index, "pull").get<std::string>() : "none",
         [this, block_index](const std::string& value)
@@ -477,7 +498,7 @@ void PropertiesPanel::buildGpioForm(QVBoxLayout* layout, int instance)
             emit documentChanged();
         }));
 
-    form->addRow(QString::fromUtf8("Ток драйвера:"), stringCombo(
+    form->addRow(fieldLabel("drive_strength", QString::fromUtf8("Ток драйвера:")), stringCombo(
         kGpioDriveStrengths, document_->field(block_index, "drive_strength").is_string()
                         ? document_->field(block_index, "drive_strength").get<std::string>() : "2mA",
         [this, block_index](const std::string& value)
@@ -493,6 +514,12 @@ void PropertiesPanel::buildGpioForm(QVBoxLayout* layout, int instance)
     const int max_pin = (instance == 2) ? 7 : 15;
 
     QGroupBox* pins_box = new QGroupBox(QString::fromUtf8("Выводы"));
+    if (isUnresolved("pins"))
+    {
+        pins_box->setStyleSheet("QGroupBox::title { color: #d92d20; font-weight: bold; }");
+        pins_box->setToolTip(QString::fromUtf8(
+            "Значение не удалось определить при импорте — укажите явно."));
+    }
     QGridLayout* pins_grid = new QGridLayout(pins_box);
 
     const nlohmann::json pins_value = document_->field(block_index, "pins");
@@ -583,8 +610,28 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
     QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
+    // feedback_reverse_import_unresolved_fields_policy: поле, которое
+    // reverse-import не смог разобрать, подсвечивается красным прямо в
+    // форме — не только в дереве периферии.
+    const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
+    auto isUnresolved = [&unresolved_fields](const char* field_name)
+    {
+        return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
+    };
+    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    {
+        QLabel* label = new QLabel(text);
+        if (isUnresolved(field_name))
+        {
+            label->setStyleSheet("color: #d92d20; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
+        return label;
+    };
+
     const nlohmann::json baud = document_->field(block_index, "baud_rate");
-    form->addRow(QString::fromUtf8("Скорость:"), intCombo(
+    form->addRow(fieldLabel("baud_rate", QString::fromUtf8("Скорость:")), intCombo(
         kBaudRates, QString::fromUtf8(" бод"),
         baud.is_number_integer() ? baud.get<int>() : 38400,
         [this, block_index](int value)
@@ -597,7 +644,7 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
         }));
 
     const nlohmann::json data_bits = document_->field(block_index, "data_bits");
-    form->addRow(QString::fromUtf8("Бит данных:"), intCombo(
+    form->addRow(fieldLabel("data_bits", QString::fromUtf8("Бит данных:")), intCombo(
         kDataBits, QString(), data_bits.is_number_integer() ? data_bits.get<int>() : 8,
         [this, block_index](int value)
         {
@@ -606,7 +653,7 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
         }));
 
     const nlohmann::json stop_bits = document_->field(block_index, "stop_bits");
-    form->addRow(QString::fromUtf8("Стоп-бит:"), intCombo(
+    form->addRow(fieldLabel("stop_bits", QString::fromUtf8("Стоп-бит:")), intCombo(
         kStopBits, QString(), stop_bits.is_number_integer() ? stop_bits.get<int>() : 1,
         [this, block_index](int value)
         {
@@ -614,7 +661,7 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
             emit documentChanged();
         }));
 
-    form->addRow(QString::fromUtf8("Чётность:"), stringCombo(
+    form->addRow(fieldLabel("parity", QString::fromUtf8("Чётность:")), stringCombo(
         kParities, document_->field(block_index, "parity").is_string()
                        ? document_->field(block_index, "parity").get<std::string>() : "none",
         [this, block_index](const std::string& value)
@@ -623,7 +670,7 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
             emit documentChanged();
         }));
 
-    form->addRow(QString::fromUtf8("Направление:"), stringCombo(
+    form->addRow(fieldLabel("direction", QString::fromUtf8("Направление:")), stringCombo(
         kDirections, document_->field(block_index, "direction").is_string()
                        ? document_->field(block_index, "direction").get<std::string>() : "duplex",
         [this, block_index](const std::string& value)
@@ -644,7 +691,7 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
         // проверка конфликтов обязаны обновиться.
         emit documentChanged();
     });
-    form->addRow(QString::fromUtf8("Управление потоком:"), flow);
+    form->addRow(fieldLabel("flow_control", QString::fromUtf8("Управление потоком:")), flow);
     layout->addWidget(box);
 
     // DMA (ТЗ §3.1.3.3) — backend уже полностью реализован (parser/USART/
@@ -944,10 +991,30 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
     QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
+    // feedback_reverse_import_unresolved_fields_policy: поле, которое
+    // reverse-import не смог разобрать, подсвечивается красным прямо в
+    // форме — не только в дереве периферии.
+    const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
+    auto isUnresolved = [&unresolved_fields](const char* field_name)
+    {
+        return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
+    };
+    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    {
+        QLabel* label = new QLabel(text);
+        if (isUnresolved(field_name))
+        {
+            label->setStyleSheet("color: #d92d20; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
+        return label;
+    };
+
     const std::string mode = document_->field(block_index, "mode").is_string()
         ? document_->field(block_index, "mode").get<std::string>() : "period";
 
-    form->addRow(QString::fromUtf8("Режим:"), stringCombo(
+    form->addRow(fieldLabel("mode", QString::fromUtf8("Режим:")), stringCombo(
         kTimer16Modes, mode,
         [this, block_index](const std::string& value)
         {
@@ -1044,7 +1111,7 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
                 document_->setField(block_index, "prescaler", value);
                 emit documentChanged();
             });
-        form->addRow(QString::fromUtf8("Предделитель:"), prescaler_combo);
+        form->addRow(fieldLabel("prescaler", QString::fromUtf8("Предделитель:")), prescaler_combo);
 
         // ARR и CMP — произвольные 16-битные числа, а не перечисления, поэтому
         // здесь spinbox, а не список. Ограничение CMP <= ARR (schemas/timer16.json,
@@ -1060,8 +1127,8 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
         const nlohmann::json cmp_value = document_->field(block_index, "cmp");
         cmp->setValue(cmp_value.is_number_integer() ? cmp_value.get<int>() : 499);
 
-        form->addRow(QString::fromUtf8("Период ARR:"), arr);
-        form->addRow(QString::fromUtf8("Сравнение CMP:"), cmp);
+        form->addRow(fieldLabel("arr", QString::fromUtf8("Период ARR:")), arr);
+        form->addRow(fieldLabel("cmp", QString::fromUtf8("Сравнение CMP:")), cmp);
 
         // Поле обязательно во всех режимах, но в счётном режиме HAL его не
         // принимает (HAL_Timer16_Counter_Start без Compare) — честнее сказать это
@@ -1221,10 +1288,30 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
     QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
+    // feedback_reverse_import_unresolved_fields_policy: поле, которое
+    // reverse-import не смог разобрать, подсвечивается красным прямо в
+    // форме — не только в дереве периферии.
+    const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
+    auto isUnresolved = [&unresolved_fields](const char* field_name)
+    {
+        return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
+    };
+    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    {
+        QLabel* label = new QLabel(text);
+        if (isUnresolved(field_name))
+        {
+            label->setStyleSheet("color: #d92d20; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
+        return label;
+    };
+
     const std::string mode = document_->field(block_index, "mode").is_string()
         ? document_->field(block_index, "mode").get<std::string>() : "master";
 
-    form->addRow(QString::fromUtf8("Режим:"), stringCombo(
+    form->addRow(fieldLabel("mode", QString::fromUtf8("Режим:")), stringCombo(
         {{"Ведущий (master)", "master"}, {"Ведомый (slave)", "slave"}}, mode,
         [this, block_index](const std::string& value)
         {
@@ -1246,7 +1333,7 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
         }));
 
     const nlohmann::json speed = document_->field(block_index, "clock_speed");
-    form->addRow(QString::fromUtf8("Частота шины:"), labelledIntCombo(
+    form->addRow(fieldLabel("clock_speed", QString::fromUtf8("Частота шины:")), labelledIntCombo(
         kI2cSpeeds, speed.is_number_integer() ? speed.get<int>() : 100000,
         [this, block_index](int value)
         {
@@ -1281,7 +1368,7 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
         const std::string address_mode = document_->field(block_index, "address_mode").is_string()
             ? document_->field(block_index, "address_mode").get<std::string>() : "7bit";
 
-        form->addRow(QString::fromUtf8("Адресация:"), stringCombo(
+        form->addRow(fieldLabel("address_mode", QString::fromUtf8("Адресация:")), stringCombo(
             {{"7 бит", "7bit"}, {"10 бит", "10bit"}}, address_mode,
             [this, block_index](const std::string& value)
             {
@@ -1319,7 +1406,7 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
             document_->setField(block_index, "own_address", value);
             emit documentChanged();
         });
-        form->addRow(QString::fromUtf8("Свой адрес:"), own);
+        form->addRow(fieldLabel("own_address", QString::fromUtf8("Свой адрес:")), own);
         // Значение могло быть подтянуто в допустимый диапазон самим виджетом —
         // документ обязан узнать об этом, иначе на диск уйдёт старое число.
         document_->setField(block_index, "own_address", own->value());
@@ -1451,10 +1538,30 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
     QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
+    // feedback_reverse_import_unresolved_fields_policy: поле, которое
+    // reverse-import не смог разобрать, подсвечивается красным прямо в
+    // форме — не только в дереве периферии.
+    const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
+    auto isUnresolved = [&unresolved_fields](const char* field_name)
+    {
+        return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
+    };
+    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    {
+        QLabel* label = new QLabel(text);
+        if (isUnresolved(field_name))
+        {
+            label->setStyleSheet("color: #d92d20; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
+        return label;
+    };
+
     const std::string mode = document_->field(block_index, "mode").is_string()
         ? document_->field(block_index, "mode").get<std::string>() : "master";
 
-    form->addRow(QString::fromUtf8("Режим:"), stringCombo(
+    form->addRow(fieldLabel("mode", QString::fromUtf8("Режим:")), stringCombo(
         {{"Ведущий (master)", "master"}, {"Ведомый (slave)", "slave"}}, mode,
         [this, block_index](const std::string& value)
         {
@@ -1477,7 +1584,7 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
 
     const std::string clk_phase = document_->field(block_index, "clk_phase").is_string()
         ? document_->field(block_index, "clk_phase").get<std::string>() : "on";
-    form->addRow(QString::fromUtf8("Фаза такта (CPHA):"), stringCombo(
+    form->addRow(fieldLabel("clk_phase", QString::fromUtf8("Фаза такта (CPHA):")), stringCombo(
         kSpiClkPhases, clk_phase,
         [this, block_index](const std::string& value)
         {
@@ -1487,7 +1594,7 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
 
     const std::string clk_polarity = document_->field(block_index, "clk_polarity").is_string()
         ? document_->field(block_index, "clk_polarity").get<std::string>() : "high";
-    form->addRow(QString::fromUtf8("Полярность такта (CPOL):"), stringCombo(
+    form->addRow(fieldLabel("clk_polarity", QString::fromUtf8("Полярность такта (CPOL):")), stringCombo(
         kSpiClkPolarities, clk_polarity,
         [this, block_index](const std::string& value)
         {
@@ -1506,13 +1613,13 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
         document_->setField(block_index, "threshold_tx", value);
         emit documentChanged();
     });
-    form->addRow(QString::fromUtf8("Порог TX FIFO:"), threshold);
+    form->addRow(fieldLabel("threshold_tx", QString::fromUtf8("Порог TX FIFO:")), threshold);
     document_->setField(block_index, "threshold_tx", threshold->value());
 
     if (mode == "master")
     {
         const nlohmann::json div = document_->field(block_index, "baud_rate_div");
-        form->addRow(QString::fromUtf8("Делитель частоты:"), intCombo(
+        form->addRow(fieldLabel("baud_rate_div", QString::fromUtf8("Делитель частоты:")), intCombo(
             kSpiBaudRateDivs, "", div.is_number_integer() ? div.get<int>() : 64,
             [this, block_index](int value)
             {
@@ -1521,6 +1628,12 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
             }));
 
         QCheckBox* manual_cs = new QCheckBox(QString::fromUtf8("Ручное управление CS"));
+        if (isUnresolved("manual_cs"))
+        {
+            manual_cs->setStyleSheet("color: #d92d20; font-weight: bold;");
+            manual_cs->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
         manual_cs->setChecked(document_->field(block_index, "manual_cs").is_boolean()
             && document_->field(block_index, "manual_cs").get<bool>());
         connect(manual_cs, &QCheckBox::toggled, this, [this, block_index](bool checked)
@@ -1532,6 +1645,12 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
         form->addRow(QString(), manual_cs);
 
         QCheckBox* decoder = new QCheckBox(QString::fromUtf8("Внешний дешифратор CS"));
+        if (isUnresolved("decoder"))
+        {
+            decoder->setStyleSheet("color: #d92d20; font-weight: bold;");
+            decoder->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
         decoder->setChecked(document_->field(block_index, "decoder").is_boolean()
             && document_->field(block_index, "decoder").get<bool>());
         connect(decoder, &QCheckBox::toggled, this, [this, block_index](bool checked)
@@ -1543,7 +1662,7 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
 
         const std::string chip_select = document_->field(block_index, "chip_select").is_string()
             ? document_->field(block_index, "chip_select").get<std::string>() : "cs0";
-        form->addRow(QString::fromUtf8("Выбор ведомого (CS):"), stringCombo(
+        form->addRow(fieldLabel("chip_select", QString::fromUtf8("Выбор ведомого (CS):")), stringCombo(
             kSpiChipSelects, chip_select,
             [this, block_index](const std::string& value)
             {
@@ -1610,6 +1729,26 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
     QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
+    // feedback_reverse_import_unresolved_fields_policy: поле, которое
+    // reverse-import не смог разобрать, подсвечивается красным прямо в
+    // форме — не только в дереве периферии.
+    const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
+    auto isUnresolved = [&unresolved_fields](const char* field_name)
+    {
+        return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
+    };
+    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    {
+        QLabel* label = new QLabel(text);
+        if (isUnresolved(field_name))
+        {
+            label->setStyleSheet("color: #d92d20; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
+        return label;
+    };
+
     // Блок, только что включённый через buildDisabledPlaceholder, приходит
     // без ЭТИХ полей: gui/project_document.cpp, defaultBlock() не содержит
     // ветки type=="timer32" (расхождение зафиксировано в финальном отчёте
@@ -1620,7 +1759,7 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
     // пользователь тронет каждое поле руками.
     const std::string count_mode = document_->field(block_index, "count_mode").is_string()
         ? document_->field(block_index, "count_mode").get<std::string>() : "forward";
-    form->addRow(QString::fromUtf8("Режим счёта:"), stringCombo(
+    form->addRow(fieldLabel("count_mode", QString::fromUtf8("Режим счёта:")), stringCombo(
         kTimer32CountModes, count_mode,
         [this, block_index](const std::string& value)
         {
@@ -1696,7 +1835,7 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
         // docs/implementations/timer32.md, «Собрано и прогнано» (не произвольное
         // число).
         prescaler->setValue(prescaler_value.is_number_integer() ? prescaler_value.get<int>() : 31);
-        form->addRow(QString::fromUtf8("Предделитель (PRESCALER):"), prescaler);
+        form->addRow(fieldLabel("prescaler", QString::fromUtf8("Предделитель (PRESCALER):")), prescaler);
         document_->setField(block_index, "prescaler", prescaler->value());
 
         QSpinBox* top = new QSpinBox();
@@ -1704,7 +1843,7 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
         top->setRange(0, kUint32SpinBoxMax);
         const nlohmann::json top_value = document_->field(block_index, "top");
         top->setValue(top_value.is_number_integer() ? top_value.get<int>() : 999);
-        form->addRow(QString::fromUtf8("Верхняя граница счёта (TOP):"), top);
+        form->addRow(fieldLabel("top", QString::fromUtf8("Верхняя граница счёта (TOP):")), top);
         document_->setField(block_index, "top", top->value());
         layout->addWidget(box);
 
@@ -2568,8 +2707,28 @@ void PropertiesPanel::buildAdcForm(QVBoxLayout* layout)
     QGroupBox* box = new QGroupBox(QString::fromUtf8("Параметры"));
     QFormLayout* form = new QFormLayout(box);
 
+    // feedback_reverse_import_unresolved_fields_policy: поле, которое
+    // reverse-import не смог разобрать, подсвечивается красным прямо в
+    // форме — не только в дереве периферии.
+    const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
+    auto isUnresolved = [&unresolved_fields](const char* field_name)
+    {
+        return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
+    };
+    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    {
+        QLabel* label = new QLabel(text);
+        if (isUnresolved(field_name))
+        {
+            label->setStyleSheet("color: #d92d20; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение не удалось определить при импорте — укажите явно."));
+        }
+        return label;
+    };
+
     const nlohmann::json channel_value = document_->field(block_index, "channel");
-    form->addRow(QString::fromUtf8("Начальный канал:"), labelledIntCombo(
+    form->addRow(fieldLabel("channel", QString::fromUtf8("Начальный канал:")), labelledIntCombo(
         {{"Канал 0 (PORT_1_5)", 0}, {"Канал 1 (PORT_1_7)", 1}, {"Канал 2 (PORT_0_2)", 2},
          {"Канал 3 (PORT_0_4)", 3}, {"Канал 4 (PORT_0_7)", 4}, {"Канал 5 (PORT_0_9)", 5},
          {"Канал 6 (PORT_0_11)", 6}, {"Канал 7 (PORT_0_13)", 7}},
@@ -2582,14 +2741,14 @@ void PropertiesPanel::buildAdcForm(QVBoxLayout* layout)
         && document_->field(block_index, "ext_ref").get<bool>());
     connect(ext_ref, &QCheckBox::toggled, this, [this, block_index](bool on)
     { document_->setField(block_index, "ext_ref", on); emit documentChanged(); });
-    form->addRow(QString(), ext_ref);
+    form->addRow(fieldLabel("ext_ref", QString()), ext_ref);
 
     QCheckBox* ext_clb = new QCheckBox(QString::fromUtf8("Внешний вывод ADC_REF (ext_clb)"));
     ext_clb->setChecked(document_->field(block_index, "ext_clb").is_boolean()
         && document_->field(block_index, "ext_clb").get<bool>());
     connect(ext_clb, &QCheckBox::toggled, this, [this, block_index](bool on)
     { document_->setField(block_index, "ext_clb", on); emit documentChanged(); });
-    form->addRow(QString(), ext_clb);
+    form->addRow(fieldLabel("ext_clb", QString()), ext_clb);
 
     layout->addWidget(box);
 

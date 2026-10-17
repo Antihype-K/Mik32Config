@@ -214,11 +214,26 @@ FieldProvenance makeProvenance(const std::string& json_field, const RawFieldAssi
     return provenance;
 }
 
-FieldProvenance makeSyntheticProvenance(const std::string& json_field)
+// Поле вовсе не найдено, или найдено, но не распознано — см.
+// feedback_reverse_import_unresolved_fields_policy: угадывать "безопасный"
+// дефолт без отметки запрещено, поле должно быть подсвечено и блокировать
+// кодоген. Если assignment есть, вызывающий код дозаполняет
+// location/original_raw_value_text/original_full_line_text после вызова.
+FieldProvenance makeUnresolvedProvenance(const std::string& json_field)
 {
     FieldProvenance provenance;
     provenance.json_field = json_field;
     provenance.editable = false;
+    provenance.unresolved = true;
+    return provenance;
+}
+
+FieldProvenance makeUnresolvedProvenance(const std::string& json_field, const RawFieldAssignment& assignment)
+{
+    FieldProvenance provenance = makeUnresolvedProvenance(json_field);
+    provenance.location = assignment.location;
+    provenance.original_raw_value_text = assignment.raw_value_text;
+    provenance.original_full_line_text = assignment.full_line_text;
     return provenance;
 }
 
@@ -266,8 +281,9 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         {
             result.json_block["instance"] = 0;
             result.notes.push_back(
-                "instance не найден: среди присваиваний блока нет строки \"Instance = ...;\", взят 0 по умолчанию.");
-            result.provenance.push_back(makeSyntheticProvenance("instance"));
+                "instance не найден: среди присваиваний блока нет строки \"Instance = ...;\" — "
+                "конфигуратор не смог определить instance, укажите значение явно.");
+            result.provenance.push_back(makeUnresolvedProvenance("instance"));
         }
         else
         {
@@ -297,7 +313,7 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
                 result.notes.push_back(
                     "Не удалось разобрать номер instance из \"" + effective->raw_value_text +
                     "\" (" + effective->location.file + ":" + std::to_string(effective->location.line) +
-                    "), взят 0 по умолчанию.");
+                    ") — конфигуратор не смог определить instance, укажите значение явно.");
             }
 
             if (ambiguous)
@@ -325,8 +341,15 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
             // direction ниже, где две строки должны получить РАЗНЫЙ текст.
             for (const RawFieldAssignment* occurrence : occurrences)
             {
-                const bool editable = parsePrefixedNumber(occurrence->raw_value_text).has_value();
-                result.provenance.push_back(makeProvenance("instance", *occurrence, editable));
+                const bool parsed_ok = parsePrefixedNumber(occurrence->raw_value_text).has_value();
+                if (parsed_ok)
+                {
+                    result.provenance.push_back(makeProvenance("instance", *occurrence, true));
+                }
+                else
+                {
+                    result.provenance.push_back(makeUnresolvedProvenance("instance", *occurrence));
+                }
             }
         }
     }
@@ -337,8 +360,9 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         if (assignment == nullptr)
         {
             result.json_block["data_bits"] = 8;
-            result.notes.push_back("frame не найден, data_bits взят 8 по умолчанию.");
-            result.provenance.push_back(makeSyntheticProvenance("data_bits"));
+            result.notes.push_back(
+                "frame не найден — конфигуратор не смог определить data_bits, укажите значение явно.");
+            result.provenance.push_back(makeUnresolvedProvenance("data_bits"));
         }
         else
         {
@@ -355,8 +379,8 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
                 result.notes.push_back(
                     "Не удалось разобрать frame=\"" + assignment->raw_value_text + "\" (" +
                     assignment->location.file + ":" + std::to_string(assignment->location.line) +
-                    "), data_bits взят 8 по умолчанию.");
-                result.provenance.push_back(makeProvenance("data_bits", *assignment, false));
+                    ") — конфигуратор не смог определить data_bits, укажите значение явно.");
+                result.provenance.push_back(makeUnresolvedProvenance("data_bits", *assignment));
             }
         }
     }
@@ -367,8 +391,9 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         if (assignment == nullptr)
         {
             result.json_block["stop_bits"] = 1;
-            result.notes.push_back("stop_bit не найден, stop_bits взят 1 по умолчанию.");
-            result.provenance.push_back(makeSyntheticProvenance("stop_bits"));
+            result.notes.push_back(
+                "stop_bit не найден — конфигуратор не смог определить stop_bits, укажите значение явно.");
+            result.provenance.push_back(makeUnresolvedProvenance("stop_bits"));
         }
         else
         {
@@ -385,8 +410,8 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
                 result.notes.push_back(
                     "Не удалось разобрать stop_bit=\"" + assignment->raw_value_text + "\" (" +
                     assignment->location.file + ":" + std::to_string(assignment->location.line) +
-                    "), stop_bits взят 1 по умолчанию.");
-                result.provenance.push_back(makeProvenance("stop_bits", *assignment, false));
+                    ") — конфигуратор не смог определить stop_bits, укажите значение явно.");
+                result.provenance.push_back(makeUnresolvedProvenance("stop_bits", *assignment));
             }
         }
     }
@@ -397,8 +422,9 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         if (assignment == nullptr)
         {
             result.json_block["baud_rate"] = 115200;
-            result.notes.push_back("baudrate не найден, baud_rate взят 115200 по умолчанию.");
-            result.provenance.push_back(makeSyntheticProvenance("baud_rate"));
+            result.notes.push_back(
+                "baudrate не найден — конфигуратор не смог определить baud_rate, укажите значение явно.");
+            result.provenance.push_back(makeUnresolvedProvenance("baud_rate"));
         }
         else
         {
@@ -416,8 +442,9 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
                 result.notes.push_back(
                     "baudrate=\"" + assignment->raw_value_text + "\" (" + assignment->location.file + ":" +
                     std::to_string(assignment->location.line) +
-                    ") — не числовой литерал (вычисляемое выражение/переменная?), baud_rate взят 115200 по умолчанию.");
-                result.provenance.push_back(makeProvenance("baud_rate", *assignment, false));
+                    ") — не числовой литерал (вычисляемое выражение/переменная?), конфигуратор не смог "
+                    "определить baud_rate, укажите значение явно.");
+                result.provenance.push_back(makeUnresolvedProvenance("baud_rate", *assignment));
             }
         }
     }
@@ -430,6 +457,7 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         const std::optional<bool> pbi = pbi_assignment ? parseEnableDisable(pbi_assignment->raw_value_text) : std::nullopt;
 
         std::string parity_value;
+        bool resolved = true;
         if (pb.has_value() && !*pb)
         {
             parity_value = "none";
@@ -441,28 +469,37 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         else if (!pb_assignment && !pbi_assignment)
         {
             parity_value = "none";
-            result.notes.push_back("parity_bit/parity_bit_inversion не найдены, parity взят \"none\" по умолчанию.");
+            resolved = false;
+            result.notes.push_back(
+                "parity_bit/parity_bit_inversion не найдены — конфигуратор не смог определить parity, "
+                "укажите значение явно.");
         }
         else
         {
             parity_value = "even";
+            resolved = false;
             result.notes.push_back(
                 "Не удалось однозначно определить чётность по parity_bit/parity_bit_inversion "
-                "(бит четности включён, но полярность не распознана), parity взят \"even\" по умолчанию.");
+                "(бит четности включён, но полярность не распознана) — конфигуратор не смог определить "
+                "parity, укажите значение явно.");
         }
         result.json_block["parity"] = parity_value;
 
         if (pb_assignment != nullptr)
         {
-            result.provenance.push_back(makeProvenance("parity", *pb_assignment, pb.has_value()));
+            result.provenance.push_back(
+                resolved && pb.has_value() ? makeProvenance("parity", *pb_assignment, false)
+                                            : makeUnresolvedProvenance("parity", *pb_assignment));
         }
         if (pbi_assignment != nullptr)
         {
-            result.provenance.push_back(makeProvenance("parity", *pbi_assignment, pbi.has_value()));
+            result.provenance.push_back(
+                resolved && pbi.has_value() ? makeProvenance("parity", *pbi_assignment, false)
+                                             : makeUnresolvedProvenance("parity", *pbi_assignment));
         }
         if (pb_assignment == nullptr && pbi_assignment == nullptr)
         {
-            result.provenance.push_back(makeSyntheticProvenance("parity"));
+            result.provenance.push_back(makeUnresolvedProvenance("parity"));
         }
     }
 
@@ -476,19 +513,26 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         const bool tx_enabled = tx.value_or(false);
         const bool rx_enabled = rx.value_or(false);
 
+        bool direction_resolved = true;
         if (!tx.has_value())
         {
+            direction_resolved = false;
             result.notes.push_back(
                 tx_assignment == nullptr
-                    ? std::string("transmitting не найден, считается Disable.")
-                    : "Не удалось разобрать transmitting=\"" + tx_assignment->raw_value_text + "\", считается Disable.");
+                    ? std::string("transmitting не найден — конфигуратор не смог определить direction, "
+                                   "укажите значение явно.")
+                    : "Не удалось разобрать transmitting=\"" + tx_assignment->raw_value_text +
+                          "\" — конфигуратор не смог определить direction, укажите значение явно.");
         }
         if (!rx.has_value())
         {
+            direction_resolved = false;
             result.notes.push_back(
                 rx_assignment == nullptr
-                    ? std::string("receiving не найден, считается Disable.")
-                    : "Не удалось разобрать receiving=\"" + rx_assignment->raw_value_text + "\", считается Disable.");
+                    ? std::string("receiving не найден — конфигуратор не смог определить direction, "
+                                   "укажите значение явно.")
+                    : "Не удалось разобрать receiving=\"" + rx_assignment->raw_value_text +
+                          "\" — конфигуратор не смог определить direction, укажите значение явно.");
         }
 
         std::string direction_value;
@@ -507,23 +551,28 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         else
         {
             direction_value = "duplex";
+            direction_resolved = false;
             result.notes.push_back(
-                "Ни transmitting, ни receiving не Enable — направление не определено, direction взят "
-                "\"duplex\" по умолчанию (наименее ограничивающий вариант).");
+                "Ни transmitting, ни receiving не Enable — конфигуратор не смог определить direction, "
+                "укажите значение явно.");
         }
         result.json_block["direction"] = direction_value;
 
         if (tx_assignment != nullptr)
         {
-            result.provenance.push_back(makeProvenance("direction", *tx_assignment, tx.has_value()));
+            result.provenance.push_back(
+                direction_resolved ? makeProvenance("direction", *tx_assignment, false)
+                                    : makeUnresolvedProvenance("direction", *tx_assignment));
         }
         if (rx_assignment != nullptr)
         {
-            result.provenance.push_back(makeProvenance("direction", *rx_assignment, rx.has_value()));
+            result.provenance.push_back(
+                direction_resolved ? makeProvenance("direction", *rx_assignment, false)
+                                    : makeUnresolvedProvenance("direction", *rx_assignment));
         }
         if (tx_assignment == nullptr && rx_assignment == nullptr)
         {
-            result.provenance.push_back(makeSyntheticProvenance("direction"));
+            result.provenance.push_back(makeUnresolvedProvenance("direction"));
         }
     }
 
@@ -535,34 +584,46 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
         const std::optional<bool> cts = cts_assignment ? parseEnableDisable(cts_assignment->raw_value_text) : std::nullopt;
 
         bool flow_control = false;
+        bool flow_resolved = true;
         if (rts.has_value() && cts.has_value())
         {
             flow_control = (*rts && *cts);
-            if (*rts != *cts)
+            // rts != cts — вместе они не образуют ни чистый "включено", ни
+            // чистый "выключено", оба физических бита разъехались, поэтому
+            // flow_control всё равно нельзя уверенно определить.
+            flow_resolved = (*rts == *cts);
+            if (!flow_resolved)
             {
                 result.notes.push_back(
                     "Modem.rts и Modem.cts не совпадают (rts=" + std::string(*rts ? "Enable" : "Disable") +
                     ", cts=" + std::string(*cts ? "Enable" : "Disable") +
-                    ") — flow_control требует ОБА Enable, взято false.");
+                    ") — конфигуратор не смог определить flow_control, укажите значение явно.");
             }
         }
         else
         {
-            result.notes.push_back("Modem.rts/Modem.cts не найдены или не распознаны, flow_control взят false по умолчанию.");
+            flow_resolved = false;
+            result.notes.push_back(
+                "Modem.rts/Modem.cts не найдены или не распознаны — конфигуратор не смог определить "
+                "flow_control, укажите значение явно.");
         }
         result.json_block["flow_control"] = flow_control;
 
         if (rts_assignment != nullptr)
         {
-            result.provenance.push_back(makeProvenance("flow_control", *rts_assignment, rts.has_value()));
+            result.provenance.push_back(
+                flow_resolved ? makeProvenance("flow_control", *rts_assignment, false)
+                              : makeUnresolvedProvenance("flow_control", *rts_assignment));
         }
         if (cts_assignment != nullptr)
         {
-            result.provenance.push_back(makeProvenance("flow_control", *cts_assignment, cts.has_value()));
+            result.provenance.push_back(
+                flow_resolved ? makeProvenance("flow_control", *cts_assignment, false)
+                              : makeUnresolvedProvenance("flow_control", *cts_assignment));
         }
         if (rts_assignment == nullptr && cts_assignment == nullptr)
         {
-            result.provenance.push_back(makeSyntheticProvenance("flow_control"));
+            result.provenance.push_back(makeUnresolvedProvenance("flow_control"));
         }
     }
 

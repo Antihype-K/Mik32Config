@@ -160,3 +160,58 @@ TEST(Timer32ChannelReverseMapper, CaptureModeDoesNotSynthesizeOcrButDoesSynthesi
     EXPECT_FALSE(mapped->channel_json.contains("ocr"));
     EXPECT_EQ(mapped->channel_json.at("capture_edge"), "rising");
 }
+
+namespace
+{
+const FieldProvenance* findChannelProvenance(const MappedTimer32Channel& mapped, const std::string& field)
+{
+    for (const auto& provenance : mapped.provenance)
+    {
+        if (provenance.json_field == field)
+        {
+            return &provenance;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+// ---- unresolved-политика (feedback_reverse_import_unresolved_fields_policy) ----
+
+TEST(Timer32ChannelReverseMapper, MissingChannelIndexIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "pwm_channel";
+    block.handle_type = "TIMER32_CHANNEL_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("TimerInstance", "htimer32_1.Instance", 1),
+        makeAssignment("Mode", "TIMER32_CHANNEL_MODE_PWM", 2),
+    };
+
+    const std::optional<MappedTimer32Channel> mapped = mapTimer32ChannelBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findChannelProvenance(*mapped, "index");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}
+
+TEST(Timer32ChannelReverseMapper, UnparseableOcrIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "pwm_channel";
+    block.handle_type = "TIMER32_CHANNEL_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("TimerInstance", "htimer32_1.Instance", 1),
+        makeAssignment("ChannelIndex", "TIMER32_CHANNEL_0", 2),
+        makeAssignment("Mode", "TIMER32_CHANNEL_MODE_PWM", 3),
+        makeAssignment("OCR", "duty_value", 4),
+    };
+
+    const std::optional<MappedTimer32Channel> mapped = mapTimer32ChannelBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findChannelProvenance(*mapped, "ocr");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}

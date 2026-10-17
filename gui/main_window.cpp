@@ -441,6 +441,24 @@ void MainWindow::onImportProject()
     imported_project_ = imported;
     reverse_import_active_ = true;
 
+    // feedback_reverse_import_unresolved_fields_policy: поля, которые
+    // маппер не смог разобрать (FieldProvenance::unresolved), блокируют
+    // кодогенерацию всего проекта и подсвечиваются красным — см.
+    // ProjectDocument::validate()/peripheral_tree.cpp/properties_panel.cpp.
+    document_.clearUnresolvedFields();
+    for (std::size_t block_index = 0; block_index < imported.block_provenance.size(); ++block_index)
+    {
+        std::vector<std::string> unresolved_names;
+        for (const reverse_import::FieldProvenance& field : imported.block_provenance[block_index])
+        {
+            if (field.unresolved)
+            {
+                unresolved_names.push_back(field.json_field);
+            }
+        }
+        document_.setUnresolvedFields(static_cast<int>(block_index), unresolved_names);
+    }
+
     properties_->showPeripheral(QString(), -1);
     refreshEverything();
     navigator_.goTo(Screen::Config);
@@ -984,7 +1002,26 @@ void MainWindow::refreshEverything()
             }
         }
     }
-    tree_->refreshState(enabled, names);
+    // Unresolved-поля reverse-import (feedback_reverse_import_unresolved_
+    // fields_policy) — красная подсветка дерева по block_index ->
+    // (type, instance) через blockIndices.
+    QSet<QString> unresolved;
+    for (const auto& supported : kSupportedBlocks)
+    {
+        const QString type = QString::fromUtf8(supported.first);
+        for (int instance = 0; instance < supported.second; ++instance)
+        {
+            for (int block_index : document_.blockIndices(type.toStdString(), instance))
+            {
+                if (document_.blockHasUnresolvedFields(block_index))
+                {
+                    unresolved.insert(PeripheralTree::keyFor(type, instance));
+                    break;
+                }
+            }
+        }
+    }
+    tree_->refreshState(enabled, names, unresolved);
 
     // 2. Диагностика — единственный источник истины о валидности: и статусная
     // строка, и запрет генерации смотрят на её счётчики, а не считают заново.

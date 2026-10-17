@@ -47,7 +47,11 @@ public:
 
     // Помечает включённые блоки (жирным + цветом) и подставляет
     // пользовательские имена. enabled/names ключуются строкой "type:instance".
-    void refreshState(const QSet<QString>& enabled, const QHash<QString, QString>& names);
+    // unresolved — ключи (keyFor) блоков, у которых есть хотя бы одно
+    // unresolved-поле (feedback_reverse_import_unresolved_fields_policy) —
+    // подсвечиваются красным поверх обычной "включено"-подсветки.
+    void refreshState(const QSet<QString>& enabled, const QHash<QString, QString>& names,
+                       const QSet<QString>& unresolved = {});
 
     void selectPeripheral(const QString& type, int instance);
     PeripheralRef currentRef() const;

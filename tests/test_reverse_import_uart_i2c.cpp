@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 
+using reverse_import::FieldProvenance;
 using reverse_import::MappedBlock;
 using reverse_import::RawFieldAssignment;
 using reverse_import::RawInitBlock;
@@ -384,4 +385,168 @@ TEST(I2cReverseMapper, AddressModeIsNeverSerializable)
     // address_mode не имеет своей C-строки — выводится из величины
     // own_address, а не хранится отдельно.
     EXPECT_FALSE(serializeI2cFieldValue("address_mode", std::string("10bit"), "0x50").has_value());
+}
+
+namespace
+{
+const FieldProvenance* findProvenance(const MappedBlock& mapped, const std::string& field)
+{
+    for (const auto& provenance : mapped.provenance)
+    {
+        if (provenance.json_field == field)
+        {
+            return &provenance;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+// ---- UART: unresolved-политика (feedback_reverse_import_unresolved_fields_policy) ----
+
+TEST(UartReverseMapper, MissingBaudRateIsUnresolvedNotDefaulted)
+{
+    const std::string file = "no_baud/src/main.c";
+    RawInitBlock block;
+    block.handle_name = "husart0";
+    block.handle_type = "USART_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("husart0", "Instance", "UART_0", file, 1),
+        makeAssignment("husart0", "frame", "Frame_8bit", file, 2),
+    };
+
+    const std::optional<MappedBlock> mapped = mapUartBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+    ASSERT_TRUE(mapped->json_block.contains("baud_rate"));
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "baud_rate");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+    EXPECT_FALSE(mapped->notes.empty());
+}
+
+TEST(UartReverseMapper, UnparseableBaudRateIsUnresolvedNotDefaulted)
+{
+    const std::string file = "expr_baud/src/main.c";
+    RawInitBlock block;
+    block.handle_name = "husart0";
+    block.handle_type = "USART_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("husart0", "Instance", "UART_0", file, 1),
+        makeAssignment("husart0", "baudrate", "config.baud", file, 2),
+    };
+
+    const std::optional<MappedBlock> mapped = mapUartBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "baud_rate");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+    EXPECT_EQ(provenance->original_raw_value_text, "config.baud");
+}
+
+TEST(UartReverseMapper, AmbiguousParityEvenIsUnresolvedNotDefaulted)
+{
+    // parity_bit=Enable, но parity_bit_inversion нераспознаваем ->
+    // нельзя честно сказать odd/even, раньше тихо угадывалось "even".
+    const std::string file = "weird_parity/src/main.c";
+    RawInitBlock block;
+    block.handle_name = "husart0";
+    block.handle_type = "USART_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("husart0", "Instance", "UART_0", file, 1),
+        makeAssignment("husart0", "parity_bit", "Enable", file, 2),
+        makeAssignment("husart0", "parity_bit_inversion", "config.inv", file, 3),
+    };
+
+    const std::optional<MappedBlock> mapped = mapUartBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* pb = findProvenance(*mapped, "parity");
+    ASSERT_NE(pb, nullptr);
+    EXPECT_TRUE(pb->unresolved);
+}
+
+// ---- I2C: unresolved-политика (feedback_reverse_import_unresolved_fields_policy) ----
+
+TEST(I2cReverseMapper, MissingInstanceIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "hi2c0";
+    block.handle_type = "I2C_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("hi2c0", "Init.Mode", "HAL_I2C_MODE_MASTER", "no_instance/src/main.c", 1),
+    };
+
+    const std::optional<MappedBlock> mapped = mapI2cBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "instance");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}
+
+TEST(I2cReverseMapper, UnmatchedTimingQuintetIsUnresolvedNotDefaulted)
+{
+    const std::string file = "unknown_timing/src/main.c";
+    RawInitBlock block;
+    block.handle_name = "hi2c0";
+    block.handle_type = "I2C_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("hi2c0", "Instance", "I2C_0", file, 1),
+        makeAssignment("hi2c0", "Init.Mode", "HAL_I2C_MODE_MASTER", file, 2),
+        makeAssignment("hi2c0", "Clock.PRESC", "9", file, 3),
+        makeAssignment("hi2c0", "Clock.SCLDEL", "9", file, 4),
+        makeAssignment("hi2c0", "Clock.SDADEL", "9", file, 5),
+        makeAssignment("hi2c0", "Clock.SCLH", "9", file, 6),
+        makeAssignment("hi2c0", "Clock.SCLL", "9", file, 7),
+    };
+
+    const std::optional<MappedBlock> mapped = mapI2cBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "clock_speed");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}
+
+TEST(I2cReverseMapper, MissingOwnAddressForSlaveIsUnresolvedNotDefaulted)
+{
+    const std::string file = "no_address/src/main.c";
+    RawInitBlock block;
+    block.handle_name = "hi2c0";
+    block.handle_type = "I2C_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("hi2c0", "Instance", "I2C_0", file, 1),
+        makeAssignment("hi2c0", "Init.Mode", "HAL_I2C_MODE_SLAVE", file, 2),
+    };
+
+    const std::optional<MappedBlock> mapped = mapI2cBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* own_address = findProvenance(*mapped, "own_address");
+    ASSERT_NE(own_address, nullptr);
+    EXPECT_TRUE(own_address->unresolved);
+
+    const FieldProvenance* address_mode = findProvenance(*mapped, "address_mode");
+    ASSERT_NE(address_mode, nullptr);
+    EXPECT_TRUE(address_mode->unresolved);
+}
+
+TEST(UartReverseMapper, MissingDirectionFieldsIsUnresolvedNotDefaulted)
+{
+    const std::string file = "no_direction/src/main.c";
+    RawInitBlock block;
+    block.handle_name = "husart0";
+    block.handle_type = "USART_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("husart0", "Instance", "UART_0", file, 1),
+    };
+
+    const std::optional<MappedBlock> mapped = mapUartBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "direction");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
 }

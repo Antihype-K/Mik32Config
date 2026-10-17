@@ -22,11 +22,26 @@ std::string trim(const std::string& text)
     return text.substr(begin, end - begin + 1);
 }
 
+// Значение определено, но запись правки назад не поддерживается (например,
+// mode/arr/cmp — аргумент вызова, не присваивание поля) — НЕ unresolved,
+// просто недоступно для редактирования.
 FieldProvenance synthesizedProvenance(const std::string& json_field)
 {
     FieldProvenance provenance;
     provenance.json_field = json_field;
     provenance.editable = false;
+    return provenance;
+}
+
+// Значение НЕ удалось определить (поле отсутствует или нераспознано) —
+// feedback_reverse_import_unresolved_fields_policy: подсвечивается красным,
+// блокирует кодоген всего проекта, а не тихий дефолт.
+FieldProvenance makeUnresolvedProvenance(const std::string& json_field)
+{
+    FieldProvenance provenance;
+    provenance.json_field = json_field;
+    provenance.editable = false;
+    provenance.unresolved = true;
     return provenance;
 }
 
@@ -118,9 +133,10 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
             {
                 mapped.json_block["instance"] = 0;
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось определить instance из Instance = \"" + assignment.raw_value_text +
-                    "\" — подставлена заглушка 0, проверьте блок руками");
+                    "\" — конфигуратор не смог определить instance, укажите значение явно.");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -146,9 +162,10 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
             {
                 mapped.json_block["prescaler"] = 1;
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось распознать Clock.Prescaler = \"" + assignment.raw_value_text +
-                    "\" — подставлена заглушка prescaler=1, проверьте блок руками");
+                    "\" — конфигуратор не смог определить prescaler, укажите значение явно.");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -165,18 +182,18 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
     if (!has_instance)
     {
         mapped.json_block["instance"] = 0;
-        mapped.provenance.push_back(synthesizedProvenance("instance"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("instance"));
         mapped.notes.push_back(
-            "в блоке не найдено присваивание Instance — подставлена заглушка instance=0, "
-            "проверьте блок руками");
+            "в блоке не найдено присваивание Instance — конфигуратор не смог определить "
+            "instance, укажите значение явно.");
     }
     if (!has_prescaler)
     {
         mapped.json_block["prescaler"] = 1;
-        mapped.provenance.push_back(synthesizedProvenance("prescaler"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("prescaler"));
         mapped.notes.push_back(
-            "в блоке не найдено присваивание Clock.Prescaler — подставлена заглушка "
-            "prescaler=1, проверьте блок руками");
+            "в блоке не найдено присваивание Clock.Prescaler — конфигуратор не смог "
+            "определить prescaler, укажите значение явно.");
     }
 
     // mode/arr/cmp — из ПОСЛЕДНЕГО (см. .h про "last wins") распознанного
@@ -185,6 +202,8 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
     // writer не умеет переписывать аргумент вызова без "=" в строке.
     bool found_mode = false;
     int matches_seen = 0;
+    bool arr_resolved = true;
+    bool cmp_resolved = true;
     for (const RawTrailingCall& call : block.trailing_calls)
     {
         const std::string function_name = stripInterruptSuffix(call.function_name);
@@ -233,10 +252,11 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
             else
             {
                 mapped.json_block["arr"] = 0;
+                arr_resolved = false;
                 mapped.notes.push_back(
                     "Не удалось разобрать аргумент ARR вызова " + function_name + "(\"" + call.args[1]
                     + "\") как целочисленный литерал (не поддерживаются арифметические выражения/"
-                      "макросы) — использован дефолт 0, проверьте блок руками.");
+                      "макросы) — конфигуратор не смог определить arr, укажите значение явно.");
             }
         }
         if (has_compare && call.args.size() >= 3)
@@ -249,10 +269,11 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
             else
             {
                 mapped.json_block["cmp"] = 0;
+                cmp_resolved = false;
                 mapped.notes.push_back(
                     "Не удалось разобрать аргумент CMP вызова " + function_name + "(\"" + call.args[2]
                     + "\") как целочисленный литерал (не поддерживаются арифметические выражения/"
-                      "макросы) — использован дефолт 0, проверьте блок руками.");
+                      "макросы) — конфигуратор не смог определить cmp, укажите значение явно.");
             }
         }
         else
@@ -273,8 +294,8 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
                 "появления в файле, проверьте блок руками");
         }
         mapped.provenance.push_back(synthesizedProvenance("mode"));
-        mapped.provenance.push_back(synthesizedProvenance("arr"));
-        mapped.provenance.push_back(synthesizedProvenance("cmp"));
+        mapped.provenance.push_back(arr_resolved ? synthesizedProvenance("arr") : makeUnresolvedProvenance("arr"));
+        mapped.provenance.push_back(cmp_resolved ? synthesizedProvenance("cmp") : makeUnresolvedProvenance("cmp"));
         mapped.notes.push_back(
             "mode/arr/cmp определены по вызову HAL_Timer16_StartPWM/StartOneShot/"
             "Counter_Start после Init, а не по присваиванию поля — редактирование этих "
@@ -287,13 +308,13 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
         mapped.json_block["mode"] = "period";
         mapped.json_block["arr"] = 0;
         mapped.json_block["cmp"] = 0;
-        mapped.provenance.push_back(synthesizedProvenance("mode"));
-        mapped.provenance.push_back(synthesizedProvenance("arr"));
-        mapped.provenance.push_back(synthesizedProvenance("cmp"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("mode"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("arr"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("cmp"));
         mapped.notes.push_back(
             "не найден вызов HAL_Timer16_StartPWM/StartOneShot/Counter_Start после "
-            "Init для этого блока — mode/arr/cmp не определены, подставлены заглушки "
-            "(period/0/0), проверьте блок руками.");
+            "Init для этого блока — конфигуратор не смог определить mode/arr/cmp, "
+            "укажите значения явно.");
     }
 
     return mapped;

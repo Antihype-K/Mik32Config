@@ -371,6 +371,20 @@ std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowle
         return diagnostics;
     }
 
+    // 0. Unresolved-поля reverse-import (feedback_reverse_import_unresolved_
+    // fields_policy): пока хоть одно поле не разобрано однозначно,
+    // кодогенерация всего проекта заблокирована — не только затронутого
+    // блока.
+    for (const auto& [block_index, field_names] : unresolved_fields_)
+    {
+        for (const std::string& field_name : field_names)
+        {
+            diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error,
+                "Поле \"" + field_name + "\" не удалось определить при импорте — "
+                "укажите значение явно.", block_index});
+        }
+    }
+
     // 1. Per-module schema-валидация. parseProjectDocument останавливается на
     // первой ошибке (контракт ParseResult — одно сообщение), поэтому здесь
     // будет ровно один Error, а не список: показывать пользователю мнимую
@@ -641,4 +655,35 @@ std::vector<std::pair<int, int>> ProjectDocument::claimedPins(
     }
 
     return pins;
+}
+
+void ProjectDocument::setUnresolvedFields(int block_index, std::vector<std::string> field_names)
+{
+    if (field_names.empty())
+    {
+        unresolved_fields_.erase(block_index);
+        return;
+    }
+    unresolved_fields_[block_index] = std::move(field_names);
+}
+
+void ProjectDocument::clearUnresolvedFields()
+{
+    unresolved_fields_.clear();
+}
+
+std::vector<std::string> ProjectDocument::unresolvedFieldNames(int block_index) const
+{
+    const auto it = unresolved_fields_.find(block_index);
+    return it == unresolved_fields_.end() ? std::vector<std::string>() : it->second;
+}
+
+bool ProjectDocument::blockHasUnresolvedFields(int block_index) const
+{
+    return unresolved_fields_.count(block_index) != 0;
+}
+
+bool ProjectDocument::hasAnyUnresolvedFields() const
+{
+    return !unresolved_fields_.empty();
 }

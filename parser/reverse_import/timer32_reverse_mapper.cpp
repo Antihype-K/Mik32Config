@@ -88,11 +88,14 @@ std::optional<std::string> mapCountModeEnum(const std::string& raw)
     return std::nullopt;
 }
 
-FieldProvenance synthesizedProvenance(const std::string& json_field)
+// feedback_reverse_import_unresolved_fields_policy: поле не найдено или не
+// распознано — вместо тихого дефолта подсвечиваем и блокируем кодоген.
+FieldProvenance makeUnresolvedProvenance(const std::string& json_field)
 {
     FieldProvenance provenance;
     provenance.json_field = json_field;
     provenance.editable = false;
+    provenance.unresolved = true;
     return provenance;
 }
 
@@ -121,11 +124,11 @@ void mapNumericField(
     {
         mapped.json_block[json_field] = 0;
         provenance.editable = false;
+        provenance.unresolved = true;
         mapped.notes.push_back(
             "поле " + assignment.field_path + " в исходнике — вычисляемое выражение (\"" +
-            assignment.raw_value_text + "\"), не число — показано как 0, редактирование "
-            "недоступно, значение нужно менять в аргументах вызова " + init_function_hint +
-            " в исходнике руками");
+            assignment.raw_value_text + "\"), не число (см. аргументы вызова " + init_function_hint +
+            ") — конфигуратор не смог определить " + json_field + ", укажите значение явно.");
     }
     mapped.provenance.push_back(provenance);
 }
@@ -179,9 +182,10 @@ std::optional<MappedBlock> mapTimer32Block(const RawInitBlock& block)
             {
                 mapped.json_block["instance"] = 0;
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось определить instance из Instance = \"" + assignment.raw_value_text +
-                    "\" — подставлена заглушка 0, проверьте блок руками");
+                    "\" — конфигуратор не смог определить instance, укажите значение явно.");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -221,9 +225,10 @@ std::optional<MappedBlock> mapTimer32Block(const RawInitBlock& block)
             {
                 mapped.json_block["count_mode"] = "forward";
                 provenance.editable = false;
+                provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось распознать count_mode из \"" + assignment.raw_value_text +
-                    "\" — подставлен дефолт \"forward\", проверьте блок руками");
+                    "\" — конфигуратор не смог определить count_mode, укажите значение явно.");
             }
             mapped.provenance.push_back(provenance);
             continue;
@@ -238,33 +243,34 @@ std::optional<MappedBlock> mapTimer32Block(const RawInitBlock& block)
     if (!has_instance)
     {
         mapped.json_block["instance"] = 0;
-        mapped.provenance.push_back(synthesizedProvenance("instance"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("instance"));
         mapped.notes.push_back(
-            "в блоке не найдено присваивание Instance — подставлена заглушка instance=0, "
-            "проверьте блок руками");
+            "в блоке не найдено присваивание Instance — конфигуратор не смог определить "
+            "instance, укажите значение явно.");
     }
     if (!has_prescaler)
     {
         mapped.json_block["prescaler"] = 0;
-        mapped.provenance.push_back(synthesizedProvenance("prescaler"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("prescaler"));
         mapped.notes.push_back(
-            "в блоке не найдено присваивание Clock.Prescaler — подставлена заглушка "
-            "prescaler=0, проверьте блок руками");
+            "в блоке не найдено присваивание Clock.Prescaler — конфигуратор не смог "
+            "определить prescaler, укажите значение явно.");
     }
     if (!has_count_mode)
     {
         mapped.json_block["count_mode"] = "forward";
-        mapped.provenance.push_back(synthesizedProvenance("count_mode"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("count_mode"));
         mapped.notes.push_back(
-            "count_mode не задан явно в исходнике, применён дефолт \"forward\"");
+            "count_mode не найден в исходнике — конфигуратор не смог определить count_mode, "
+            "укажите значение явно.");
     }
     if (!has_top)
     {
         mapped.json_block["top"] = 0;
-        mapped.provenance.push_back(synthesizedProvenance("top"));
+        mapped.provenance.push_back(makeUnresolvedProvenance("top"));
         mapped.notes.push_back(
-            "в блоке не найдено присваивание Top — подставлена заглушка top=0, проверьте "
-            "блок руками");
+            "в блоке не найдено присваивание Top — конфигуратор не смог определить top, "
+            "укажите значение явно.");
     }
 
     // "channels" сознательно не заполняется — см. ограничение в .h.

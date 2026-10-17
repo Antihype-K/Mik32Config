@@ -128,6 +128,57 @@ TEST(Timer32ReverseMapper, SerializesTopAsHexAndPrescalerAsDecimal)
     EXPECT_FALSE(reverse_import::serializeTimer32FieldValue("channels", nlohmann::json::array(), "").has_value());
 }
 
+// ---- unresolved-политика (feedback_reverse_import_unresolved_fields_policy) ----
+
+TEST(Timer32ReverseMapper, MissingInstanceIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "htimer32_0";
+    block.handle_type = "TIMER32_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("Top", "100", 1, "    htimer32_0.Top = 100;"),
+    };
+
+    std::optional<reverse_import::MappedBlock> mapped = reverse_import::mapTimer32Block(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    bool found = false;
+    for (const reverse_import::FieldProvenance& provenance : (*mapped).provenance)
+    {
+        if (provenance.json_field == "instance")
+        {
+            found = true;
+            EXPECT_TRUE(provenance.unresolved);
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST(Timer32ReverseMapper, UnparseablePrescalerExpressionIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_name = "htimer32_0";
+    block.handle_type = "TIMER32_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("Instance", "TIMER32_0", 1, "    htimer32_0.Instance = TIMER32_0;"),
+        makeAssignment("Clock.Prescaler", "prescaler", 2, "    htimer32_0.Clock.Prescaler = prescaler;"),
+    };
+
+    std::optional<reverse_import::MappedBlock> mapped = reverse_import::mapTimer32Block(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    bool found = false;
+    for (const reverse_import::FieldProvenance& provenance : (*mapped).provenance)
+    {
+        if (provenance.json_field == "prescaler")
+        {
+            found = true;
+            EXPECT_TRUE(provenance.unresolved);
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
 // (b) один пин GPIO из реального файла: GPIO_PIN_6, GPIO_1, output, pull_none.
 // instance должен взяться из аргумента вызова (GPIO_1 -> 1), а не из полей
 // структуры (в GPIO_InitTypeDef физически нет поля "порт").
@@ -276,4 +327,66 @@ TEST(GpioReverseMapper, SerializeFieldValueRoundTripsPinsModePull)
 
     EXPECT_FALSE(reverse_import::serializeGpioFieldValue("mode", nlohmann::json("not_a_mode"), "").has_value());
     EXPECT_FALSE(reverse_import::serializeGpioFieldValue("pins", nlohmann::json::array(), "").has_value());
+}
+
+// ---- GPIO: unresolved-политика (feedback_reverse_import_unresolved_fields_policy) ----
+
+namespace
+{
+const reverse_import::FieldProvenance* findGpioProvenance(
+    const reverse_import::MappedBlock& mapped, const std::string& field)
+{
+    for (const auto& provenance : mapped.provenance)
+    {
+        if (provenance.json_field == field)
+        {
+            return &provenance;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+TEST(GpioReverseMapper, UnrecognizablePinsAreUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_type = "GPIO_InitTypeDef";
+    block.init_call_args = {"GPIO_0"};
+    block.assignments = {makeAssignment("Pin", "some_runtime_variable", 1, "    GPIO_InitStruct.Pin = some_runtime_variable;")};
+
+    const std::optional<reverse_import::MappedBlock> mapped = reverse_import::mapGpioBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const reverse_import::FieldProvenance* provenance = findGpioProvenance(*mapped, "pins");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}
+
+TEST(GpioReverseMapper, MissingPortArgIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_type = "GPIO_InitTypeDef";
+    block.assignments = {makeAssignment("Pin", "GPIO_PIN_6", 1, "    GPIO_InitStruct.Pin = GPIO_PIN_6;")};
+
+    const std::optional<reverse_import::MappedBlock> mapped = reverse_import::mapGpioBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const reverse_import::FieldProvenance* provenance = findGpioProvenance(*mapped, "instance");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
+}
+
+TEST(GpioReverseMapper, MissingModeIsUnresolvedNotDefaulted)
+{
+    RawInitBlock block;
+    block.handle_type = "GPIO_InitTypeDef";
+    block.init_call_args = {"GPIO_0"};
+    block.assignments = {makeAssignment("Pin", "GPIO_PIN_6", 1, "    GPIO_InitStruct.Pin = GPIO_PIN_6;")};
+
+    const std::optional<reverse_import::MappedBlock> mapped = reverse_import::mapGpioBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    const reverse_import::FieldProvenance* provenance = findGpioProvenance(*mapped, "mode");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_TRUE(provenance->unresolved);
 }
