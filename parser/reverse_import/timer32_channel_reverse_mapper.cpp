@@ -162,7 +162,8 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
             {
                 mapped.notes.push_back(
                     "не удалось распознать Mode = \"" + assignment.raw_value_text +
-                    "\" у канала \"" + block.handle_name + "\" — подставлен дефолт \"pwm\"");
+                    "\" у канала \"" + block.handle_name + "\" — конфигуратор не смог "
+                    "определить mode, укажите значение явно");
                 mapped.channel_json["mode"] = mode;
                 mapped.provenance.push_back(fromAssignmentProvenance("mode", assignment, false));
                 has_mode = true;
@@ -182,7 +183,8 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
             {
                 mapped.notes.push_back(
                     "поле OCR канала \"" + block.handle_name + "\" в исходнике — вычисляемое "
-                    "выражение (\"" + assignment.raw_value_text + "\"), не число — показано как 0");
+                    "выражение (\"" + assignment.raw_value_text + "\"), не число — конфигуратор не "
+                    "смог определить ocr, укажите значение явно");
                 mapped.channel_json["ocr"] = 0;
                 mapped.provenance.push_back(fromAssignmentProvenance("ocr", assignment, false));
             }
@@ -198,7 +200,8 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
             {
                 mapped.notes.push_back(
                     "не удалось распознать PWM_Invert = \"" + assignment.raw_value_text +
-                    "\" у канала \"" + block.handle_name + "\" — подставлен дефолт false");
+                    "\" у канала \"" + block.handle_name + "\" — конфигуратор не смог "
+                    "определить pwm_invert, укажите значение явно");
             }
             continue;
         }
@@ -215,7 +218,8 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
             {
                 mapped.notes.push_back(
                     "не удалось распознать CaptureEdge = \"" + assignment.raw_value_text +
-                    "\" у канала \"" + block.handle_name + "\" — подставлен дефолт \"rising\"");
+                    "\" у канала \"" + block.handle_name + "\" — конфигуратор не смог "
+                    "определить capture_edge, укажите значение явно");
                 mapped.channel_json["capture_edge"] = "rising";
                 mapped.provenance.push_back(fromAssignmentProvenance("capture_edge", assignment, false));
             }
@@ -231,7 +235,8 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
             {
                 mapped.notes.push_back(
                     "не удалось распознать Noise = \"" + assignment.raw_value_text +
-                    "\" у канала \"" + block.handle_name + "\" — подставлен дефолт false");
+                    "\" у канала \"" + block.handle_name + "\" — конфигуратор не смог "
+                    "определить noise_filter, укажите значение явно");
             }
             continue;
         }
@@ -263,7 +268,7 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
         mapped.provenance.push_back(synthesizedProvenance("index"));
         mapped.notes.push_back(
             "не найдено присваивание ChannelIndex у канала \"" + block.handle_name +
-            "\" — подставлена заглушка index=0, проверьте руками");
+            "\" — конфигуратор не смог определить index, укажите значение явно");
     }
     if (!has_mode)
     {
@@ -271,7 +276,7 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
         mapped.provenance.push_back(synthesizedProvenance("mode"));
         mapped.notes.push_back(
             "не найдено присваивание Mode у канала \"" + block.handle_name +
-            "\" — подставлен дефолт \"pwm\"");
+            "\" — конфигуратор не смог определить mode, укажите значение явно");
     }
 
     // ocr требуется схемой только для pwm/compare — capture его не требует
@@ -283,7 +288,7 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
         mapped.provenance.push_back(synthesizedProvenance("ocr"));
         mapped.notes.push_back(
             "не найдено присваивание OCR у канала \"" + block.handle_name +
-            "\" (mode=" + mode + ") — подставлена заглушка ocr=0");
+            "\" (mode=" + mode + ") — конфигуратор не смог определить ocr, укажите значение явно");
     }
     if (!mapped.channel_json.contains("capture_edge") && mode == "capture")
     {
@@ -291,7 +296,8 @@ std::optional<MappedTimer32Channel> mapTimer32ChannelBlock(const RawInitBlock& b
         mapped.provenance.push_back(synthesizedProvenance("capture_edge"));
         mapped.notes.push_back(
             "не найдено присваивание CaptureEdge у канала \"" + block.handle_name +
-            "\" (mode=capture) — подставлен дефолт \"rising\"");
+            "\" (mode=capture) — конфигуратор не смог определить capture_edge, "
+            "укажите значение явно");
     }
     if (!mapped.channel_json.contains("pwm_invert"))
     {

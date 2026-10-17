@@ -123,6 +123,13 @@ std::optional<MappedBlock> mapAdcBlock(const RawInitBlock& block)
 
     MappedBlock result;
     result.json_block["type"] = "adc";
+    // ADC в МК один физический блок, но GUI (project_document.cpp:
+    // blockIndices/isEnabled) сопоставляет блок с узлом дерева по паре
+    // (type, instance), сравнивая с дефолтом -1 — без явного instance=0
+    // (как у GUI-шного defaultBlock() при ручном "Включить") дерево видит
+    // блок как несуществующий, даже если он реально импортирован.
+    // Не HAL-поле, не editable, не unresolved — синтетическая GUI-привязка.
+    result.json_block["instance"] = 0;
 
     // ---- channel (из "Init.Sel = ADC_CHANNELn;") ----
     {

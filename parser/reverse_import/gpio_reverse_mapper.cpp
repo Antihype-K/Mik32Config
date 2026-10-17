@@ -322,20 +322,24 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
         mapped.json_block["pins"] = std::vector<int>{0};
         mapped.provenance.push_back(synthesizedProvenance("pins"));
         mapped.notes.push_back(
-            "ВНИМАНИЕ: в блоке не найдено присваивание Pin — подставлено ФИКТИВНОЕ "
-            "значение pins=[0], проверьте блок руками");
+            "в блоке не найдено присваивание Pin — конфигуратор не смог определить "
+            "pins, укажите значение явно");
     }
     if (!has_mode)
     {
         mapped.json_block["mode"] = "input";
         mapped.provenance.push_back(synthesizedProvenance("mode"));
-        mapped.notes.push_back("mode не задан явно в исходнике, применён дефолт \"input\"");
+        mapped.notes.push_back(
+            "mode не задан явно в исходнике — конфигуратор не смог определить mode, "
+            "укажите значение явно");
     }
     if (!has_pull)
     {
         mapped.json_block["pull"] = "none";
         mapped.provenance.push_back(synthesizedProvenance("pull"));
-        mapped.notes.push_back("pull не задан явно в исходнике, применён дефолт \"none\"");
+        mapped.notes.push_back(
+            "pull не задан явно в исходнике — конфигуратор не смог определить pull, "
+            "укажите значение явно");
     }
     if (!has_ds)
     {
@@ -344,8 +348,8 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
         mapped.json_block["drive_strength"] = "4mA";
         mapped.provenance.push_back(synthesizedProvenance("drive_strength"));
         mapped.notes.push_back(
-            "drive_strength не задан явно в исходнике, применён дефолт 4mA — при "
-            "необходимости добавьте явное присваивание в исходный код руками");
+            "drive_strength не задан явно в исходнике — конфигуратор не смог "
+            "определить drive_strength, укажите значение явно");
     }
 
     return mapped;

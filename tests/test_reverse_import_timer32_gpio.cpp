@@ -207,8 +207,9 @@ TEST(GpioReverseMapper, MapsRealSinglePinOutputBlock)
     ASSERT_EQ((*mapped).json_block.at("pins").size(), 1u);
     EXPECT_EQ((*mapped).json_block.at("pins")[0].get<int>(), 6);
 
-    // (c) drive_strength не задан в исходнике этого блока — дефолт 4mA,
-    // editable=false, понятная note.
+    // (c) drive_strength не задан в исходнике этого блока — unresolved
+    // (feedback_reverse_import_unresolved_fields_policy), editable=false,
+    // понятная note.
     EXPECT_EQ((*mapped).json_block.at("drive_strength").get<std::string>(), "4mA");
     bool found_ds_provenance = false;
     for (const reverse_import::FieldProvenance& provenance : (*mapped).provenance)
@@ -217,6 +218,7 @@ TEST(GpioReverseMapper, MapsRealSinglePinOutputBlock)
         {
             found_ds_provenance = true;
             EXPECT_FALSE(provenance.editable);
+            EXPECT_TRUE(provenance.unresolved);
         }
         if (provenance.json_field == "instance")
         {
@@ -227,7 +229,6 @@ TEST(GpioReverseMapper, MapsRealSinglePinOutputBlock)
     }
     EXPECT_TRUE(found_ds_provenance);
     EXPECT_TRUE(hasNoteContaining((*mapped).notes, "drive_strength"));
-    EXPECT_TRUE(hasNoteContaining((*mapped).notes, "4mA"));
 }
 
 // Битовое ИЛИ нескольких пинов в одном блоке (GPIO_PIN_0 | GPIO_PIN_1)

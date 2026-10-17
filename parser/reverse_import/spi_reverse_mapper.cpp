@@ -288,32 +288,42 @@ std::optional<MappedBlock> mapSpiBlock(const RawInitBlock& block)
     {
         mapped.json_block["instance"] = 0;
         mapped.provenance.push_back(synthesizedProvenance("instance"));
-        mapped.notes.push_back("в блоке не найдено присваивание Instance — подставлена заглушка instance=0");
+        mapped.notes.push_back(
+            "в блоке не найдено присваивание Instance — конфигуратор не смог "
+            "определить instance, укажите значение явно");
     }
     if (!has_mode)
     {
         mapped.json_block["mode"] = "master";
         mapped.provenance.push_back(synthesizedProvenance("mode"));
-        mapped.notes.push_back("в блоке не найдено присваивание Init.SPI_Mode — подставлен дефолт \"master\"");
+        mapped.notes.push_back(
+            "в блоке не найдено присваивание Init.SPI_Mode — конфигуратор не смог "
+            "определить mode, укажите значение явно");
         is_master = true;
     }
     if (!has_clk_phase)
     {
         mapped.json_block["clk_phase"] = "off";
         mapped.provenance.push_back(synthesizedProvenance("clk_phase"));
-        mapped.notes.push_back("в блоке не найдено присваивание Init.CLKPhase — подставлен дефолт \"off\"");
+        mapped.notes.push_back(
+            "в блоке не найдено присваивание Init.CLKPhase — конфигуратор не смог "
+            "определить clk_phase, укажите значение явно");
     }
     if (!has_clk_polarity)
     {
         mapped.json_block["clk_polarity"] = "low";
         mapped.provenance.push_back(synthesizedProvenance("clk_polarity"));
-        mapped.notes.push_back("в блоке не найдено присваивание Init.CLKPolarity — подставлен дефолт \"low\"");
+        mapped.notes.push_back(
+            "в блоке не найдено присваивание Init.CLKPolarity — конфигуратор не смог "
+            "определить clk_polarity, укажите значение явно");
     }
     if (!has_threshold_tx)
     {
         mapped.json_block["threshold_tx"] = 4;
         mapped.provenance.push_back(synthesizedProvenance("threshold_tx"));
-        mapped.notes.push_back("в блоке не найдено присваивание Init.ThresholdTX — подставлен дефолт 4");
+        mapped.notes.push_back(
+            "в блоке не найдено присваивание Init.ThresholdTX — конфигуратор не смог "
+            "определить threshold_tx, укажите значение явно");
     }
 
     // master-only поля: если mode оказался master, но само поле в исходнике
@@ -327,25 +337,33 @@ std::optional<MappedBlock> mapSpiBlock(const RawInitBlock& block)
         {
             mapped.json_block["baud_rate_div"] = 64;
             mapped.provenance.push_back(synthesizedProvenance("baud_rate_div"));
-            mapped.notes.push_back("mode=master, но Init.BaudRateDiv не найден — подставлен дефолт 64");
+            mapped.notes.push_back(
+                "mode=master, но Init.BaudRateDiv не найден — конфигуратор не смог "
+                "определить baud_rate_div, укажите значение явно");
         }
         if (!mapped.json_block.contains("manual_cs"))
         {
             mapped.json_block["manual_cs"] = false;
             mapped.provenance.push_back(synthesizedProvenance("manual_cs"));
-            mapped.notes.push_back("mode=master, но Init.ManualCS не найден — подставлен дефолт false");
+            mapped.notes.push_back(
+                "mode=master, но Init.ManualCS не найден — конфигуратор не смог "
+                "определить manual_cs, укажите значение явно");
         }
         if (!mapped.json_block.contains("decoder"))
         {
             mapped.json_block["decoder"] = false;
             mapped.provenance.push_back(synthesizedProvenance("decoder"));
-            mapped.notes.push_back("mode=master, но Init.Decoder не найден — подставлен дефолт false");
+            mapped.notes.push_back(
+                "mode=master, но Init.Decoder не найден — конфигуратор не смог "
+                "определить decoder, укажите значение явно");
         }
         if (!mapped.json_block.contains("chip_select"))
         {
             mapped.json_block["chip_select"] = "cs0";
             mapped.provenance.push_back(synthesizedProvenance("chip_select"));
-            mapped.notes.push_back("mode=master, но Init.ChipSelect не найден — подставлен дефолт \"cs0\"");
+            mapped.notes.push_back(
+                "mode=master, но Init.ChipSelect не найден — конфигуратор не смог "
+                "определить chip_select, укажите значение явно");
         }
     }
 
