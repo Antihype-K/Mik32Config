@@ -29,6 +29,26 @@ namespace
 // 2-3 естественных. Здесь такие блоки схлопываются обратно в одну группу,
 // объединяя их "pins" — ровно то, что сделал бы пользователь руками через
 // GPIO_PIN_A | GPIO_PIN_B в одном вызове.
+// Единственная HAL-функция, которая для данного типа хендла РЕАЛЬНО
+// настраивает периферию. Любой другой HAL_*_Init, принимающий тот же хендл,
+// — прикладной драйвер поверх уже настроенной периферии (см. место вызова).
+// nullptr для типов, у которых канонического Init нет (тогда проверка не
+// применяется и поведение остаётся прежним).
+const std::string* canonicalInitFunctionFor(const std::string& handle_type)
+{
+    static const std::unordered_map<std::string, std::string> kCanonical{
+        {"USART_HandleTypeDef", "HAL_USART_Init"},
+        {"I2C_HandleTypeDef", "HAL_I2C_Init"},
+        {"TIMER32_HandleTypeDef", "HAL_Timer32_Init"},
+        {"TIMER32_CHANNEL_HandleTypeDef", "HAL_Timer32_Channel_Init"},
+        {"Timer16_HandleTypeDef", "HAL_Timer16_Init"},
+        {"GPIO_InitTypeDef", "HAL_GPIO_Init"},
+        {"SPI_HandleTypeDef", "HAL_SPI_Init"}};
+
+    const auto it = kCanonical.find(handle_type);
+    return it == kCanonical.end() ? nullptr : &it->second;
+}
+
 using GpioGroupKey = std::tuple<int, std::string, std::string, std::string>;
 
 GpioGroupKey gpioGroupKeyOf(const nlohmann::json& block)
@@ -214,6 +234,26 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
 
     for (const RawInitBlock& block : scanned.blocks)
     {
+        // Сканер считает границей блока ЛЮБОЙ вызов вида HAL_<что-то>_Init,
+        // в том числе прикладной драйвер, которому хендл просто передают:
+        // HAL_SSD1306_Init(&hi2c0, BRIGHTNESS_FULL) в
+        // docs/examples/mik32-examples/SSD1306/src/main.c:33 — это
+        // инициализация ЭКРАНА по уже настроенной шине, а не второй
+        // конфигурации I2C. Без этой проверки такой вызов давал второй
+        // i2c-блок с дублирующимся instance, который parseProjectDocument
+        // справедливо считает ошибкой конфига.
+        const std::string* canonical_init = canonicalInitFunctionFor(block.handle_type);
+        if (canonical_init != nullptr && block.init_function_name != *canonical_init)
+        {
+            result.notes.push_back(
+                "Вызов " + block.init_function_name + "(" + block.handle_name + ") в " +
+                block.init_call_location.file + ":" +
+                std::to_string(block.init_call_location.line) +
+                " не является инициализацией периферии (" + *canonical_init +
+                ") — хендл лишь передан прикладной функции, блок не создан.");
+            continue;
+        }
+
         if (block.handle_type == "TIMER32_CHANNEL_HandleTypeDef")
         {
             channel_blocks.push_back(&block);

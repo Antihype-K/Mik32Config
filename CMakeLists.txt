@@ -70,6 +70,7 @@ set(CORE_SOURCES
         # сканер + четыре типовых маппера + точечный патчер исходников + два
         # оркестрирующих слоя (файлы -> JSON и JSON-правки -> файлы).
         parser/reverse_import/reverse_import_scanner.cpp
+        parser/reverse_import/c_literal_parser.cpp
         parser/reverse_import/uart_reverse_mapper.cpp
         parser/reverse_import/i2c_reverse_mapper.cpp
         parser/reverse_import/timer32_reverse_mapper.cpp
@@ -109,6 +110,12 @@ target_include_directories(mik32-core
 # ==============================================================================
 add_executable(MIK32-Configurator src/main.cpp)
 target_link_libraries(MIK32-Configurator PRIVATE mik32-core)
+
+# Регрессионный прогон reverse-import по каталогу вендорных примеров
+# (docs/examples/mik32-examples). Не GoogleTest-тест, т.к. сами примеры лежат
+# в gitignored docs/ — см. комментарий в заголовке файла.
+add_executable(reverse-import-smoke tools/reverse_import_smoke_test.cpp)
+target_link_libraries(reverse-import-smoke PRIVATE mik32-core)
 
 # ==============================================================================
 # 6. ГРАФИЧЕСКИЙ ИНТЕРФЕЙС (ТЗ §3.1.9, §3.4 п.5 — Qt 6.x)

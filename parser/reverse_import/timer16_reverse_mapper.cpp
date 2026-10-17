@@ -1,5 +1,8 @@
 #include "timer16_reverse_mapper.h"
 
+#include "c_literal_parser.h"
+
+#include <optional>
 #include <regex>
 
 namespace reverse_import
@@ -222,11 +225,35 @@ std::optional<MappedBlock> mapTimer16Block(const RawInitBlock& block)
 
         if (call.args.size() >= 2)
         {
-            try { mapped.json_block["arr"] = std::stoll(call.args[1]); } catch (...) { mapped.json_block["arr"] = 0; }
+            const std::optional<long long> arr_value = parseCIntegerLiteral(call.args[1]);
+            if (arr_value.has_value())
+            {
+                mapped.json_block["arr"] = *arr_value;
+            }
+            else
+            {
+                mapped.json_block["arr"] = 0;
+                mapped.notes.push_back(
+                    "Не удалось разобрать аргумент ARR вызова " + function_name + "(\"" + call.args[1]
+                    + "\") как целочисленный литерал (не поддерживаются арифметические выражения/"
+                      "макросы) — использован дефолт 0, проверьте блок руками.");
+            }
         }
         if (has_compare && call.args.size() >= 3)
         {
-            try { mapped.json_block["cmp"] = std::stoll(call.args[2]); } catch (...) { mapped.json_block["cmp"] = 0; }
+            const std::optional<long long> cmp_value = parseCIntegerLiteral(call.args[2]);
+            if (cmp_value.has_value())
+            {
+                mapped.json_block["cmp"] = *cmp_value;
+            }
+            else
+            {
+                mapped.json_block["cmp"] = 0;
+                mapped.notes.push_back(
+                    "Не удалось разобрать аргумент CMP вызова " + function_name + "(\"" + call.args[2]
+                    + "\") как целочисленный литерал (не поддерживаются арифметические выражения/"
+                      "макросы) — использован дефолт 0, проверьте блок руками.");
+            }
         }
         else
         {

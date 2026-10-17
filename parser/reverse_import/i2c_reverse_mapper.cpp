@@ -41,6 +41,8 @@
 //
 #include "i2c_reverse_mapper.h"
 
+#include "c_literal_parser.h"
+
 #include <array>
 #include <cctype>
 #include <string>
@@ -126,38 +128,12 @@ std::optional<PrefixedNumber> parsePrefixedNumber(const std::string& text)
 
 // Целое число: десятичное или "0x.."/"0X..", с необязательным C-суффиксом
 // (u/U/l/L). Используется для Init.OwnAddress1 и для Clock.PRESC и т.п.
+// Отбрасывание суффикса по признаку "последний символ — буква" съедало
+// hex-цифры: "0xFFFF" -> "0x" -> nullopt, "0x1F" -> "0x1" -> ТИХО неверное 1.
+// Вынесено в общий c_literal_parser.h.
 std::optional<long long> parseIntegerLiteral(const std::string& text)
 {
-    std::string trimmed = trimText(text);
-    if (trimmed.empty())
-    {
-        return std::nullopt;
-    }
-    std::size_t end = trimmed.size();
-    while (end > 0 && std::isalpha(static_cast<unsigned char>(trimmed[end - 1])) &&
-           !(end >= 2 && (trimmed[end - 2] == '0') && (trimmed[end - 1] == 'x' || trimmed[end - 1] == 'X')))
-    {
-        --end;
-    }
-    std::string core = trimmed.substr(0, end);
-    if (core.empty())
-    {
-        return std::nullopt;
-    }
-    try
-    {
-        std::size_t consumed = 0;
-        long long value = std::stoll(core, &consumed, 0); // база 0 -> сам определяет 0x/десятичное
-        if (consumed != core.size())
-        {
-            return std::nullopt;
-        }
-        return value;
-    }
-    catch (const std::exception&)
-    {
-        return std::nullopt;
-    }
+    return parseCIntegerLiteral(text);
 }
 
 std::optional<bool> parseI2cMode(const std::string& text)

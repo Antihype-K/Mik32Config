@@ -1,5 +1,7 @@
 #include "spi_reverse_mapper.h"
 
+#include "c_literal_parser.h"
+
 #include <regex>
 
 namespace reverse_import
@@ -88,13 +90,9 @@ const std::regex kChipSelectValue(R"(^SPI_CS_(\d)$)");
 
 std::optional<long long> tryParseIntLiteral(const std::string& raw_value_text)
 {
-    const std::string text = trim(raw_value_text);
-    static const std::regex kDec(R"(^-?[0-9]+$)");
-    if (!std::regex_match(text, kDec))
-    {
-        return std::nullopt;
-    }
-    try { return std::stoll(text); } catch (...) { return std::nullopt; }
+    // См. timer32_channel_reverse_mapper.cpp — тот же общий разборщик вместо
+    // "только десятичные".
+    return parseCIntegerLiteral(raw_value_text);
 }
 
 // Общий шаблон "распознали enum -> кладём строку/bool/int в json_block,

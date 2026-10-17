@@ -1,5 +1,7 @@
 #include "timer32_channel_reverse_mapper.h"
 
+#include "c_literal_parser.h"
+
 #include <algorithm>
 #include <regex>
 
@@ -22,13 +24,10 @@ std::string trim(const std::string& text)
 
 std::optional<long long> tryParseIntLiteral(const std::string& raw_value_text)
 {
-    const std::string text = trim(raw_value_text);
-    static const std::regex kDec(R"(^-?[0-9]+$)");
-    if (!std::regex_match(text, kDec))
-    {
-        return std::nullopt;
-    }
-    try { return std::stoll(text); } catch (...) { return std::nullopt; }
+    // Раньше принимались только десятичные литералы (regex ^-?[0-9]+$) —
+    // "0x1000" уходил в nullopt как "не число". Общий разборщик понимает и
+    // hex/oct/bin с C-суффиксом, контракт (nullopt на выражение) тот же.
+    return parseCIntegerLiteral(raw_value_text);
 }
 
 // "htimer32_1.Instance" -> "htimer32_1". Единственная форма, которую пишет

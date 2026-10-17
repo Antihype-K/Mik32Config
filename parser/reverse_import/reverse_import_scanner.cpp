@@ -227,6 +227,20 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
     // реаллоцировать вектор, инвалидируя указатели, но не индексы.
     std::unordered_map<std::string, std::size_t> last_block_index;
 
+    // Вызовы, ссылающиеся на объявленный хендл, встреченные ДО его первого
+    // HAL_*_Init. Нужны, потому что в вендорных примерах "донастройка" сплошь
+    // стоит в main(), а сам Init — в статической функции НИЖЕ по файлу:
+    // docs/examples/mik32-examples/HAL_Timer16/src/main.c вызывает
+    // HAL_Timer16_StartPWM(&htimer16_1, 0xFFFF, 0xFFFF / 2) на строке 34, а
+    // HAL_Timer16_Init(&htimer16_1) — только на строке 107, внутри
+    // Timer16_1_Init(). Без этого буфера timer16-маппер не находил ни одного
+    // Start-вызова и подставлял заглушки mode=period/arr=0/cmp=0 (ровно то
+    // ограничение "межфункциональная связка Init/Start", что было отмечено
+    // открытым). Текстовый сканер не знает порядка ВЫЗОВА функций, но для
+    // восстановления конфигурации он и не нужен: важно лишь, что Start
+    // относится к этому хендлу.
+    std::unordered_map<std::string, std::vector<RawTrailingCall>> pre_init_calls;
+
     std::string raw_line;
     int line_number = 0;
     while (std::getline(stream, raw_line))
@@ -336,12 +350,49 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
             block.init_call_args = args;
             block.init_call_location = SourceLocation{file_path.string(), line_number};
 
-            if (block.assignments.empty())
+            // Переиспользование одной и той же структуры для нескольких
+            // Init-вызовов подряд, без переприсваивания полей между ними:
+            //   GPIO_InitStruct.Pin = GPIO_PIN_3; ... ;
+            //   HAL_GPIO_Init(GPIO_0, &GPIO_InitStruct);
+            //   HAL_GPIO_Init(GPIO_1, &GPIO_InitStruct);
+            // (docs/examples/mik32-examples/HAL_Blink/src/main.c:56-57). По
+            // семантике C структура сохраняет значения, поэтому второй вызов
+            // настраивает GPIO_1 РОВНО так же, как первый — GPIO_1, пин 3,
+            // выход. Раньше второй блок уходил в маппер пустым, и тот
+            // подставлял фиктивные pins=[0] + mode="input", то есть
+            // восстанавливал конфигурацию, которой в прошивке нет. Копируем
+            // присваивания предыдущего блока того же хендла.
+            const auto previous_block_it = last_block_index.find(matched_handle_name);
+            const bool inherited_from_previous_init =
+                block.assignments.empty() && previous_block_it != last_block_index.end() &&
+                !out.blocks[previous_block_it->second].assignments.empty();
+
+            if (inherited_from_previous_init)
+            {
+                block.assignments = out.blocks[previous_block_it->second].assignments;
+                out.unsupported_notes.push_back(
+                    "Вызов " + init_function_name + " для \"" + matched_handle_name +
+                    "\" переиспользует структуру предыдущего вызова без переприсваивания "
+                    "полей (" + file_path.string() + ":" + std::to_string(line_number) +
+                    ") — конфигурация восстановлена по предыдущему блоку, но ОБА блока "
+                    "ссылаются на одни и те же строки исходника: правка такого блока в "
+                    "GUI затронет и парный блок.");
+            }
+            else if (block.assignments.empty())
             {
                 out.unsupported_notes.push_back(
                     "Вызов " + init_function_name + " для \"" + matched_handle_name +
                     "\" не имеет ни одного распознанного присваивания полей перед ним: " +
                     file_path.string() + ":" + std::to_string(line_number));
+            }
+
+            // Донастройка, встреченная выше по файлу, чем сам Init — отдаётся
+            // ПЕРВОМУ блоку этого хендла (см. pre_init_calls выше).
+            auto pre_init_it = pre_init_calls.find(matched_handle_name);
+            if (pre_init_it != pre_init_calls.end())
+            {
+                block.trailing_calls = std::move(pre_init_it->second);
+                pre_init_calls.erase(pre_init_it);
             }
 
             out.blocks.push_back(std::move(block));
@@ -372,7 +423,46 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
                         full_line_text});
                     break;  // один вызов -> одна запись, даже если хендл встретился дважды в аргументах
                 }
+
+                // Блока ещё нет, но хендл с таким именем уже объявлен — Init
+                // будет ниже по файлу (типичная раскладка вендорных примеров:
+                // main() сверху, *_Init() снизу). Запоминаем до появления блока.
+                if (handles.count(arg) > 0)
+                {
+                    pre_init_calls[arg].push_back(RawTrailingCall{
+                        function_name, args, SourceLocation{file_path.string(), line_number},
+                        full_line_text});
+                    break;
+                }
             }
+        }
+    }
+
+    // Хендл объявлен, его поля присваиваются, но HAL_*_Init для него так и не
+    // встретился — блок не создан, и раньше об этом НИЧЕГО не сообщалось.
+    // Так настроена вся RTC-периферия вендорных примеров: Hal_RTC/src/main.c
+    // пишет hrtc.Instance = RTC и вызывает HAL_RTC_SetTime/SetDate, никакого
+    // HAL_RTC_Init нет — пример молча давал 0 блоков и 0 notes, что прямо
+    // противоречит контракту "сканер обязан объяснять пропуски".
+    for (const auto& [handle_name, handle] : handles)
+    {
+        // PCC_InitTypeDef — тактирование, настраивается через HAL_PCC_Config,
+        // не HAL_*_Init; это отдельная вкладка GUI (clock_config_screen), а
+        // не периферия reverse-import. Без этого исключения note печатается
+        // на каждом из 53 вендорных примеров подряд и забивает реальные notes.
+        if (handle.handle_type == "PCC_InitTypeDef")
+        {
+            continue;
+        }
+        if (!handle.pending_assignments.empty())
+        {
+            out.unsupported_notes.push_back(
+                "Хендл \"" + handle_name + "\" (" + handle.handle_type + ", объявлен в " +
+                handle.declared_at.file + ":" +
+                std::to_string(handle.declared_at.line) + ") имеет " +
+                std::to_string(handle.pending_assignments.size()) +
+                " присваиваний полей, но вызова HAL_*_Init для него в этом файле нет — "
+                "периферия настраивается другим способом, блок не создан.");
         }
     }
 }
