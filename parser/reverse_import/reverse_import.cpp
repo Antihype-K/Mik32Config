@@ -15,6 +15,9 @@
 #include "gpio_reverse_mapper.h"
 #include "spi_reverse_mapper.h"
 #include "adc_reverse_mapper.h"
+#include "dac_reverse_mapper.h"
+#include "crypto_reverse_mapper.h"
+#include "dma_reverse_mapper.h"
 
 namespace reverse_import
 {
@@ -45,7 +48,14 @@ const std::string* canonicalInitFunctionFor(const std::string& handle_type)
         {"Timer16_HandleTypeDef", "HAL_Timer16_Init"},
         {"GPIO_InitTypeDef", "HAL_GPIO_Init"},
         {"SPI_HandleTypeDef", "HAL_SPI_Init"},
-        {"ADC_HandleTypeDef", "HAL_ADC_Init"}};
+        {"ADC_HandleTypeDef", "HAL_ADC_Init"},
+        {"DAC_HandleTypeDef", "HAL_DAC_Init"},
+        {"Crypto_HandleTypeDef", "HAL_Crypto_Init"},
+        {"DMA_InitTypeDef", "HAL_DMA_Init"}};
+    // DMA_ChannelHandleTypeDef сознательно ОТСУТСТВУЕТ в этой таблице — у
+    // него нет init_function_name вообще (см. dma_reverse_mapper.h), и
+    // проверка "block.init_function_name != *canonical" ложно отбросила бы
+    // каждый такой блок, если бы запись здесь была.
 
     const auto it = kCanonical.find(handle_type);
     return it == kCanonical.end() ? nullptr : &it->second;
@@ -292,6 +302,32 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         {
             mapped = mapAdcBlock(block);
         }
+        else if (block.handle_type == "DAC_HandleTypeDef")
+        {
+            mapped = mapDacBlock(block);
+        }
+        else if (block.handle_type == "Crypto_HandleTypeDef")
+        {
+            mapped = mapCryptoBlock(block);
+        }
+        else if (block.handle_type == "DMA_ChannelHandleTypeDef")
+        {
+            mapped = mapDmaChannelBlock(block);
+        }
+        else if (block.handle_type == "DMA_InitTypeDef")
+        {
+            // Глобальная инициализация ПДП (hdma.Instance = DMA_CONFIG;
+            // .CurrentValue = ...) — не отдельный JSON-блок в этом
+            // конфигураторе, schemas/dma.json описывает блок КАНАЛА, а не
+            // контроллера (см. dma_reverse_mapper.h). Канал (DMA_Channel-
+            // HandleTypeDef) обрабатывается отдельной веткой выше.
+            result.notes.push_back(
+                "HAL_DMA_Init(" + block.handle_name + ") в " + block.init_call_location.file + ":" +
+                std::to_string(block.init_call_location.line) +
+                " — глобальная инициализация ПДП, не отдельный блок конфигуратора (настройка "
+                "канала читается из DMA_ChannelHandleTypeDef), пропущено.");
+            continue;
+        }
         else
         {
             result.notes.push_back(
@@ -299,7 +335,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
                 "\") в " + block.init_call_location.file + ":" +
                 std::to_string(block.init_call_location.line) +
                 " — это не один из поддерживаемых типов периферии MIK32 (UART/I2C/Timer32/"
-                "Timer16/GPIO/SPI/ADC), пропущено.");
+                "Timer16/GPIO/SPI/ADC/DAC/CRYPTO/DMA), пропущено.");
             continue;
         }
 

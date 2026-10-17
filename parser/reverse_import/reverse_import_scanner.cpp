@@ -454,6 +454,32 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
         {
             continue;
         }
+        // DMA_ChannelHandleTypeDef — особый случай: в реальном HAL для
+        // канала ПДП нет функции инициализации вообще (mik32_hal_dma.h —
+        // есть только HAL_DMA_Init для ГЛОБАЛЬНОГО DMA_InitTypeDef, см.
+        // dma_reverse_mapper.h), конфигурация канала — это просто
+        // присваивания ChannelInit.* без закрывающего вызова. Без этой
+        // ветки каждый канал ПДП во всех вендорных HAL_DMA_* примерах падал
+        // бы в unsupported_notes вместо реального блока — тот же класс
+        // ограничения, что уже задокументирован для RTC (SetTime/SetDate
+        // без Init), но для DMA-канала есть маппер (dma_reverse_mapper.cpp),
+        // поэтому блок нужен, а не просто note.
+        if (handle.handle_type == "DMA_ChannelHandleTypeDef" && !handle.pending_assignments.empty())
+        {
+            RawInitBlock block;
+            block.handle_name = handle_name;
+            block.handle_type = handle.handle_type;
+            block.assignments = handle.pending_assignments;
+            block.init_call_location = handle.declared_at;
+            auto trailing_it = pre_init_calls.find(handle_name);
+            if (trailing_it != pre_init_calls.end())
+            {
+                block.trailing_calls = std::move(trailing_it->second);
+                pre_init_calls.erase(trailing_it);
+            }
+            out.blocks.push_back(std::move(block));
+            continue;
+        }
         if (!handle.pending_assignments.empty())
         {
             out.unsupported_notes.push_back(
