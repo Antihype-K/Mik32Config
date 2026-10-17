@@ -362,9 +362,10 @@ IRQ-путь (`HAL_SPI_STATE_END` достигнут во всех 8 случа�
 | CRC | `mik32_hal_crc32.h/.c` | ✅ закрыто этой сессией (2026-10-14), HW-подтверждено — см. раздел ниже. |
 | EEPROM-контроллер | `mik32_hal_eeprom.h/.c` | 🟡 код+тесты готовы, **HW-валидация заблокирована** — см. раздел ниже. |
 | WDT (сторожевой таймер ядра) | `mik32_hal_wdt.h/.c` | 🟡 код+тесты готовы, **HW-валидация не начата** (плата недоступна) — см. раздел ниже. |
-| ЦАП (DAC) | `mik32_hal_dac.h/.c` | 🟡 код+тесты готовы (2026-10-14), **HW-валидация не начата** (плата недоступна). `schemas/dac.json`, `parser/dac/`, `knowledge_base/dac.json`, `codegen/project/dac_contribution.{h,cpp}` — два канала (instance 0/1), конфигурация DIV/EXTRef/EXTClb, `HAL_DAC_SetValue` на пользовательском значении остаётся за пользователем. Известное ограничение: пины DAC не подключены в `cross_module_validator` (конфликт-детект) — отдельная задача. |
-| АЦП (ADC) | `mik32_hal_adc.h/.c` | 🟡 код+тесты готовы (2026-10-14), HW-валидация не начата (плата недоступна). Конфигурация начального канала (0-7)+ИОН, `schemas/adc.json`+`parser/adc/`+`codegen/project/adc_contribution.{h,cpp}`. Переключение каналов в рантайме — за пользователем. |
-| **CRYPTO** | `mik32_hal_crypto.h` | 🟡 код+тесты готовы (2026-10-14), HW-валидация не начата. Algorithm/CipherMode/SwapMode/OrderMode — `schemas/crypto.json`+`parser/crypto/`+`codegen/project/crypto_contribution.{h,cpp}`. Ключ/IV сознательно НЕ генерируются (секретные данные времени выполнения). |
+| ЦАП (DAC) | `mik32_hal_dac.h/.c` | 🟡 код+тесты готовы (2026-10-14), **HW-валидация не начата** (плата недоступна). `schemas/dac.json`, `parser/dac/`, `knowledge_base/dac.json`, `codegen/project/dac_contribution.{h,cpp}` — два канала (instance 0/1), конфигурация DIV/EXTRef/EXTClb, `HAL_DAC_SetValue` на пользовательском значении остаётся за пользователем. Известное ограничение: пины DAC не подключены в `cross_module_validator` (конфликт-детект) — отдельная задача. Reverse-import маппер (`parser/reverse_import/dac_reverse_mapper.cpp`) добавлен 2026-10-18 — см. раздел «Reverse-import» ниже. |
+| АЦП (ADC) | `mik32_hal_adc.h/.c` | 🟡 код+тесты готовы (2026-10-14), HW-валидация не начата (плата недоступна). Конфигурация начального канала (0-7)+ИОН, `schemas/adc.json`+`parser/adc/`+`codegen/project/adc_contribution.{h,cpp}`. Переключение каналов в рантайме — за пользователем. Reverse-import маппер (`parser/reverse_import/adc_reverse_mapper.cpp`) добавлен в прошлой сессии (2026-10-17 — исправление unresolved-политики, instance=0) — см. раздел «Reverse-import» ниже. |
+| **CRYPTO** | `mik32_hal_crypto.h` | 🟡 код+тесты готовы (2026-10-14), HW-валидация не начата. Algorithm/CipherMode/SwapMode/OrderMode — `schemas/crypto.json`+`parser/crypto/`+`codegen/project/crypto_contribution.{h,cpp}`. Ключ/IV сознательно НЕ генерируются (секретные данные времени выполнения). Reverse-import маппер (`parser/reverse_import/crypto_reverse_mapper.cpp`) добавлен 2026-10-18 — см. раздел «Reverse-import» ниже. |
+| **DMA (канал ПДП)** | `mik32_hal_dma.h/.c` | 🟡 код+тесты готовы (ранее, точная дата не зафиксирована в этом документе), HW-валидация не начата (плата недоступна). Один глобальный `DMA_Init` на проект (ТЗ §3.1.3.3) + до 4 конфигурируемых каналов — `schemas/dma.json`+`parser/dma/`+`codegen/project/dma_contribution.{h,cpp}`. Reverse-import маппер (`parser/reverse_import/dma_reverse_mapper.cpp`) добавлен 2026-10-18 — потребовал расширения сканера (см. ниже), так как у канала нет функции `Init` в реальном HAL. |
 | **OTP** | `mik32_hal_otp.h` | ✅ HW-подтверждён 2026-10-14 — см. раздел ниже. Только `ReadMode` — `schemas/otp.json`+`parser/otp/`+`codegen/project/otp_contribution.{h,cpp}`. Запись (`HAL_OTP_Write*`) сознательно НИКОГДА не генерируется — OTP физически необратима. |
 | **Датчик температуры (TSENS)** | `mik32_hal_tsens.h/.c` | ✅ HW-подтверждён 2026-10-14 — см. раздел ниже. Clock/Frequency/пороги/прерывания — `schemas/tsens.json`+`parser/tsens/`+`codegen/project/tsens_contribution.{h,cpp}`. `HAL_TSENS_SingleStart/ContinuousStart` — за пользователем. |
 
@@ -540,6 +541,20 @@ Errata п.5.1 про двойное чтение в 2-этапном режим�
 вендорный пример не вызывают явно `__HAL_PCC_EEPROM_CLK_ENABLE()` — решено
 доверять реальному коду (CLAUDE.md), не добавлять вызов, которого нет даже в
 проверенном примере. Rust-ветка явно отвергает EEPROM.
+
+#### EEPROM — reverse-import маппер добавлен 2026-10-18 (парсер, НЕ прошивка)
+
+`parser/reverse_import/eeprom_reverse_mapper.{h,cpp}` — по образцу
+`crypto_reverse_mapper.cpp` (глобальный блок, синтетический `instance=0`),
+на основе `docs/examples/mik32-examples/HAL_EEPROM/src/main.c:237-246`:
+`mode` (обязательное, `HAL_EEPROM_MODE_TWO_STAGE`/`THREE_STAGE`),
+`ecc_enabled`/`single_error_interrupt_enabled` (опциональные, дефолты схемы
+true/false). Тесты — `tests/test_reverse_import_eeprom.cpp`, 370/370 зелёные.
+
+Это НЕ противоречит запрету на HW-тесты EEPROM — reverse-import ничего не
+прошивает и не выполняет на плате, только разбирает существующий текст
+C-файла в JSON (см. преамбулу раздела «Reverse-import» выше). Статус самого
+forward-кодогена EEPROM (🔴, HW-валидация запрещена) не меняется.
 
 #### Инцидент №1 (ранее в этой же сессии, 2026-10-14)
 
@@ -739,6 +754,45 @@ graceful (существующий fallback period/0/0 срабатывает к
 
 Подробности — `docs/implementations/reverse_import.md`, раздел «Прогон
 против docs/examples/mik32-examples (2026-10-14)».
+
+### reverse-import — мапперы для DAC/CRYPTO/DMA добавлены 2026-10-18
+
+До этой правки у ADC/DAC/CRYPTO/DMA (единственных Тир-2 периферий с готовым
+forward-кодогеном) не было ни одного reverse-import-маппера — обратный
+разбор существующего C-проекта просто пропускал эти блоки. Добавлены три
+новых маппера по образцу `adc_reverse_mapper.cpp` (`parser/reverse_import/
+{dac,crypto,dma}_reverse_mapper.{h,cpp}`), с тестами
+(`tests/test_reverse_import_{dac,crypto,dma}.cpp`, 365/365 тестов зелёные).
+
+- **DAC** — прямой перенос паттерна ADC: `instance` (0/1, из `Instance_dac`,
+  НЕ из всегда-константного `Instance`), `div`/`ext_ref`/`ext_clb`.
+- **CRYPTO** — глобальный блок без поля `instance` в схеме (как у RTC/CRC) —
+  синтезируется `instance=0` для совпадения с конвенцией GUI-дерева
+  (`gui/project_document.cpp::defaultBlock()`), тот же класс фикса, что был
+  найден на ADC в прошлой сессии. `swap_mode`/`order_mode` — опциональные
+  поля с документированным дефолтом схемы (отсутствие поля — не unresolved,
+  это не угаданное значение, а применение схемного дефолта); `algorithm`/
+  `cipher_mode` — обязательные (отсутствие → unresolved).
+- **DMA (канал)** — потребовал расширения самого сканера
+  (`reverse_import_scanner.cpp`): у `DMA_ChannelHandleTypeDef` нет функции
+  `HAL_*_Init` в реальном HAL (подтверждено прямым чтением
+  `mik32_hal_dma.h` — только `HAL_DMA_Init` для ГЛОБАЛЬНОГО `DMA_InitTypeDef`,
+  `HAL_DMA_Wait`, `HAL_DMA_Start`), поэтому блок канала никогда не закрывался
+  обычным механизмом сканера ("присваивания закрываются вызовом Init").
+  Решение — не переписывать сканер, а добавить один дополнительный `if` в
+  уже существующий конце-файла fallback (тот же механизм, который раньше
+  использовался только для RTC) — синтезирует блок из накопленных
+  присваиваний, с переносом `HAL_DMA_LocalIRQEnable` через механизм
+  `pre_init_calls`. `buffer_size_bytes` архитектурно всегда unresolved —
+  реальное значение передаётся аргументом `Len` в `HAL_DMA_Start(...)`
+  (C-выражение типа `sizeof(x) - 1`, не литерал присваивания — сканер его
+  не разбирает). Глобальный `DMA_InitTypeDef` не имеет JSON-представления в
+  конфигураторе вообще — пропускается диспетчером с поясняющей note, а не
+  маппится.
+
+HW-уровня здесь нет (чистый парсер, см. преамбулу раздела выше) — факт
+закрытости не требует проверки на плате, она относится только к forward-
+кодогену этих четырёх периферий (остаётся открытым, см. таблицу Тир 2 выше).
 
 ---
 

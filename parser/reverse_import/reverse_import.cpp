@@ -18,6 +18,7 @@
 #include "dac_reverse_mapper.h"
 #include "crypto_reverse_mapper.h"
 #include "dma_reverse_mapper.h"
+#include "eeprom_reverse_mapper.h"
 
 namespace reverse_import
 {
@@ -51,7 +52,8 @@ const std::string* canonicalInitFunctionFor(const std::string& handle_type)
         {"ADC_HandleTypeDef", "HAL_ADC_Init"},
         {"DAC_HandleTypeDef", "HAL_DAC_Init"},
         {"Crypto_HandleTypeDef", "HAL_Crypto_Init"},
-        {"DMA_InitTypeDef", "HAL_DMA_Init"}};
+        {"DMA_InitTypeDef", "HAL_DMA_Init"},
+        {"HAL_EEPROM_HandleTypeDef", "HAL_EEPROM_Init"}};
     // DMA_ChannelHandleTypeDef сознательно ОТСУТСТВУЕТ в этой таблице — у
     // него нет init_function_name вообще (см. dma_reverse_mapper.h), и
     // проверка "block.init_function_name != *canonical" ложно отбросила бы
@@ -314,6 +316,10 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         {
             mapped = mapDmaChannelBlock(block);
         }
+        else if (block.handle_type == "HAL_EEPROM_HandleTypeDef")
+        {
+            mapped = mapEepromBlock(block);
+        }
         else if (block.handle_type == "DMA_InitTypeDef")
         {
             // Глобальная инициализация ПДП (hdma.Instance = DMA_CONFIG;
@@ -335,7 +341,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
                 "\") в " + block.init_call_location.file + ":" +
                 std::to_string(block.init_call_location.line) +
                 " — это не один из поддерживаемых типов периферии MIK32 (UART/I2C/Timer32/"
-                "Timer16/GPIO/SPI/ADC/DAC/CRYPTO/DMA), пропущено.");
+                "Timer16/GPIO/SPI/ADC/DAC/CRYPTO/DMA/EEPROM), пропущено.");
             continue;
         }
 
@@ -436,6 +442,22 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
     }
 
     mergeIdenticalGpioGroups(result);
+
+    // Дедуп полностью одинаковых notes (например, одна и та же заметка про
+    // buffer_size_bytes на двух каналах DMA) — порядок первого появления
+    // сохраняется, информация не теряется (текст не различает блоки).
+    {
+        std::vector<std::string> deduped_notes;
+        std::set<std::string> seen_notes;
+        for (const std::string& note : result.notes)
+        {
+            if (seen_notes.insert(note).second)
+            {
+                deduped_notes.push_back(note);
+            }
+        }
+        result.notes = std::move(deduped_notes);
+    }
 
     return result;
 }

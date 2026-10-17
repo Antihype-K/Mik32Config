@@ -35,6 +35,7 @@
 #ifndef MIK32_CONFIGURATOR_REVERSE_IMPORT_SCANNER_H
 #define MIK32_CONFIGURATOR_REVERSE_IMPORT_SCANNER_H
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -98,6 +99,17 @@ struct RawInitBlock
     // другого модуля) — типовые мапперы обязаны игнорировать всё, кроме
     // конкретных имён функций, которые они явно понимают.
     std::vector<RawTrailingCall> trailing_calls;
+
+    // Узкий паттерн: для DMA_ChannelHandleTypeDef, если trailing_calls
+    // содержит "HAL_DMA_Start(&<handle>, src, dst, sizeof(<array>) [+-N]);"
+    // и <array> — массив, объявленный ОДНОЙ строкой в этом же файле
+    // (явный размер [N] или счёт элементов инициализатора) — байтовый
+    // размер посчитан здесь. Межфункциональная связка (значение приходит
+    // через ДРУГОЙ хендл, например I2C DMA-обёртки) не поддерживается —
+    // см. dma_reverse_mapper.cpp.
+    std::optional<int> resolved_buffer_size_bytes;
+    SourceLocation resolved_buffer_size_bytes_location;
+    std::string resolved_buffer_size_bytes_source_text;
 };
 
 struct ScannedProject

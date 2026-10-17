@@ -389,11 +389,10 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
     }
 
     // ---- demo (не аппаратное поле HAL — переключатель поведения main.c, синтезируется) ----
+    // Без note: это всегда один и тот же текст на каждом импорте I2C,
+    // не actionable для пользователя (нечего "исправлять" по месту).
     {
         result.json_block["demo"] = is_master ? "scanner" : "receive";
-        result.notes.push_back(
-            std::string("demo не является полем HAL — не может быть определено из присваиваний, взят \"") +
-            (is_master ? "scanner" : "receive") + "\" (дефолт для этого mode) по умолчанию.");
         result.provenance.push_back(makeSyntheticProvenance("demo"));
     }
 

@@ -398,14 +398,32 @@ std::optional<MappedBlock> mapDmaChannelBlock(const RawInitBlock& block)
         }
     }
 
-    // ---- buffer_size_bytes — ВСЕГДА unresolved: значение передаётся как
-    // аргумент Len в HAL_DMA_Start(...), который сканер не разбирает (см.
-    // dma_reverse_mapper.h) ----
+    // ---- buffer_size_bytes — значение передаётся как аргумент Len в
+    // HAL_DMA_Start(...), а не присваиванием поля. Узкий паттерн (см.
+    // reverse_import_scanner.h resolved_buffer_size_bytes): прямой вызов
+    // HAL_DMA_Start(&<этот_канал>, ..., sizeof(<массив>) [+-N] | литерал)
+    // В ТОМ ЖЕ файле — разобран сканером заранее. Межфункциональная связка
+    // (значение приходит через ДРУГОЙ хендл, например I2C DMA-обёртки
+    // HAL_I2C_Master_Transmit_DMA) не поддерживается — остаётся unresolved. ----
+    if (block.resolved_buffer_size_bytes.has_value())
+    {
+        result.json_block["buffer_size_bytes"] = *block.resolved_buffer_size_bytes;
+        FieldProvenance provenance;
+        provenance.json_field = "buffer_size_bytes";
+        provenance.location = block.resolved_buffer_size_bytes_location;
+        provenance.original_raw_value_text = block.resolved_buffer_size_bytes_source_text;
+        provenance.original_full_line_text = block.resolved_buffer_size_bytes_source_text;
+        provenance.editable = false;
+        result.provenance.push_back(provenance);
+    }
+    else
     {
         result.json_block["buffer_size_bytes"] = 1;
         result.notes.push_back(
             "Размер буфера передаётся аргументом HAL_DMA_Start(...), а не присваиванием "
-            "поля — конфигуратор не читает тело функции, укажите buffer_size_bytes явно.");
+            "поля — конфигуратор не читает тело функции (кроме узкого случая прямого "
+            "sizeof(массив) в вызове HAL_DMA_Start с этим же каналом), укажите "
+            "buffer_size_bytes явно.");
         result.provenance.push_back(makeUnresolvedProvenance("buffer_size_bytes"));
     }
 

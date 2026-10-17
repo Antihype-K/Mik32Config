@@ -1,5 +1,6 @@
 #include "reverse_import_scanner.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -181,6 +182,112 @@ struct PendingHandle
     std::vector<RawFieldAssignment> pending_assignments;
 };
 
+// Байтовый размер встроенных целочисленных типов, встречающихся в буферах
+// DMA вендорных примеров (HAL_DMA_Memory_Memory и т.п.).
+int builtinIntegerByteSize(const std::string& type_name)
+{
+    static const std::unordered_map<std::string, int> kSizes = {
+        {"uint8_t", 1}, {"int8_t", 1}, {"char", 1}, {"unsigned char", 1},
+        {"uint16_t", 2}, {"int16_t", 2},
+        {"uint32_t", 4}, {"int32_t", 4}, {"int", 4}, {"unsigned int", 4},
+    };
+    const auto it = kSizes.find(type_name);
+    return it != kSizes.end() ? it->second : 0;
+}
+
+// Узкий паттерн (см. комментарий у resolved_buffer_size_bytes в .h):
+// только однострочные объявления массива вида "<type> <name>[<N>];" или
+// "<type> <name>[] = {a, b, c};" — многострочные инициализаторы не
+// поддерживаются (как и многострочные присваивания полей, см. .h).
+std::unordered_map<std::string, int> scanArrayByteSizes(const std::filesystem::path& file_path)
+{
+    static const std::regex kArrayDecl(
+        R"(^\s*(?:static\s+|const\s+)*(uint8_t|int8_t|char|unsigned char|uint16_t|int16_t|uint32_t|int32_t|unsigned int|int)\s+(\w+)\s*\[\s*(\d*)\s*\]\s*(?:=\s*\{([^;{}]*)\})?\s*;)");
+
+    std::unordered_map<std::string, int> sizes;
+    std::ifstream stream(file_path);
+    std::string raw_line;
+    while (std::getline(stream, raw_line))
+    {
+        const std::string sanitized = sanitizeLine(raw_line);
+        std::smatch match;
+        if (!std::regex_match(sanitized, match, kArrayDecl))
+        {
+            continue;
+        }
+        const int element_bytes = builtinIntegerByteSize(match[1].str());
+        if (element_bytes == 0)
+        {
+            continue;
+        }
+        const std::string explicit_count_text = match[3].str();
+        int element_count = 0;
+        if (!explicit_count_text.empty())
+        {
+            element_count = std::stoi(explicit_count_text);
+        }
+        else if (match[4].matched)
+        {
+            // Нет явного размера — считаем элементы инициализатора по
+            // запятым верхнего уровня (списки здесь плоские, без вложенных {}).
+            const std::string initializer = trim(match[4].str());
+            if (!initializer.empty())
+            {
+                element_count = 1 + static_cast<int>(std::count(initializer.begin(), initializer.end(), ','));
+            }
+        }
+        else
+        {
+            continue;  // ни размера, ни инициализатора — нечего посчитать
+        }
+        sizes[match[2].str()] = element_count * element_bytes;
+    }
+    return sizes;
+}
+
+// Узкий паттерн: args.back() — текст аргумента Len вызова HAL_DMA_Start.
+// Поддерживается только integer-литерал или "sizeof(<array>) [+-N]", где
+// <array> найден scanArrayByteSizes этого же файла. Любой другой вид
+// выражения (переменная, вызов функции, арифметика над полями) оставляет
+// resolved_buffer_size_bytes неопределённым — не угадываем.
+std::optional<int> resolveDmaStartLenArg(const std::string& len_text,
+                                         const std::unordered_map<std::string, int>& array_sizes)
+{
+    const std::string trimmed = trim(len_text);
+
+    static const std::regex kSizeofExpr(R"(^sizeof\s*\(\s*(\w+)\s*\)\s*(?:([+\-])\s*(\d+))?$)");
+    std::smatch match;
+    if (std::regex_match(trimmed, match, kSizeofExpr))
+    {
+        const auto it = array_sizes.find(match[1].str());
+        if (it == array_sizes.end())
+        {
+            return std::nullopt;
+        }
+        int value = it->second;
+        if (match[2].matched)
+        {
+            const int delta = std::stoi(match[3].str());
+            value += (match[2].str() == "-") ? -delta : delta;
+        }
+        return value;
+    }
+
+    try
+    {
+        std::size_t consumed = 0;
+        const int literal = std::stoi(trimmed, &consumed);
+        if (consumed == trimmed.size())
+        {
+            return literal;
+        }
+    }
+    catch (const std::exception&)
+    {
+    }
+    return std::nullopt;
+}
+
 void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
 {
     std::ifstream stream(file_path);
@@ -189,6 +296,8 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
         out.unsupported_notes.push_back("Не удалось открыть файл: " + file_path.string());
         return;
     }
+
+    const std::size_t blocks_before_this_file = out.blocks.size();
 
     // Тип хендла — любой идентификатор, заканчивающийся на HandleTypeDef или
     // InitTypeDef: I2C_HandleTypeDef, USART_HandleTypeDef, TIMER32_HandleTypeDef,
@@ -489,6 +598,42 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
                 std::to_string(handle.pending_assignments.size()) +
                 " присваиваний полей, но вызова HAL_*_Init для него в этом файле нет — "
                 "периферия настраивается другим способом, блок не создан.");
+        }
+    }
+
+    // Узкий паттерн buffer_size_bytes (см. resolved_buffer_size_bytes в .h):
+    // только для блоков DMA, появившихся в ЭТОМ файле, и только для
+    // HAL_DMA_Start(&<handle>, src, dst, Len) — межфункциональная связка
+    // (значение приходит через другой хендл) не разбирается.
+    std::unordered_map<std::string, int> array_sizes;
+    bool array_sizes_computed = false;
+    for (std::size_t i = blocks_before_this_file; i < out.blocks.size(); ++i)
+    {
+        RawInitBlock& block = out.blocks[i];
+        if (block.handle_type != "DMA_ChannelHandleTypeDef")
+        {
+            continue;
+        }
+        for (const RawTrailingCall& call : block.trailing_calls)
+        {
+            if (call.function_name != "HAL_DMA_Start" || call.args.empty() ||
+                call.args[0] != block.handle_name || call.args.size() < 4)
+            {
+                continue;
+            }
+            if (!array_sizes_computed)
+            {
+                array_sizes = scanArrayByteSizes(file_path);
+                array_sizes_computed = true;
+            }
+            const std::optional<int> resolved = resolveDmaStartLenArg(call.args.back(), array_sizes);
+            if (resolved.has_value())
+            {
+                block.resolved_buffer_size_bytes = *resolved;
+                block.resolved_buffer_size_bytes_location = call.location;
+                block.resolved_buffer_size_bytes_source_text = call.full_line_text;
+            }
+            break;
         }
     }
 }
