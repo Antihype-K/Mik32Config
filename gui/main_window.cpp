@@ -3,6 +3,8 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -23,6 +25,7 @@
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTabBar>
+#include <QTextEdit>
 #include <QTextStream>
 #include <QVBoxLayout>
 
@@ -487,9 +490,23 @@ void MainWindow::onImportProject()
         {
             details += QString::fromStdString(note) + "\n\n";
         }
-        QMessageBox::information(this, QString::fromUtf8("Импорт: %1 предупреждени(е/я/й)")
-                                            .arg(imported.notes.size()),
-                                  details.trimmed());
+
+        // QMessageBox::information не прокручивается — на сотнях заметок
+        // диалог растягивался за пределы экрана. QTextEdit в QDialog
+        // прокручивается и нормально resize'ится.
+        QDialog dialog(this);
+        dialog.setWindowTitle(QString::fromUtf8("Импорт: %1 предупреждени(е/я/й)")
+                                   .arg(imported.notes.size()));
+        dialog.resize(700, 500);
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* text = new QTextEdit(&dialog);
+        text->setReadOnly(true);
+        text->setPlainText(details.trimmed());
+        layout->addWidget(text);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        layout->addWidget(buttons);
+        dialog.exec();
     }
 }
 

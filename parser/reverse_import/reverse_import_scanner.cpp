@@ -32,7 +32,16 @@ bool isIgnoredDirectoryName(const std::string& name)
         // найденных внутри исходников самого HAL, а не прикладного кода
         // (обнаружено на generated_projects/n422e2: 45 найденных блоков
         // вместо 1 реального — 44 из них из mik32-sdk/).
-        "mik32-sdk", "mik32-sdk-full"
+        "mik32-sdk", "mik32-sdk-full",
+        // Проекты иногда вендорят справочные копии HAL/примеров прямо под
+        // своим docs/ (docs/examples/fdir_manager/docs/examples/mik32-hal/...,
+        // .../mik32-examples/..., .../mik32/controlFirmware/...) — это не
+        // прикладной код проекта, а материалы для документации. Сканирование
+        // даёт тот же класс шума "кросс-файловые хендлы", что и mik32-sdk
+        // выше: десятки HAL_*_Init из чужих файлов вместо реальной
+        // периферии в src/. shortcut: режем всю "docs" целиком — апгрейд,
+        // если встретится проект, у которого реальные .c/.h лежат в docs/.
+        "docs"
     };
     return kIgnored.count(name) > 0;
 }
