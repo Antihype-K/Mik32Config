@@ -794,6 +794,78 @@ HW-уровня здесь нет (чистый парсер, см. преамб
 закрытости не требует проверки на плате, она относится только к forward-
 кодогену этих четырёх периферий (остаётся открытым, см. таблицу Тир 2 выше).
 
+### reverse-import — мапперы для RTC/CRC/TSENS/OTP/WDT/PVD/Bus Watchdog добавлены 2026-10-18
+
+Семь оставшихся Тир-2/Тир-3 периферий с готовым forward-кодогеном получили
+reverse-import-мапперы (по одному, каждый проверен отдельно). Все семь
+подключены в `parser/reverse_import/reverse_import.cpp`, покрыты тестами
+(`tests/test_reverse_import_{rtc,crc,tsens,otp,wdt,pvd,bus_watchdog}.cpp`),
+400/400 тестов зелёные.
+
+- **RTC** — единственный из семи без `HAL_RTC_Init` вообще (подтверждено
+  чтением `mik32_hal_rtc.h` — функции нет); сканер (`kInitCall` в
+  `reverse_import_scanner.cpp`) расширен альтернативой `HAL_RTC_Enable`,
+  которая для RTC играет роль закрывающего Init-вызова. Время/дата/будильник
+  задаются не присваиваниями на хендле, а через локальные value-структуры
+  (`RTC_TimeTypeDef sTime` и т.п.), передаваемые по указателю в
+  `HAL_RTC_SetTime/SetDate/SetAlarm` — для этого добавлен новый общий хелпер
+  `local_struct_field_resolver.{h,cpp}` (сканирует файл на присваивания
+  `<переменная>.<поле> = <значение>;` по имени переменной, а не по типу
+  объявления). Проверено на обоих вендорных примерах
+  (`docs/examples/mik32-examples/Hal_RTC`, `Hal_RTC_IRQ`) — совпадение 1:1,
+  включая `compare_fields` будильника и `interrupt_enabled`.
+- **CRC** — прямое отображение полей (`Poly`/`Init`/`InputReverse`/
+  `OutputReverse`/`OutputInversion`), без восстановления `preset` (явные
+  поля — полный эквивалент, кодоген и так разворачивает preset в них же до
+  генерации). Проверено на `docs/examples/mik32-examples/HAL_CRC32` — точное
+  совпадение с CRC-32Q (`poly=0x814141AB`).
+- **TSENS** — `clock_source`/`frequency_hz` из присваиваний хендла;
+  `low_threshold_celsius`/`high_threshold_celsius`/`interrupts` — необязательные
+  поля, читаются не из присваиваний, а из `trailing_calls`
+  (`HAL_TSENS_Set{Low,Hi}Threshold`, `__HAL_TSENS_IRQ_ENABLE_{LOWIRQ,HIIRQ,EOC}`)
+  — отсутствие вызова = поле просто не добавляется в JSON (не `unresolved`,
+  это разрешённая опциональность по схеме). Проверено на `HAL_TSENS` и
+  `HAL_TSENS_IRQ` — точное совпадение.
+- **OTP** — одно поле `ReadMode` (`OPT_READ_2STAGES`/`3STAGES`). Read-only по
+  дизайну сохранён и в reverse-части: `HAL_OTP_Write*`/`ReadTest*` не
+  разбираются (не нужны — их нет в `schemas/otp.json`). Проверено на
+  `HAL_OTP` — точное совпадение.
+- **WDT** — `Init.Clock`/`Init.ReloadMs`. `HAL_WDT_Start`/`Refresh` не
+  разбираются по той же причине, что форвард-кодоген их не генерирует (их
+  нет в `schemas/wdt.json` — см. таблицу Тир 2, циклический сброс платы).
+  Проверено на `HAL_WDT` — точное совпадение.
+- **PVD** и **Bus Watchdog** — архитектурно особый случай среди всех
+  reverse-мапперов проекта: у обоих нет `HAL_*_Init`/`HandleTypeDef` вовсе
+  (Тир 3, прямой регистровый RMW — `PVD_CONTROL->CONFIG`,
+  `WDT_BUS->TIMEOUT`/`->ENABLE`), поэтому ни один не попадает в
+  `scanned.blocks` основного сканера. Для каждого написан отдельный
+  файловый сканер (`pvd_reverse_mapper.{h,cpp}`,
+  `bus_watchdog_reverse_mapper.{h,cpp}` — функции `scan<Type>
+  BlockFromFileContent`, не `map<Type>Block`), подключённый в
+  `importProjectFromDirectory()` отдельным проходом по `files_scanned`
+  ПОСЛЕ основного цикла по блокам. Оба сопоставляют ровно тот текстовый
+  паттерн, который генерирует соответствующий `*_contribution.cpp` (другой
+  порядок строк, другое имя локальной переменной или вычисляемое выражение
+  вместо литерала — не распознаются, поле уходит в `unresolved=true`).
+  **Вендорного примера для PVD и Bus Watchdog в `docs/examples/` нет**
+  (специально искали, включая стороннее дерево `docs/examples/fdir_manager`
+  — там PVD используется только как чтение бита EPIC-линии
+  `PVD_VCC_UNDER`, не как настройка порогов) — поэтому вместо сверки с
+  вендорным кодом сделан round-trip: конфигурация сгенерирована через
+  `buildPvdContribution`/`buildBusWatchdogContribution` (сам форвард-кодоген
+  этого проекта), прогнана через `reverse-import-smoke`, получено точное
+  совпадение всех полей в обе стороны. `CONFIG.NRESETU/NRESETO` (сброс
+  платы по порогу PVD) не читаются и здесь — та же причина, что в
+  форвард-кодогене (полярность битов нигде не подтверждена, см.
+  [[feedback_no_invented_register_bit_polarity]]).
+
+HW-уровня здесь нет по тем же причинам, что у остальных reverse-import
+мапперов (чистый парсер) — но у PVD/Bus Watchdog стоит отдельно отметить:
+их forward-кодоген ТОЖЕ не HW-подтверждён (плата недоступна с момента
+инцидента EEPROM, см. таблицу Тир 3 выше) — reverse-часть верифицирована
+через round-trip с этим самым непроверенным на железе кодогеном, а не
+независимым источником истины.
+
 ---
 
 ## Побочные находки (не запрошены явно, но обнаружены по пути)

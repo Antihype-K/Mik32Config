@@ -1,6 +1,7 @@
 #include "reverse_import_scanner.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -163,16 +164,82 @@ std::string stripAmpersand(const std::string& arg)
     return trimmed;
 }
 
+// Разбивает по запятым ВЕРХНЕГО уровня — запятая внутри "(...)" (например
+// каста "(void*)x" не создаёт вложенности, но вызов вида "f(a, b)" как
+// аргумент — создаёт) не считается разделителем.
 std::vector<std::string> splitArgs(const std::string& args_text)
 {
     std::vector<std::string> parts;
-    std::stringstream stream(args_text);
-    std::string part;
-    while (std::getline(stream, part, ','))
+    int depth = 0;
+    std::size_t part_start = 0;
+    for (std::size_t i = 0; i < args_text.size(); ++i)
     {
-        parts.push_back(stripAmpersand(part));
+        const char ch = args_text[i];
+        if (ch == '(') ++depth;
+        else if (ch == ')') --depth;
+        else if (ch == ',' && depth == 0)
+        {
+            parts.push_back(stripAmpersand(args_text.substr(part_start, i - part_start)));
+            part_start = i + 1;
+        }
     }
+    parts.push_back(stripAmpersand(args_text.substr(part_start)));
     return parts;
+}
+
+// "<идентификатор>(<аргументы>)" с учётом ВЛОЖЕННЫХ скобок в аргументах —
+// например касты "(void*)&x" внутри вызова HAL_DMA_Start(...), которые
+// одноуровневый regex "[^()]*" не пропускает (см. docs/implementations/
+// reverse_import_noise_reduction_2026-10-18.md). Возвращает имя функции и
+// СЫРОЙ текст аргументов (без разбивки на части — её делает splitArgs).
+struct RawGenericCall
+{
+    std::string function_name;
+    std::string args_text;
+};
+
+std::vector<RawGenericCall> findGenericCalls(const std::string& code)
+{
+    std::vector<RawGenericCall> matches;
+    std::size_t i = 0;
+    while (i < code.size())
+    {
+        if (!(std::isalpha(static_cast<unsigned char>(code[i])) || code[i] == '_'))
+        {
+            ++i;
+            continue;
+        }
+        const std::size_t name_start = i;
+        while (i < code.size() &&
+               (std::isalnum(static_cast<unsigned char>(code[i])) || code[i] == '_'))
+        {
+            ++i;
+        }
+        const std::string name = code.substr(name_start, i - name_start);
+
+        std::size_t j = i;
+        while (j < code.size() && std::isspace(static_cast<unsigned char>(code[j]))) ++j;
+        if (j >= code.size() || code[j] != '(')
+        {
+            continue;   // не вызов — имя без скобки сразу после (с пробелами)
+        }
+
+        int depth = 1;
+        std::size_t k = j + 1;
+        const std::size_t args_start = k;
+        for (; k < code.size() && depth > 0; ++k)
+        {
+            if (code[k] == '(') ++depth;
+            else if (code[k] == ')') --depth;
+        }
+        if (depth != 0)
+        {
+            break;   // незакрытая скобка до конца строки — не наш случай
+        }
+        matches.push_back({name, code.substr(args_start, (k - 1) - args_start)});
+        i = k;
+    }
+    return matches;
 }
 
 struct PendingHandle
@@ -246,12 +313,15 @@ std::unordered_map<std::string, int> scanArrayByteSizes(const std::filesystem::p
 }
 
 // Узкий паттерн: args.back() — текст аргумента Len вызова HAL_DMA_Start.
-// Поддерживается только integer-литерал или "sizeof(<array>) [+-N]", где
-// <array> найден scanArrayByteSizes этого же файла. Любой другой вид
-// выражения (переменная, вызов функции, арифметика над полями) оставляет
-// resolved_buffer_size_bytes неопределённым — не угадываем.
+// Поддерживается integer-литерал, "sizeof(<array>) [+-N]" (<array> найден
+// scanArrayByteSizes этого же файла) или "<MACRO> [+-N]" (<MACRO> найден
+// scanObjectLikeMacros по всему просканированному дереву проекта — объявление
+// макроса и его использование обычно в разных файлах, .h и .cpp). Любой
+// другой вид выражения (переменная, вызов функции, арифметика над полями)
+// оставляет resolved_buffer_size_bytes неопределённым — не угадываем.
 std::optional<int> resolveDmaStartLenArg(const std::string& len_text,
-                                         const std::unordered_map<std::string, int>& array_sizes)
+                                         const std::unordered_map<std::string, int>& array_sizes,
+                                         const std::unordered_map<std::string, long long>& macros)
 {
     const std::string trimmed = trim(len_text);
 
@@ -273,6 +343,23 @@ std::optional<int> resolveDmaStartLenArg(const std::string& len_text,
         return value;
     }
 
+    static const std::regex kMacroExpr(R"(^([A-Za-z_]\w*)\s*(?:([+\-])\s*(\d+))?$)");
+    if (std::regex_match(trimmed, match, kMacroExpr))
+    {
+        const auto it = macros.find(match[1].str());
+        if (it == macros.end())
+        {
+            return std::nullopt;
+        }
+        long long value = it->second;
+        if (match[2].matched)
+        {
+            const int delta = std::stoi(match[3].str());
+            value += (match[2].str() == "-") ? -delta : delta;
+        }
+        return static_cast<int>(value);
+    }
+
     try
     {
         std::size_t consumed = 0;
@@ -288,7 +375,40 @@ std::optional<int> resolveDmaStartLenArg(const std::string& len_text,
     return std::nullopt;
 }
 
-void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
+// Проектный (не только файловый) справочник числовых object-like макросов:
+// "#define ИМЯ ЧИСЛО" одной строкой, десятичное или 0x-hex, без скобок после
+// имени (иначе это функция-подобный макрос — не поддерживается). Объявление
+// обычно лежит в .h, использование — в другом .cpp (пример: RX_BUF_SIZE в
+// docs/сделать/mik32_fixed_v3 — define в dma_rx.h, HAL_DMA_Start в dma_rx.cpp).
+std::unordered_map<std::string, long long> scanObjectLikeMacros(const std::filesystem::path& file_path)
+{
+    static const std::regex kDefine(
+        R"(^\s*#\s*define\s+([A-Za-z_]\w*)\s+(-?\d+|0[xX][0-9a-fA-F]+)\s*$)");
+
+    std::unordered_map<std::string, long long> macros;
+    std::ifstream stream(file_path);
+    std::string raw_line;
+    while (std::getline(stream, raw_line))
+    {
+        const std::string sanitized = sanitizeLine(raw_line);
+        std::smatch match;
+        if (!std::regex_match(sanitized, match, kDefine))
+        {
+            continue;
+        }
+        try
+        {
+            macros[match[1].str()] = std::stoll(match[2].str(), nullptr, 0);
+        }
+        catch (const std::exception&)
+        {
+        }
+    }
+    return macros;
+}
+
+void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
+              const std::unordered_map<std::string, long long>& project_macros)
 {
     std::ifstream stream(file_path);
     if (!stream.is_open())
@@ -320,13 +440,12 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
     static const std::regex kUnterminatedAssignment(
         R"(^\s*([A-Za-z_]\w*)\.([A-Za-z_][\w.\[\]]*)\s*=\s*[^;]*$)");
 
-    static const std::regex kInitCall(R"(HAL_(\w+)_Init\s*\(([^()]*)\))");
-
-    // Любой вызов вида "имя(аргументы)" — используется ТОЛЬКО на строках, где
-    // не нашлось ни одного HAL_*_Init (см. matched_any_init ниже), чтобы
-    // поймать "донастройку после Init" (HAL_Timer16_StartPWM и т.п., см.
-    // RawTrailingCall в .h) без дублирования уже разобранных Init-вызовов.
-    static const std::regex kGenericCall(R"((\w+)\s*\(([^()]*)\))");
+    // RTC не имеет HAL_RTC_Init вообще (см. mik32_hal_rtc.h) — конфигурация
+    // применяется прямыми присваиваниями полей, а HAL_RTC_Enable служит
+    // точкой "коммита" настройки в регистры, поэтому для RTC он играет роль
+    // закрывающего Init-вызова, не меняя смысла для всех остальных периферий.
+    static const std::regex kInitCall(
+        R"(HAL_(\w+)_Init\s*\(([^()]*)\)|HAL_(RTC)_Enable\s*\(([^()]*)\))");
 
     std::unordered_map<std::string, PendingHandle> handles;
 
@@ -424,8 +543,11 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
         for (auto init_it = begin; init_it != end; ++init_it)
         {
             matched_any_init = true;
-            const std::string init_function_name = "HAL_" + (*init_it)[1].str() + "_Init";
-            const std::vector<std::string> args = splitArgs((*init_it)[2].str());
+            const bool is_rtc_enable = (*init_it)[3].matched;
+            const std::string init_function_name =
+                is_rtc_enable ? "HAL_RTC_Enable" : "HAL_" + (*init_it)[1].str() + "_Init";
+            const std::vector<std::string> args =
+                splitArgs(is_rtc_enable ? (*init_it)[4].str() : (*init_it)[2].str());
 
             std::string matched_handle_name;
             for (const std::string& arg : args)
@@ -514,13 +636,11 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
         }
 
         // Ни одного HAL_*_Init на этой строке — проверяем, не "донастройка"
-        // ли это уже созданного блока (см. kGenericCall выше).
-        auto call_begin = std::sregex_iterator(code.begin(), code.end(), kGenericCall);
-        auto call_end = std::sregex_iterator();
-        for (auto call_it = call_begin; call_it != call_end; ++call_it)
+        // ли это уже созданного блока.
+        for (const RawGenericCall& generic_call : findGenericCalls(code))
         {
-            const std::string function_name = (*call_it)[1].str();
-            const std::vector<std::string> args = splitArgs((*call_it)[2].str());
+            const std::string& function_name = generic_call.function_name;
+            const std::vector<std::string> args = splitArgs(generic_call.args_text);
 
             for (const std::string& arg : args)
             {
@@ -626,7 +746,8 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
                 array_sizes = scanArrayByteSizes(file_path);
                 array_sizes_computed = true;
             }
-            const std::optional<int> resolved = resolveDmaStartLenArg(call.args.back(), array_sizes);
+            const std::optional<int> resolved =
+                resolveDmaStartLenArg(call.args.back(), array_sizes, project_macros);
             if (resolved.has_value())
             {
                 block.resolved_buffer_size_bytes = *resolved;
@@ -643,6 +764,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out)
 ScannedProject scanDirectoryForHalHandles(const std::string& root_dir)
 {
     ScannedProject result;
+    std::vector<std::filesystem::path> source_files;
 
     std::error_code walk_error;
     for (auto it = std::filesystem::recursive_directory_iterator(
@@ -671,8 +793,30 @@ ScannedProject scanDirectoryForHalHandles(const std::string& root_dir)
             continue;
         }
 
-        result.files_scanned.push_back(entry.path().string());
-        scanFile(entry.path(), result);
+        source_files.push_back(entry.path());
+    }
+
+    // Проходим дерево ДВАЖДЫ: сначала собираем все числовые #define по всему
+    // проекту (объявление макроса и его использование в HAL_DMA_Start почти
+    // всегда в разных файлах — .h и .cpp), затем сканируем блоки периферии,
+    // уже зная полный словарь. Совпадение имени макроса в разных файлах —
+    // берём последнее увиденное по порядку обхода (тот же класс ситуации,
+    // что и "Instance присваивается несколько раз" у typed-мапперов — на
+    // практике в одном проекте имена макросов не повторяются с разным
+    // смыслом).
+    std::unordered_map<std::string, long long> project_macros;
+    for (const std::filesystem::path& file_path : source_files)
+    {
+        for (auto& [name, value] : scanObjectLikeMacros(file_path))
+        {
+            project_macros[name] = value;
+        }
+    }
+
+    for (const std::filesystem::path& file_path : source_files)
+    {
+        result.files_scanned.push_back(file_path.string());
+        scanFile(file_path, result, project_macros);
     }
 
     return result;

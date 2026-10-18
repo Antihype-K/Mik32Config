@@ -1,6 +1,7 @@
 #include "reverse_import.h"
 
 #include <algorithm>
+#include <fstream>
 #include <map>
 #include <set>
 #include <tuple>
@@ -19,6 +20,13 @@
 #include "crypto_reverse_mapper.h"
 #include "dma_reverse_mapper.h"
 #include "eeprom_reverse_mapper.h"
+#include "rtc_reverse_mapper.h"
+#include "crc_reverse_mapper.h"
+#include "tsens_reverse_mapper.h"
+#include "otp_reverse_mapper.h"
+#include "wdt_reverse_mapper.h"
+#include "pvd_reverse_mapper.h"
+#include "bus_watchdog_reverse_mapper.h"
 
 namespace reverse_import
 {
@@ -320,6 +328,26 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         {
             mapped = mapEepromBlock(block);
         }
+        else if (block.handle_type == "RTC_HandleTypeDef")
+        {
+            mapped = mapRtcBlock(block);
+        }
+        else if (block.handle_type == "CRC_HandleTypeDef")
+        {
+            mapped = mapCrcBlock(block);
+        }
+        else if (block.handle_type == "TSENS_HandleTypeDef")
+        {
+            mapped = mapTsensBlock(block);
+        }
+        else if (block.handle_type == "OTP_HandleTypeDef")
+        {
+            mapped = mapOtpBlock(block);
+        }
+        else if (block.handle_type == "WDT_HandleTypeDef")
+        {
+            mapped = mapWdtBlock(block);
+        }
         else if (block.handle_type == "DMA_InitTypeDef")
         {
             // Глобальная инициализация ПДП (hdma.Instance = DMA_CONFIG;
@@ -341,7 +369,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
                 "\") в " + block.init_call_location.file + ":" +
                 std::to_string(block.init_call_location.line) +
                 " — это не один из поддерживаемых типов периферии MIK32 (UART/I2C/Timer32/"
-                "Timer16/GPIO/SPI/ADC/DAC/CRYPTO/DMA/EEPROM), пропущено.");
+                "Timer16/GPIO/SPI/ADC/DAC/CRYPTO/DMA/EEPROM/RTC/CRC/TSENS/OTP/WDT), пропущено.");
             continue;
         }
 
@@ -442,6 +470,60 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
     }
 
     mergeIdenticalGpioGroups(result);
+
+    // PVD — единственный блок без HandleTypeDef/Init-вызова (Тир 3, прямая
+    // работа с регистром PVD_CONTROL->CONFIG), поэтому он не появляется в
+    // scanned.blocks выше. Отдельный проход по тем же файлам, которые уже
+    // прочитал основной сканер, см. pvd_reverse_mapper.h за обоснованием.
+    for (const std::string& file_path : scanned.files_scanned)
+    {
+        std::ifstream file(file_path);
+        if (!file)
+        {
+            continue;
+        }
+        const std::string file_content(
+            (std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+        std::optional<MappedBlock> pvd_block = scanPvdBlockFromFileContent(file_content, file_path);
+        if (pvd_block.has_value())
+        {
+            result.document["peripherals"].push_back(pvd_block->json_block);
+            result.block_provenance.push_back(pvd_block->provenance);
+            for (const std::string& note : pvd_block->notes)
+            {
+                result.notes.push_back(note);
+            }
+            break; // PVD — глобальный блок, второй найденный файл был бы дублем.
+        }
+    }
+
+    // Bus Watchdog — та же ситуация, что PVD (нет HandleTypeDef/Init-вызова,
+    // прямая работа с регистрами WDT_BUS->TIMEOUT/->ENABLE), см.
+    // bus_watchdog_reverse_mapper.h.
+    for (const std::string& file_path : scanned.files_scanned)
+    {
+        std::ifstream file(file_path);
+        if (!file)
+        {
+            continue;
+        }
+        const std::string file_content(
+            (std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+        std::optional<MappedBlock> bus_watchdog_block =
+            scanBusWatchdogBlockFromFileContent(file_content, file_path);
+        if (bus_watchdog_block.has_value())
+        {
+            result.document["peripherals"].push_back(bus_watchdog_block->json_block);
+            result.block_provenance.push_back(bus_watchdog_block->provenance);
+            for (const std::string& note : bus_watchdog_block->notes)
+            {
+                result.notes.push_back(note);
+            }
+            break; // Bus Watchdog — глобальный блок, второй найденный файл был бы дублем.
+        }
+    }
 
     // Дедуп полностью одинаковых notes (например, одна и та же заметка про
     // buffer_size_bytes на двух каналах DMA) — порядок первого появления

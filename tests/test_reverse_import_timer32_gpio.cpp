@@ -9,6 +9,8 @@
 
 #include <gtest/gtest.h>
 
+#include <fstream>
+
 #include <gpio_reverse_mapper.h>
 #include <timer32_reverse_mapper.h>
 
@@ -177,6 +179,66 @@ TEST(Timer32ReverseMapper, UnparseablePrescalerExpressionIsUnresolvedNotDefaulte
         }
     }
     EXPECT_TRUE(found);
+}
+
+// (e) узкий паттерн function_param_resolver: Clock.Prescaler/Top — локальные
+// переменные, вычисленные из параметров функции-обёртки Timer32_1_Init,
+// вызванной РОВНО ОДИН раз с литеральными аргументами — воспроизводит
+// реальный docs/сделать/mik32_fixed_v3/.../main.cpp (см.
+// docs/implementations/reverse_import_noise_reduction_2026-10-18.md).
+TEST(Timer32ReverseMapper, ResolvesPrescalerAndTopFromWrapperFunctionParams)
+{
+    const std::string path = ::testing::TempDir() + "timer32_wrapper_resolver_test.cpp";
+    {
+        std::ofstream out(path);
+        out <<
+            "void Timer32_1_Init(uint32_t clock_frequency, uint32_t timer_frequency, uint32_t pwm_frequency)\n"
+            "{\n"
+            "    uint32_t prescaler = (clock_frequency / timer_frequency) - 1;\n"
+            "    uint32_t top = timer_frequency / pwm_frequency;\n"
+            "    htimer32_1.Instance = TIMER32_1;\n"
+            "    htimer32_1.Top = top;\n"
+            "    htimer32_1.Clock.Prescaler = prescaler;\n"
+            "    HAL_Timer32_Init(&htimer32_1);\n"
+            "}\n"
+            "\n"
+            "void main_entry(void)\n"
+            "{\n"
+            "    Timer32_1_Init(32000000, 1000000, 50);\n"
+            "}\n";
+    }
+
+    RawInitBlock block;
+    block.handle_name = "htimer32_1";
+    block.handle_type = "TIMER32_HandleTypeDef";
+    block.init_function_name = "HAL_Timer32_Init";
+    block.init_call_args = {"htimer32_1"};
+    block.init_call_location = SourceLocation{path, 8};
+    block.assignments = {
+        makeAssignment("Instance", "TIMER32_1", 5, "    htimer32_1.Instance = TIMER32_1;"),
+        makeAssignment("Top", "top", 6, "    htimer32_1.Top = top;"),
+        makeAssignment("Clock.Prescaler", "prescaler", 7, "    htimer32_1.Clock.Prescaler = prescaler;"),
+    };
+    for (auto& assignment : block.assignments)
+    {
+        assignment.location.file = path;
+    }
+
+    std::optional<reverse_import::MappedBlock> mapped = reverse_import::mapTimer32Block(block);
+    ASSERT_TRUE(mapped.has_value());
+
+    // prescaler = (32000000 / 1000000) - 1 = 31; top = 1000000 / 50 = 20000.
+    EXPECT_EQ((*mapped).json_block.at("prescaler").get<std::uint32_t>(), 31u);
+    EXPECT_EQ((*mapped).json_block.at("top").get<std::uint32_t>(), 20000u);
+
+    for (const reverse_import::FieldProvenance& provenance : (*mapped).provenance)
+    {
+        if (provenance.json_field == "prescaler" || provenance.json_field == "top")
+        {
+            EXPECT_FALSE(provenance.unresolved);
+            EXPECT_FALSE(provenance.editable);
+        }
+    }
 }
 
 // (b) один пин GPIO из реального файла: GPIO_PIN_6, GPIO_1, output, pull_none.

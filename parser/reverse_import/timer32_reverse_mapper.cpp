@@ -9,6 +9,8 @@
 
 #include "timer32_reverse_mapper.h"
 
+#include "function_param_resolver.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <regex>
@@ -119,17 +121,40 @@ void mapNumericField(
     {
         mapped.json_block[json_field] = static_cast<std::uint32_t>(*value);
         provenance.editable = true;
+        mapped.provenance.push_back(provenance);
+        return;
     }
-    else
+
+    // Узкий паттерн: значение — локальная переменная, вычисленная из
+    // параметров объемлющей функции-обёртки (Timer32_1_Init и т.п.), см.
+    // function_param_resolver.h и docs/implementations/
+    // reverse_import_noise_reduction_2026-10-18.md.
+    static const std::regex kBareIdentifier(R"(^[A-Za-z_]\w*$)");
+    const std::string trimmed_value = trim(assignment.raw_value_text);
+    if (std::regex_match(trimmed_value, kBareIdentifier))
     {
-        mapped.json_block[json_field] = 0;
-        provenance.editable = false;
-        provenance.unresolved = true;
-        mapped.notes.push_back(
-            "поле " + assignment.field_path + " в исходнике — вычисляемое выражение (\"" +
-            assignment.raw_value_text + "\"), не число (см. аргументы вызова " + init_function_hint +
-            ") — конфигуратор не смог определить " + json_field + ", укажите значение явно.");
+        const std::optional<long long> resolved = resolveLocalVariableFromFunctionParams(
+            assignment.location.file, trimmed_value, assignment.location.line);
+        if (resolved.has_value())
+        {
+            mapped.json_block[json_field] = static_cast<std::uint32_t>(*resolved);
+            provenance.editable = false;   // патчер не умеет переписывать выражение в другой функции
+            mapped.provenance.push_back(provenance);
+            mapped.notes.push_back(
+                "поле " + assignment.field_path + " вычислено из параметров функции-обёртки (\"" +
+                assignment.raw_value_text + "\") — значение резолвится только для просмотра, "
+                "для правки отредактируйте исходник напрямую.");
+            return;
+        }
     }
+
+    mapped.json_block[json_field] = 0;
+    provenance.editable = false;
+    provenance.unresolved = true;
+    mapped.notes.push_back(
+        "поле " + assignment.field_path + " в исходнике — вычисляемое выражение (\"" +
+        assignment.raw_value_text + "\"), не число (см. аргументы вызова " + init_function_hint +
+        ") — конфигуратор не смог определить " + json_field + ", укажите значение явно.");
     mapped.provenance.push_back(provenance);
 }
 

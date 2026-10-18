@@ -97,6 +97,15 @@ set(CORE_SOURCES
         # оркестрирующих слоя (файлы -> JSON и JSON-правки -> файлы).
         parser/reverse_import/reverse_import_scanner.cpp
         parser/reverse_import/c_literal_parser.cpp
+        parser/reverse_import/function_param_resolver.cpp
+        parser/reverse_import/local_struct_field_resolver.cpp
+        parser/reverse_import/rtc_reverse_mapper.cpp
+        parser/reverse_import/crc_reverse_mapper.cpp
+        parser/reverse_import/tsens_reverse_mapper.cpp
+        parser/reverse_import/otp_reverse_mapper.cpp
+        parser/reverse_import/wdt_reverse_mapper.cpp
+        parser/reverse_import/pvd_reverse_mapper.cpp
+        parser/reverse_import/bus_watchdog_reverse_mapper.cpp
         parser/reverse_import/uart_reverse_mapper.cpp
         parser/reverse_import/i2c_reverse_mapper.cpp
         parser/reverse_import/timer32_reverse_mapper.cpp
@@ -285,6 +294,13 @@ if(BUILD_TESTING)
             tests/test_reverse_import_crypto.cpp
             tests/test_reverse_import_dma.cpp
             tests/test_reverse_import_eeprom.cpp
+            tests/test_reverse_import_rtc.cpp
+            tests/test_reverse_import_crc.cpp
+            tests/test_reverse_import_tsens.cpp
+            tests/test_reverse_import_otp.cpp
+            tests/test_reverse_import_wdt.cpp
+            tests/test_reverse_import_pvd.cpp
+            tests/test_reverse_import_bus_watchdog.cpp
             tests/test_freertos.cpp
             tests/test_rust_project_codegen.cpp
     )
