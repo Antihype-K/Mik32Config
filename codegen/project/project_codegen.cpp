@@ -21,6 +21,7 @@
 #include "pvd_contribution.h"
 #include "bus_watchdog_contribution.h"
 #include "dma_contribution.h"
+#include "spifi_contribution.h"
 #include "freertos_codegen.h"
 #include "user_code_markers.h"
 #include <algorithm>
@@ -393,11 +394,12 @@ namespace
     CodegenWriteResult writeFilesIntoTempDir(
         const fs::path& temp_dir,
         const GeneratedProjectFirmware& firmware,
+        const std::string& init_c_to_write,
         const std::string& main_c_to_write)
     {
         std::vector<std::pair<const char*, const std::string*>> files_to_write = {
             {"mik32_init.h", &firmware.mik32_init_h},
-            {"mik32_init.c", &firmware.mik32_init_c},
+            {"mik32_init.c", &init_c_to_write},
             {"main.c", &main_c_to_write},
         };
         // FreeRTOSConfig.h — часть той же транзакции, только когда FreeRTOS
@@ -669,6 +671,14 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         contributions.push_back(*result.config);
     }
 
+    // --- SPIFI — optional, не vector (единственный глобальный блок) --------
+    if (config.spifi_block.has_value())
+    {
+        ParseResult<PeripheralContribution> result = buildSpifiContribution(*config.spifi_block);
+        if (!result.success) return makeError(result.error);
+        contributions.push_back(*result.config);
+    }
+
     // --- I2C ----------------------------------------------------------------
     for (const I2cConfig& block : config.i2c_blocks)
     {
@@ -816,7 +826,7 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         {
             init_c << "\n";
         }
-        init_c << contributions[i].init_function_text;
+        init_c << wrapInitFunctionWithUserCodeMarkers(contributions[i].label, contributions[i].init_function_text);
         if (!contributions[i].helper_functions_text.empty())
         {
             init_c << "\n" << contributions[i].helper_functions_text;
@@ -863,11 +873,28 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
         appendUnique(main_c_includes, freertos_pieces.main_c_includes);
     }
 
+    // Набор секций соответствует разметке STM32CubeMX 1:1 (пользовательское
+    // решение 2026-10-19, см. docs/implementations/reverse_import_audit_2026-10-18.md
+    // часть 7) — PTD/PD/PM/1/SysInit/2/WHILE/Error_Handler_Debug/6 всегда
+    // пустые в генераторе: у кодогена МИК32 нет содержимого, которое
+    // однозначно ложилось бы именно в них, секции присутствуют только для
+    // совместимости структуры файла с привычной CubeMX-раскладкой.
     std::ostringstream main_c;
-    main_c << renderIncludes(main_c_includes)
+    main_c << "/* USER CODE BEGIN Header */\n"
+              "/* USER CODE END Header */\n"
+           << renderIncludes(main_c_includes)
            << "\n"
               "/* USER CODE BEGIN Includes */\n"
               "/* USER CODE END Includes */\n"
+              "\n"
+              "/* USER CODE BEGIN PTD */\n"
+              "/* USER CODE END PTD */\n"
+              "\n"
+              "/* USER CODE BEGIN PD */\n"
+              "/* USER CODE END PD */\n"
+              "\n"
+              "/* USER CODE BEGIN PM */\n"
+              "/* USER CODE END PM */\n"
               "\n";
     if (!externs.str().empty())
     {
@@ -877,10 +904,21 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     {
         main_c << freertos_pieces.globals_and_prototypes;
     }
-    main_c << "void SystemClock_Config(void);\n"
+    main_c << "/* USER CODE BEGIN PV */\n"
+              "/* USER CODE END PV */\n"
+              "\n"
+              "void SystemClock_Config(void);\n"
+              "/* USER CODE BEGIN PFP */\n"
+              "/* USER CODE END PFP */\n"
+              "\n"
+              "/* USER CODE BEGIN 0 */\n"
+              "/* USER CODE END 0 */\n"
               "\n"
               "int main()\n"
               "{\n"
+              "    /* USER CODE BEGIN 1 */\n"
+              "    /* USER CODE END 1 */\n"
+              "\n"
               "    SystemClock_Config();\n"
               "\n";
     if (any_dma_usage)
@@ -896,11 +934,17 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     main_c << "\n"
               "    /* USER CODE BEGIN Init */\n"
               "    /* USER CODE END Init */\n"
+              "\n"
+              "    /* USER CODE BEGIN SysInit */\n"
+              "    /* USER CODE END SysInit */\n"
+              "\n"
+              "    /* USER CODE BEGIN 2 */\n"
+              "    /* USER CODE END 2 */\n"
               "\n";
 
     if (config.freertos.enabled)
     {
-        // Ни while(1), ни USER CODE Loop: vTaskStartScheduler() не
+        // Ни while(1), ни USER CODE "3": vTaskStartScheduler() не
         // возвращается в штатной работе (grill-решение 2026-09-10).
         main_c << freertos_pieces.object_and_task_creation
                << "\n"
@@ -915,22 +959,54 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
                << "\n"
                << freertos_pieces.task_and_timer_definitions
                << "\n"
-               << freertos_pieces.trap_handler_glue;
+               << freertos_pieces.trap_handler_glue
+               << "\n"
+                  "/* USER CODE BEGIN 4 */\n"
+                  "/* USER CODE END 4 */\n"
+                  "\n"
+                  "/* USER CODE BEGIN IrqHandlers */\n"
+                  "/* USER CODE END IrqHandlers */\n"
+                  "\n"
+                  "/* USER CODE BEGIN Error_Handler_Debug */\n"
+                  "/* USER CODE END Error_Handler_Debug */\n"
+                  "\n"
+                  "/* USER CODE BEGIN 6 */\n"
+                  "/* USER CODE END 6 */\n";
         firmware.main_c = main_c.str();
         return ParseResult<GeneratedProjectFirmware>{true, "", firmware};
     }
 
     main_c << "    while (1)\n"
               "    {\n"
-              // Маркеры ТЗ §3.1.7.3: тело цикла целиком лежит ВНУТРИ секции,
-              // чтобы пользователь мог заполнить его своим кодом, и
-              // содержимое пережило бы регенерацию.
-              "        /* USER CODE BEGIN Loop */\n"
-              "        /* USER CODE END Loop */\n"
+              // Маркеры ТЗ §3.1.7.3: тело цикла целиком лежит ВНУТРИ секции
+              // "3", чтобы пользователь мог заполнить его своим кодом, и
+              // содержимое пережило бы регенерацию. "WHILE" обрамляет саму
+              // строку "while (1) {" и всегда пустая (CubeMX-соответствие).
+              "        /* USER CODE BEGIN WHILE */\n"
+              "        /* USER CODE END WHILE */\n"
+              "\n"
+              "        /* USER CODE BEGIN 3 */\n"
+              "        /* USER CODE END 3 */\n"
               "    }\n"
               "}\n"
               "\n"
-           << renderSystemClockConfig(config.clock);
+           << renderSystemClockConfig(config.clock)
+           << "\n"
+              "/* USER CODE BEGIN 4 */\n"
+              "/* USER CODE END 4 */\n"
+              "\n"
+              // IRQ-обработчики (единственный вектор RISC-V trap_handler у
+              // вендорных примеров МИК32) выделены в свою секцию, а не
+              // смешаны с прочими legacy-функциями в "4" — см. комментарий
+              // у irq_handlers в legacy_main_c_migrator.cpp.
+              "/* USER CODE BEGIN IrqHandlers */\n"
+              "/* USER CODE END IrqHandlers */\n"
+              "\n"
+              "/* USER CODE BEGIN Error_Handler_Debug */\n"
+              "/* USER CODE END Error_Handler_Debug */\n"
+              "\n"
+              "/* USER CODE BEGIN 6 */\n"
+              "/* USER CODE END 6 */\n";
     firmware.main_c = main_c.str();
 
     return ParseResult<GeneratedProjectFirmware>{true, "", firmware};
@@ -1025,6 +1101,7 @@ CodegenWriteResult writeGeneratedProject(
     // с этим именем — сценарий сбоя, проверяемый тестами), fs::exists на
     // составном пути src_dir/main.c просто возвращает false, и слияние
     // отрабатывает так же, как для первой генерации — исключений нет.
+    std::string init_c_to_write = firmware.mik32_init_c;
     std::string main_c_to_write = firmware.main_c;
     const fs::path main_c_path = src_dir / "main.c";
     // OVERNIGHT_FIELD_REFERENCE.md: содержимое ДО этой генерации — база для
@@ -1041,7 +1118,7 @@ CodegenWriteResult writeGeneratedProject(
         const FileReadOutcome existing = readUtf8PathFile(main_c_path.u8string());
         if (existing.success)
         {
-            main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content);
+            main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content, firmware.mik32_init_c);
             previous_main_c = existing.content;
         }
     }
@@ -1060,6 +1137,7 @@ CodegenWriteResult writeGeneratedProject(
         const FileReadOutcome existing = readUtf8PathFile(init_c_path.u8string());
         if (existing.success)
         {
+            init_c_to_write = mergeUserCodeSections(firmware.mik32_init_c, existing.content);
             previous_init_c = existing.content;
         }
     }
@@ -1076,7 +1154,7 @@ CodegenWriteResult writeGeneratedProject(
         return CodegenWriteResult{false, "Не удалось создать временный каталог для записи src/: " + fs_error.message()};
     }
 
-    const CodegenWriteResult write_result = writeFilesIntoTempDir(temp_dir, firmware, main_c_to_write);
+    const CodegenWriteResult write_result = writeFilesIntoTempDir(temp_dir, firmware, init_c_to_write, main_c_to_write);
     if (!write_result.success)
     {
         // Откат: временный каталог не пережил ни одного файла в src_dir —
@@ -1099,7 +1177,7 @@ CodegenWriteResult writeGeneratedProject(
     // (это вторичный, не критичный для сборки файл — ошибка его записи не
     // должна откатывать уже успешно записанный src/).
     const SimpleLineDiff init_h_diff = computeSimpleLineDiff(previous_init_h, firmware.mik32_init_h);
-    const SimpleLineDiff init_c_diff = computeSimpleLineDiff(previous_init_c, firmware.mik32_init_c);
+    const SimpleLineDiff init_c_diff = computeSimpleLineDiff(previous_init_c, init_c_to_write);
     const SimpleLineDiff main_c_diff = computeSimpleLineDiff(previous_main_c, main_c_to_write);
     const std::string changelog = renderChangelog(is_first_generation, init_h_diff, init_c_diff, main_c_diff);
     writeUtf8PathFile((utf8Path(output_project_dir) / "CHANGELOG_GENERATED.md").u8string(), changelog);

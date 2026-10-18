@@ -151,6 +151,55 @@ std::vector<TopLevelUnit> splitTopLevelUnits(const std::string& text)
         const std::string cur_line = trimmed(text.substr(cur_line_start, pos - cur_line_start));
         if (text[pos] == '\n' && cur_line_start >= unit_start && !cur_line.empty() && cur_line[0] == '#')
         {
+            // "#if/#ifdef/#ifndef ... #endif" — если внутри лежат целые
+            // определения функций (видно на HAL_System_Time: три #if-блока
+            // с HAL_Micros/HAL_Millis/... под разные SYSTEM_TIME_*), обычный
+            // построчный разбор директив НЕ видит границы блока — каждая
+            // "#if"/"#endif" становится отдельным юнитом, а функции внутри —
+            // отдельными юнитами между ними. Три таких блока дают 3 копии
+            // одноимённых функций (переопределение) и "осиротевшие" #endif
+            // не на своих местах. Поэтому весь блок от "#if..." до парного
+            // "#endif" (с учётом вложенности) забирается ОДНИМ непрозрачным
+            // юнитом, помеченным как "функция" — не для компиляции как
+            // функция, а чтобы роутинг ниже клал его в "0"/"4" (после
+            // #include, где видны нужные типы/декларации), а не в
+            // Header/Includes (до #include, где типов ещё нет).
+            static const std::regex kIfDirective(R"(^#\s*(if|ifdef|ifndef)\b)");
+            static const std::regex kEndifDirective(R"(^#\s*endif\b)");
+            if (std::regex_search(cur_line, kIfDirective))
+            {
+                int depth = 1;
+                size_t scan_line_start = pos + 1;
+                size_t endif_line_end = std::string::npos;
+                while (scan_line_start <= text.size())
+                {
+                    const size_t scan_line_end = text.find('\n', scan_line_start);
+                    const std::string scan_line = trimmed(text.substr(
+                        scan_line_start,
+                        (scan_line_end == std::string::npos ? text.size() : scan_line_end) - scan_line_start));
+                    if (std::regex_search(scan_line, kIfDirective)) ++depth;
+                    else if (std::regex_search(scan_line, kEndifDirective))
+                    {
+                        --depth;
+                        if (depth == 0) { endif_line_end = scan_line_end; break; }
+                    }
+                    if (scan_line_end == std::string::npos) break;
+                    scan_line_start = scan_line_end + 1;
+                }
+                if (endif_line_end != std::string::npos)
+                {
+                    TopLevelUnit unit;
+                    unit.text = text.substr(unit_start, endif_line_end + 1 - unit_start);
+                    unit.is_function = true; // см. комментарий выше — роутинг, не компиляция
+                    unit.has_initializer = false;
+                    units.push_back(unit);
+                    pos = endif_line_end + 1;
+                    unit_start = pos;
+                    continue;
+                }
+                // Несбалансированный #if (не нашли парный #endif) — отдаём
+                // как обычную директивную строку ниже, без угадывания.
+            }
             TopLevelUnit unit;
             unit.text = text.substr(unit_start, pos + 1 - unit_start);
             unit.is_function = false;
@@ -493,12 +542,75 @@ std::set<std::string> collectIncludeLines(const std::string& before_main)
     return includes;
 }
 
+// Имена вида "Тип_HandleTypeDef имя;" (не "extern", это определение) в
+// порядке появления в тексте, сгруппированные по типу — используется и для
+// сгенерированного mik32_init.c (где имя — детерминированное имя
+// генератора), и для старого main.c (где имя — как вендор сам назвал
+// переменную). Один и тот же хендл-тип почти всегда встречается 0 или 1 раз
+// на файл, поэтому пара "по порядку" безопасна только при равном count.
+std::map<std::string, std::vector<std::string>> collectHandleDeclarationsByType(const std::string& text)
+{
+    std::map<std::string, std::vector<std::string>> result;
+    static const std::regex kHandleDecl(R"(^\s*(\w+_HandleTypeDef)\s+(\w+)\s*;)");
+    size_t line_start = 0;
+    while (line_start <= text.size())
+    {
+        const size_t line_end = text.find('\n', line_start);
+        const std::string line = text.substr(
+            line_start, (line_end == std::string::npos ? text.size() : line_end) - line_start);
+        std::smatch match;
+        if (std::regex_match(line, match, kHandleDecl))
+        {
+            result[match[1].str()].push_back(match[2].str());
+        }
+        if (line_end == std::string::npos) break;
+        line_start = line_end + 1;
+    }
+    return result;
+}
+
+// Переименовывает в old_text все вендорские имена хендлов на имена,
+// которыми их назвал генератор в newly_generated_init_c — только там, где
+// количество деклараций данного типа совпадает 1:1 с обеих сторон (иначе
+// угадывание порядка было бы ненадёжным, см. правило "не угадывать", —
+// оставляем как есть, не хуже статус-кво).
+std::string renameVendorHandlesToGeneratorNames(
+    const std::string& old_text, const std::string& newly_generated_init_c)
+{
+    if (newly_generated_init_c.empty())
+    {
+        return old_text;
+    }
+    const auto generator_handles = collectHandleDeclarationsByType(newly_generated_init_c);
+    const auto vendor_handles = collectHandleDeclarationsByType(old_text);
+    std::string renamed = old_text;
+    for (const auto& [handle_type, generator_names] : generator_handles)
+    {
+        const auto vendor_it = vendor_handles.find(handle_type);
+        if (vendor_it == vendor_handles.end() || vendor_it->second.size() != generator_names.size())
+        {
+            continue;
+        }
+        for (size_t i = 0; i < generator_names.size(); ++i)
+        {
+            if (vendor_it->second[i] != generator_names[i])
+            {
+                renamed = renameIdentifier(renamed, vendor_it->second[i], generator_names[i]);
+            }
+        }
+    }
+    return renamed;
+}
+
 } // namespace
 
 std::map<std::string, std::string> extractLegacyMainCSections(
     const std::string& newly_generated_main_c,
-    const std::string& existing_main_c)
+    const std::string& existing_main_c_param,
+    const std::string& newly_generated_init_c)
 {
+    const std::string existing_main_c =
+        renameVendorHandlesToGeneratorNames(existing_main_c_param, newly_generated_init_c);
     const MainBounds new_main = findMainBounds(newly_generated_main_c);
     const MainBounds old_main = findMainBounds(existing_main_c);
     if (new_main.main_open == std::string::npos || old_main.main_open == std::string::npos)
@@ -659,6 +771,24 @@ std::map<std::string, std::string> extractLegacyMainCSections(
                 zero_functions += unit.text + "\n";
                 continue;
             }
+            {
+                // "#define BUFFER_LENGTH 50" и подобные директивы (кроме
+                // #include, те уже отфильтрованы выше) — если положить их в
+                // PFP/Header (как раньше, по умолчанию "else" ниже), они
+                // физически оказываются ПОСЛЕ PV в шаблоне main.c, а PV уже
+                // может использовать этот макрос (видно на HAL_USART_IRQ:
+                // "static char buf[BUFFER_LENGTH];" в PV требует макрос,
+                // объявленный только ниже, в PFP — use-before-define). Includes
+                // — первая секция, физически предшествующая PV, поэтому
+                // директивы без имени (is_function уже обработан выше, значит
+                // это не #if-блок) кладутся туда.
+                const std::string code_part = unit.text.substr(leadingComment(unit.text).size());
+                if (unit.name.empty() && !trimmed(code_part).empty() && trimmed(code_part)[0] == '#')
+                {
+                    includes_extra += unit.text + "\n";
+                    continue;
+                }
+            }
             if (!unit.name.empty() && renamed_collisions.count(unit.name) > 0)
             {
                 // Прототип вендорской функции, чьё имя совпало со
@@ -694,7 +824,19 @@ std::map<std::string, std::string> extractLegacyMainCSections(
                 // перед ними — иначе он разрывал бы вендорский комментарий.
                 const bool already_extern = trimmed(unit.text).rfind("extern", 0) == 0;
                 const bool needs_extern = !unit.has_initializer && !already_extern;
-                pv_extra += trimmed(needs_extern ? insertExternBeforeCode(unit.text) : unit.text) + "\n";
+                // "static Type name;" -> "extern Type name;", не "extern
+                // static Type name;" (невалидная комбинация классов
+                // хранения, видно на HAL_USART_IRQ: "static char buf[...]")
+                // — static здесь только means "не видна из других файлов",
+                // а extern-декларация уже достаточно специфична сама по
+                // себе (ссылается на одно конкретное определение в
+                // mik32_init.c).
+                std::string var_text = unit.text;
+                if (needs_extern)
+                {
+                    var_text = std::regex_replace(var_text, std::regex(R"(\bstatic\s+)"), "", std::regex_constants::format_first_only);
+                }
+                pv_extra += trimmed(needs_extern ? insertExternBeforeCode(var_text) : var_text) + "\n";
             }
             else if (unit.text.find('(') != std::string::npos)
             {
