@@ -401,7 +401,7 @@ std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowle
         {
             diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error,
                 "Поле \"" + field.field_name + "\" не удалось определить при импорте — "
-                "укажите значение явно.", block_index});
+                "укажите значение явно.", block_index, field.field_name});
         }
     }
 

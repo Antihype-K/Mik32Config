@@ -33,7 +33,7 @@ public:
     int warningCount() const { return warning_count_; }
 
 signals:
-    void jumpToBlock(int block_index);
+    void jumpToBlock(int block_index, const QString& field_name);
 
 private slots:
     void rebuildTable();

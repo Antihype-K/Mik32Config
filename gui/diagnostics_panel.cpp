@@ -67,7 +67,8 @@ DiagnosticsPanel::DiagnosticsPanel(QWidget* parent)
         const QVariant block_index = table_->item(row, 0)->data(Qt::UserRole);
         if (block_index.isValid() && block_index.toInt() >= 0)
         {
-            emit jumpToBlock(block_index.toInt());
+            const QVariant field_name = table_->item(row, 1)->data(Qt::UserRole);
+            emit jumpToBlock(block_index.toInt(), field_name.toString());
         }
     });
 }
@@ -113,6 +114,7 @@ void DiagnosticsPanel::rebuildTable()
         table_->setItem(row, 0, level_item);
 
         auto* message_item = new QTableWidgetItem(QString::fromStdString(diagnostic.message));
+        message_item->setData(Qt::UserRole, QString::fromStdString(diagnostic.field_name));
         if (diagnostic.block_index >= 0)
         {
             message_item->setToolTip("Щёлкните, чтобы перейти к блоку");

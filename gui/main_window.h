@@ -52,6 +52,7 @@ class CodePreviewScreen;
 class QAction;
 class QLabel;
 class QPushButton;
+class QScrollArea;
 class QStackedWidget;
 class QTabBar;
 class QWidget;
@@ -107,7 +108,7 @@ private slots:
 
     void onDocumentChanged();
     void onPinClicked(int pin_number);
-    void onJumpToBlock(int block_index);
+    void onJumpToBlock(int block_index, const QString& field_name);
 
     // --- Навигация по экранам (MAKET_DESIGN_TZ.md, раздел 1 и "New Project /
     // ChipSelect") -------------------------------------------------------
@@ -178,6 +179,7 @@ private:
     PeripheralTree* tree_ = nullptr;
     PackageView* package_view_ = nullptr;
     PropertiesPanel* properties_ = nullptr;
+    QScrollArea* properties_scroll_ = nullptr;
     DiagnosticsPanel* diagnostics_ = nullptr;
 
     // --- Навигация по экранам ------------------------------------------

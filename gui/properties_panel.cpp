@@ -303,6 +303,12 @@ void PropertiesPanel::clearForm()
     content_ = nullptr;
 }
 
+QWidget* PropertiesPanel::findFieldWidget(const QString& field_name) const
+{
+    return content_ == nullptr ? nullptr
+        : content_->findChild<QWidget*>(field_name, Qt::FindChildrenRecursively);
+}
+
 void PropertiesPanel::refresh()
 {
     clearForm();
@@ -473,6 +479,9 @@ void PropertiesPanel::buildGpioForm(QVBoxLayout* layout, int instance)
     auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
+        // objectName = имя JSON-поля — так DiagnosticsPanel::jumpToBlock может
+        // найти конкретную строку формы через findFieldWidget() и подсветить её.
+        label->setObjectName(QString::fromUtf8(field_name));
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
@@ -644,6 +653,9 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
     auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
+        // objectName = имя JSON-поля — так DiagnosticsPanel::jumpToBlock может
+        // найти конкретную строку формы через findFieldWidget() и подсветить её.
+        label->setObjectName(QString::fromUtf8(field_name));
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
@@ -1046,6 +1058,9 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
     auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
+        // objectName = имя JSON-поля — так DiagnosticsPanel::jumpToBlock может
+        // найти конкретную строку формы через findFieldWidget() и подсветить её.
+        label->setObjectName(QString::fromUtf8(field_name));
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
@@ -1364,6 +1379,9 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
     auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
+        // objectName = имя JSON-поля — так DiagnosticsPanel::jumpToBlock может
+        // найти конкретную строку формы через findFieldWidget() и подсветить её.
+        label->setObjectName(QString::fromUtf8(field_name));
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
@@ -1635,6 +1653,9 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
     auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
+        // objectName = имя JSON-поля — так DiagnosticsPanel::jumpToBlock может
+        // найти конкретную строку формы через findFieldWidget() и подсветить её.
+        label->setObjectName(QString::fromUtf8(field_name));
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
@@ -1847,6 +1868,9 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
     auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
+        // objectName = имя JSON-поля — так DiagnosticsPanel::jumpToBlock может
+        // найти конкретную строку формы через findFieldWidget() и подсветить её.
+        label->setObjectName(QString::fromUtf8(field_name));
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
@@ -2846,6 +2870,9 @@ void PropertiesPanel::buildAdcForm(QVBoxLayout* layout)
     auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
+        // objectName = имя JSON-поля — так DiagnosticsPanel::jumpToBlock может
+        // найти конкретную строку формы через findFieldWidget() и подсветить её.
+        label->setObjectName(QString::fromUtf8(field_name));
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");

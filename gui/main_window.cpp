@@ -19,6 +19,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QTimer>
 #include <QSet>
 #include <QSettings>
 #include <QSplitter>
@@ -158,15 +159,15 @@ void MainWindow::buildLayout()
     // Панель свойств может быть длиннее экрана (у GPIO это 16 флажков выводов
     // плюс параметры группы), поэтому она живёт внутри прокрутки. Сама панель
     // об этом не знает — так её можно поставить и в другое место.
-    QScrollArea* properties_scroll = new QScrollArea();
-    properties_scroll->setWidget(properties_);
-    properties_scroll->setWidgetResizable(true);
-    properties_scroll->setMinimumWidth(320);
+    properties_scroll_ = new QScrollArea();
+    properties_scroll_->setWidget(properties_);
+    properties_scroll_->setWidgetResizable(true);
+    properties_scroll_->setMinimumWidth(320);
 
     QSplitter* horizontal = new QSplitter(Qt::Horizontal);
     horizontal->addWidget(tree_);
     horizontal->addWidget(package_view_);
-    horizontal->addWidget(properties_scroll);
+    horizontal->addWidget(properties_scroll_);
     horizontal->setStretchFactor(0, 1);
     horizontal->setStretchFactor(1, 3);
     horizontal->setStretchFactor(2, 2);
@@ -1398,7 +1399,7 @@ void MainWindow::onPinClicked(int pin_number)
     }
 }
 
-void MainWindow::onJumpToBlock(int block_index)
+void MainWindow::onJumpToBlock(int block_index, const QString& field_name)
 {
     const nlohmann::json& peripherals = document_.document()["peripherals"];
     if (block_index < 0 || block_index >= static_cast<int>(peripherals.size()))
@@ -1408,6 +1409,27 @@ void MainWindow::onJumpToBlock(int block_index)
     tree_->selectPeripheral(
         QString::fromStdString(peripherals[block_index].value("type", std::string())),
         peripherals[block_index].value("instance", -1));
+
+    // selectPeripheral() выше синхронно доводит до
+    // PropertiesPanel::showPeripheral() (QTreeWidget::currentItemChanged —
+    // прямое соединение), так что к этой строке форма уже перестроена и
+    // искать в ней конкретное поле можно сразу.
+    if (field_name.isEmpty())
+    {
+        return;
+    }
+    QWidget* field_widget = properties_->findFieldWidget(field_name);
+    if (field_widget == nullptr)
+    {
+        return;
+    }
+    properties_scroll_->ensureWidgetVisible(field_widget);
+    const QString original_style = field_widget->styleSheet();
+    field_widget->setStyleSheet(original_style + "background-color: #fff3b0;");
+    QTimer::singleShot(1200, field_widget, [field_widget, original_style]()
+    {
+        field_widget->setStyleSheet(original_style);
+    });
 }
 
 // --- Навигация по экранам -----------------------------------------------

@@ -39,6 +39,11 @@ public:
 
     void refresh();
 
+    // Находит виджет-подпись поля по имени JSON-поля (objectName, см.
+    // fieldLabel() в .cpp) — нужно DiagnosticsPanel::jumpToBlock, чтобы
+    // прокрутить/подсветить именно проблемную строку, а не весь блок.
+    QWidget* findFieldWidget(const QString& field_name) const;
+
 signals:
     // Изменилось содержимое документа: окно обязано перевалидировать
     // конфигурацию и перекрасить схему корпуса.
