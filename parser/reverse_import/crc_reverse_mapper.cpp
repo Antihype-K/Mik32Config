@@ -90,7 +90,7 @@ void mapIntField(
     {
         mapped.json_block[json_field] = 0;
         mapped.notes.push_back(
-            struct_field + "=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+            struct_field + "=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
             ":" + std::to_string(assignment->location.line) + ") — конфигуратор не смог определить " +
             json_field + ", укажите значение явно.");
         FieldProvenance provenance = makeUnresolvedProvenance(json_field);
@@ -126,7 +126,7 @@ void mapBoolField(
     {
         mapped.json_block[json_field] = false;
         mapped.notes.push_back(
-            struct_field + "=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+            struct_field + "=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
             ":" + std::to_string(assignment->location.line) + ") — конфигуратор не смог определить " +
             json_field + ", укажите значение явно.");
         FieldProvenance provenance = makeUnresolvedProvenance(json_field);

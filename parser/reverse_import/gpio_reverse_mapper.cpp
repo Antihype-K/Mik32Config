@@ -119,7 +119,7 @@ std::optional<std::string> mapDriveStrengthEnum(const std::string& raw)
 // вовсе — вместо тихого дефолта подсвечиваем и блокируем кодоген.
 FieldProvenance synthesizedProvenance(const std::string& json_field)
 {
-    // location.file пустой => синтезировано мапером, не взято из строки
+    // location.fileName() пустой => синтезировано мапером, не взято из строки
     // исходника — см. mapped_block.h, комментарий у FieldProvenance::location.
     FieldProvenance provenance;
     provenance.json_field = json_field;
@@ -218,7 +218,7 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
                 provenance.unresolved = true;
                 mapped.notes.push_back(
                     "не удалось разобрать номер(а) пина из \"" +
-                    assignment.raw_value_text + "\" (" + assignment.location.file + ":" +
+                    assignment.raw_value_text + "\" (" + assignment.location.fileName() + ":" +
                     std::to_string(assignment.location.line) + ") — конфигуратор не смог "
                     "определить pins, укажите значение явно");
             }

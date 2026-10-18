@@ -422,7 +422,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
     std::ifstream stream(file_path);
     if (!stream.is_open())
     {
-        out.unsupported_notes.push_back("Не удалось открыть файл: " + file_path.string());
+        out.unsupported_notes.push_back("Не удалось открыть файл: " + file_path.filename().string());
         return;
     }
 
@@ -527,7 +527,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
                 out.unsupported_notes.push_back(
                     "Похоже на HAL-хендл \"" + object_name + "\" (поле Instance), но "
                     "он не объявлен в этом же файле — кросс-файловые хендлы не "
-                    "поддерживаются: " + file_path.string() + ":" + std::to_string(line_number));
+                    "поддерживаются: " + file_path.filename().string() + ":" + std::to_string(line_number));
             }
             continue;
         }
@@ -544,7 +544,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
                 out.unsupported_notes.push_back(
                     "Присваивание поля \"" + match[2].str() + "\" хендла \"" + object_name +
                     "\" растянуто на несколько строк — не распознано: " +
-                    file_path.string() + ":" + std::to_string(line_number));
+                    file_path.filename().string() + ":" + std::to_string(line_number));
             }
             continue;
         }
@@ -581,7 +581,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
                 out.unsupported_notes.push_back(
                     "Вызов " + init_function_name + "(" + (*init_it)[2].str() +
                     ") ссылается на хендл, не объявленный в этом файле: " +
-                    file_path.string() + ":" + std::to_string(line_number));
+                    file_path.filename().string() + ":" + std::to_string(line_number));
                 continue;
             }
 
@@ -618,7 +618,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
                 out.unsupported_notes.push_back(
                     "Вызов " + init_function_name + " для \"" + matched_handle_name +
                     "\" переиспользует структуру предыдущего вызова без переприсваивания "
-                    "полей (" + file_path.string() + ":" + std::to_string(line_number) +
+                    "полей (" + file_path.filename().string() + ":" + std::to_string(line_number) +
                     ") — конфигурация восстановлена по предыдущему блоку, но ОБА блока "
                     "ссылаются на одни и те же строки исходника: правка такого блока в "
                     "GUI затронет и парный блок.");
@@ -628,7 +628,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
                 out.unsupported_notes.push_back(
                     "Вызов " + init_function_name + " для \"" + matched_handle_name +
                     "\" не имеет ни одного распознанного присваивания полей перед ним: " +
-                    file_path.string() + ":" + std::to_string(line_number));
+                    file_path.filename().string() + ":" + std::to_string(line_number));
             }
 
             // Донастройка, встреченная выше по файлу, чем сам Init — отдаётся
@@ -727,7 +727,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
         {
             out.unsupported_notes.push_back(
                 "Хендл \"" + handle_name + "\" (" + handle.handle_type + ", объявлен в " +
-                handle.declared_at.file + ":" +
+                handle.declared_at.fileName() + ":" +
                 std::to_string(handle.declared_at.line) + ") имеет " +
                 std::to_string(handle.pending_assignments.size()) +
                 " присваиваний полей, но вызова HAL_*_Init для него в этом файле нет — "

@@ -263,7 +263,7 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
                 result.json_block["instance"] = 0;
                 result.notes.push_back(
                     "Не удалось разобрать номер instance из \"" + effective->raw_value_text +
-                    "\" (" + effective->location.file + ":" + std::to_string(effective->location.line) +
+                    "\" (" + effective->location.fileName() + ":" + std::to_string(effective->location.line) +
                     ") — конфигуратор не смог определить instance, укажите значение явно.");
             }
             if (ambiguous)
@@ -275,7 +275,7 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
                     {
                         locations += "; ";
                     }
-                    locations += "\"" + occurrence->raw_value_text + "\" (" + occurrence->location.file + ":" +
+                    locations += "\"" + occurrence->raw_value_text + "\" (" + occurrence->location.fileName() + ":" +
                                  std::to_string(occurrence->location.line) + ")";
                 }
                 result.notes.push_back(
@@ -378,7 +378,7 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
                 result.json_block["own_address"] = 0;
                 result.json_block["address_mode"] = "7bit";
                 result.notes.push_back(
-                    "Init.OwnAddress1=\"" + assignment->raw_value_text + "\" (" + assignment->location.file + ":" +
+                    "Init.OwnAddress1=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() + ":" +
                     std::to_string(assignment->location.line) +
                     ") — не числовой литерал, конфигуратор не смог определить own_address/address_mode, "
                     "укажите значения явно.");
@@ -437,7 +437,7 @@ std::optional<MappedBlock> mapI2cBlock(const RawInitBlock& block)
             const std::string quintet_text =
                 "PRESC=" + presc->raw_value_text + ", SCLDEL=" + scldel->raw_value_text +
                 ", SDADEL=" + sdadel->raw_value_text + ", SCLH=" + sclh->raw_value_text +
-                ", SCLL=" + scll->raw_value_text + " (" + scll->location.file + ":" +
+                ", SCLL=" + scll->raw_value_text + " (" + scll->location.fileName() + ":" +
                 std::to_string(presc->location.line) + "-" + std::to_string(scll->location.line) + ")";
 
             if (matched != nullptr)

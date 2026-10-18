@@ -154,7 +154,7 @@ std::optional<MappedBlock> mapAdcBlock(const RawInitBlock& block)
             {
                 result.json_block["channel"] = 0;
                 result.notes.push_back(
-                    "Init.Sel=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Init.Sel=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить канал АЦП, укажите channel явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("channel");
@@ -189,7 +189,7 @@ std::optional<MappedBlock> mapAdcBlock(const RawInitBlock& block)
             {
                 result.json_block["ext_ref"] = false;
                 result.notes.push_back(
-                    "Init.EXTRef=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Init.EXTRef=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить источник опорного напряжения, "
                     "укажите ext_ref явно.");
@@ -225,7 +225,7 @@ std::optional<MappedBlock> mapAdcBlock(const RawInitBlock& block)
             {
                 result.json_block["ext_clb"] = false;
                 result.notes.push_back(
-                    "Init.EXTClb=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Init.EXTClb=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить источник внешнего опорного "
                     "напряжения, укажите ext_clb явно.");

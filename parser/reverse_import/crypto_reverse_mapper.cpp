@@ -175,7 +175,7 @@ std::optional<MappedBlock> mapCryptoBlock(const RawInitBlock& block)
             {
                 result.json_block["algorithm"] = "kuznechik";
                 result.notes.push_back(
-                    "Algorithm=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Algorithm=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить алгоритм шифрования, укажите "
                     "algorithm явно.");
@@ -211,7 +211,7 @@ std::optional<MappedBlock> mapCryptoBlock(const RawInitBlock& block)
             {
                 result.json_block["cipher_mode"] = "ecb";
                 result.notes.push_back(
-                    "CipherMode=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "CipherMode=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить режим шифрования, укажите "
                     "cipher_mode явно.");
@@ -245,7 +245,7 @@ std::optional<MappedBlock> mapCryptoBlock(const RawInitBlock& block)
             {
                 result.json_block["swap_mode"] = "none";
                 result.notes.push_back(
-                    "SwapMode=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "SwapMode=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить режим перестановки байт, укажите "
                     "swap_mode явно.");
@@ -277,7 +277,7 @@ std::optional<MappedBlock> mapCryptoBlock(const RawInitBlock& block)
             {
                 result.json_block["order_mode"] = "lsw";
                 result.notes.push_back(
-                    "OrderMode=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "OrderMode=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить порядок слов, укажите order_mode "
                     "явно.");

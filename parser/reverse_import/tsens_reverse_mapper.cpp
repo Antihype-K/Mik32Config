@@ -119,7 +119,7 @@ std::optional<MappedBlock> mapTsensBlock(const RawInitBlock& block)
             {
                 result.json_block["clock_source"] = "sys_clk";
                 result.notes.push_back(
-                    "Clock=\"" + assignment->raw_value_text + "\" (" + assignment->location.file + ":" +
+                    "Clock=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() + ":" +
                     std::to_string(assignment->location.line) + ") — конфигуратор не смог определить "
                     "clock_source, укажите значение явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("clock_source");
@@ -154,7 +154,7 @@ std::optional<MappedBlock> mapTsensBlock(const RawInitBlock& block)
             {
                 result.json_block["frequency_hz"] = 1;
                 result.notes.push_back(
-                    "Frequency=\"" + assignment->raw_value_text + "\" (" + assignment->location.file + ":" +
+                    "Frequency=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() + ":" +
                     std::to_string(assignment->location.line) + ") — конфигуратор не смог определить "
                     "frequency_hz, укажите значение явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("frequency_hz");
@@ -184,7 +184,7 @@ std::optional<MappedBlock> mapTsensBlock(const RawInitBlock& block)
         else
         {
             result.notes.push_back(
-                std::string(function_name) + "(" + call->args[1] + ") (" + call->location.file + ":" +
+                std::string(function_name) + "(" + call->args[1] + ") (" + call->location.fileName() + ":" +
                 std::to_string(call->location.line) + ") — конфигуратор не смог определить " + json_field +
                 ", укажите значение явно.");
             result.json_block[json_field] = 0;

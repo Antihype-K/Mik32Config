@@ -149,7 +149,7 @@ std::optional<MappedBlock> mapDacBlock(const RawInitBlock& block)
             {
                 result.json_block["instance"] = 0;
                 result.notes.push_back(
-                    "Instance_dac=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Instance_dac=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить канал ЦАП, укажите instance явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("instance");
@@ -184,7 +184,7 @@ std::optional<MappedBlock> mapDacBlock(const RawInitBlock& block)
             {
                 result.json_block["div"] = 0;
                 result.notes.push_back(
-                    "Init.DIV=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Init.DIV=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить делитель частоты ЦАП, укажите div явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("div");
@@ -219,7 +219,7 @@ std::optional<MappedBlock> mapDacBlock(const RawInitBlock& block)
             {
                 result.json_block["ext_ref"] = false;
                 result.notes.push_back(
-                    "Init.EXTRef=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Init.EXTRef=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить источник опорного напряжения, "
                     "укажите ext_ref явно.");
@@ -255,7 +255,7 @@ std::optional<MappedBlock> mapDacBlock(const RawInitBlock& block)
             {
                 result.json_block["ext_clb"] = false;
                 result.notes.push_back(
-                    "Init.EXTClb=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Init.EXTClb=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить источник внешнего опорного "
                     "напряжения, укажите ext_clb явно.");

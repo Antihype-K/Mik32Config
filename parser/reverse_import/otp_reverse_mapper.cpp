@@ -94,7 +94,7 @@ std::optional<MappedBlock> mapOtpBlock(const RawInitBlock& block)
     {
         result.json_block["read_mode"] = "three_stages";
         result.notes.push_back(
-            "ReadMode=\"" + assignment->raw_value_text + "\" (" + assignment->location.file + ":" +
+            "ReadMode=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() + ":" +
             std::to_string(assignment->location.line) + ") — конфигуратор не смог определить "
             "read_mode, укажите значение явно.");
         FieldProvenance provenance = makeUnresolvedProvenance("read_mode");

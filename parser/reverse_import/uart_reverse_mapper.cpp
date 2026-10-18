@@ -286,7 +286,7 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
                 result.json_block["instance"] = 0;
                 result.notes.push_back(
                     "Не удалось разобрать номер instance из \"" + effective->raw_value_text +
-                    "\" (" + effective->location.file + ":" + std::to_string(effective->location.line) +
+                    "\" (" + effective->location.fileName() + ":" + std::to_string(effective->location.line) +
                     ") — конфигуратор не смог определить instance, укажите значение явно.");
             }
 
@@ -299,7 +299,7 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
                     {
                         locations += "; ";
                     }
-                    locations += "\"" + occurrence->raw_value_text + "\" (" + occurrence->location.file + ":" +
+                    locations += "\"" + occurrence->raw_value_text + "\" (" + occurrence->location.fileName() + ":" +
                                  std::to_string(occurrence->location.line) + ")";
                 }
                 result.notes.push_back(
@@ -352,7 +352,7 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
                 result.json_block["data_bits"] = 8;
                 result.notes.push_back(
                     "Не удалось разобрать frame=\"" + assignment->raw_value_text + "\" (" +
-                    assignment->location.file + ":" + std::to_string(assignment->location.line) +
+                    assignment->location.fileName() + ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить data_bits, укажите значение явно.");
                 result.provenance.push_back(makeUnresolvedProvenance("data_bits", *assignment));
             }
@@ -383,7 +383,7 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
                 result.json_block["stop_bits"] = 1;
                 result.notes.push_back(
                     "Не удалось разобрать stop_bit=\"" + assignment->raw_value_text + "\" (" +
-                    assignment->location.file + ":" + std::to_string(assignment->location.line) +
+                    assignment->location.fileName() + ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить stop_bits, укажите значение явно.");
                 result.provenance.push_back(makeUnresolvedProvenance("stop_bits", *assignment));
             }
@@ -414,7 +414,7 @@ std::optional<MappedBlock> mapUartBlock(const RawInitBlock& block)
             {
                 result.json_block["baud_rate"] = 115200;
                 result.notes.push_back(
-                    "baudrate=\"" + assignment->raw_value_text + "\" (" + assignment->location.file + ":" +
+                    "baudrate=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() + ":" +
                     std::to_string(assignment->location.line) +
                     ") — не числовой литерал (вычисляемое выражение/переменная?), конфигуратор не смог "
                     "определить baud_rate, укажите значение явно.");

@@ -46,6 +46,15 @@ struct SourceLocation
 {
     std::string file;   // абсолютный путь, как передан сканеру
     int line = 0;        // 1-based, как в редакторах и компиляторных диагностиках
+
+    // Короткое имя файла для сообщений пользователю (notes/диагностика) —
+    // полный путь там не нужен и только шумит, а patch-writer продолжает
+    // читать полный file как есть.
+    std::string fileName() const
+    {
+        const std::size_t slash = file.find_last_of("/\\");
+        return slash == std::string::npos ? file : file.substr(slash + 1);
+    }
 };
 
 // Одно присваивание вида "<handle>.<field_path> = <value>;" внутри одного

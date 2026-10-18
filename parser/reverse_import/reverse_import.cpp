@@ -269,7 +269,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         {
             result.notes.push_back(
                 "Вызов " + block.init_function_name + "(" + block.handle_name + ") в " +
-                block.init_call_location.file + ":" +
+                block.init_call_location.fileName() + ":" +
                 std::to_string(block.init_call_location.line) +
                 " не является инициализацией периферии (" + *canonical_init +
                 ") — хендл лишь передан прикладной функции, блок не создан.");
@@ -356,7 +356,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
             // контроллера (см. dma_reverse_mapper.h). Канал (DMA_Channel-
             // HandleTypeDef) обрабатывается отдельной веткой выше.
             result.notes.push_back(
-                "HAL_DMA_Init(" + block.handle_name + ") в " + block.init_call_location.file + ":" +
+                "HAL_DMA_Init(" + block.handle_name + ") в " + block.init_call_location.fileName() + ":" +
                 std::to_string(block.init_call_location.line) +
                 " — глобальная инициализация ПДП, не отдельный блок конфигуратора (настройка "
                 "канала читается из DMA_ChannelHandleTypeDef), пропущено.");
@@ -366,7 +366,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         {
             result.notes.push_back(
                 "Неизвестный тип хендла \"" + block.handle_type + "\" (\"" + block.handle_name +
-                "\") в " + block.init_call_location.file + ":" +
+                "\") в " + block.init_call_location.fileName() + ":" +
                 std::to_string(block.init_call_location.line) +
                 " — это не один из поддерживаемых типов периферии MIK32 (UART/I2C/Timer32/"
                 "Timer16/GPIO/SPI/ADC/DAC/CRYPTO/DMA/EEPROM/RTC/CRC/TSENS/OTP/WDT), пропущено.");
@@ -382,7 +382,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
             // сообщение всё равно полезнее молчания.
             result.notes.push_back(
                 "Маппер для \"" + block.handle_type + "\" (\"" + block.handle_name +
-                "\") отказался разобрать блок в " + block.init_call_location.file + ":" +
+                "\") отказался разобрать блок в " + block.init_call_location.fileName() + ":" +
                 std::to_string(block.init_call_location.line) + " — пропущено.");
             continue;
         }
@@ -417,7 +417,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
             // сюда попасть не должны, но на случай расхождения контракта.
             result.notes.push_back(
                 "Маппер каналов Timer32 отказался разобрать блок \"" + channel_block.handle_name +
-                "\" в " + channel_block.init_call_location.file + ":" +
+                "\" в " + channel_block.init_call_location.fileName() + ":" +
                 std::to_string(channel_block.init_call_location.line) + " — пропущено.");
             continue;
         }
@@ -441,7 +441,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
                 "Канал \"" + channel_block.handle_name + "\" ссылается на родительский Timer32 \"" +
                 mapped_channel->parent_handle_name + "\", который сканер не нашёл/не смог разобрать "
                 "в этом же обходе — канал не присоединён к дереву: " +
-                channel_block.init_call_location.file + ":" +
+                channel_block.init_call_location.fileName() + ":" +
                 std::to_string(channel_block.init_call_location.line));
             continue;
         }

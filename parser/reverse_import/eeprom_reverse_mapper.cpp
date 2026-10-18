@@ -147,7 +147,7 @@ std::optional<MappedBlock> mapEepromBlock(const RawInitBlock& block)
             {
                 result.json_block["mode"] = "two_stage";
                 result.notes.push_back(
-                    "Mode=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Mode=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить режим EEPROM, укажите mode явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("mode");
@@ -180,7 +180,7 @@ std::optional<MappedBlock> mapEepromBlock(const RawInitBlock& block)
                 result.json_block["ecc_enabled"] = true;
                 result.notes.push_back(
                     "ErrorCorrection=\"" + assignment->raw_value_text + "\" (" +
-                    assignment->location.file + ":" + std::to_string(assignment->location.line) +
+                    assignment->location.fileName() + ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить коррекцию ошибок, укажите "
                     "ecc_enabled явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("ecc_enabled");
@@ -214,7 +214,7 @@ std::optional<MappedBlock> mapEepromBlock(const RawInitBlock& block)
                 result.json_block["single_error_interrupt_enabled"] = false;
                 result.notes.push_back(
                     "EnableInterrupt=\"" + assignment->raw_value_text + "\" (" +
-                    assignment->location.file + ":" + std::to_string(assignment->location.line) +
+                    assignment->location.fileName() + ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить прерывание одиночной ошибки, "
                     "укажите single_error_interrupt_enabled явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("single_error_interrupt_enabled");

@@ -223,7 +223,7 @@ std::optional<MappedBlock> mapDmaChannelBlock(const RawInitBlock& block)
                 result.json_block["instance"] = 0;
                 result.notes.push_back(
                     "ChannelInit.Channel=\"" + assignment->raw_value_text + "\" (" +
-                    assignment->location.file + ":" + std::to_string(assignment->location.line) +
+                    assignment->location.fileName() + ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить номер канала ПДП, укажите instance "
                     "явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("instance");
@@ -259,7 +259,7 @@ std::optional<MappedBlock> mapDmaChannelBlock(const RawInitBlock& block)
                 result.json_block["priority"] = "very_high";
                 result.notes.push_back(
                     "ChannelInit.Priority=\"" + assignment->raw_value_text + "\" (" +
-                    assignment->location.file + ":" + std::to_string(assignment->location.line) +
+                    assignment->location.fileName() + ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить приоритет канала, укажите priority "
                     "явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("priority");
@@ -296,7 +296,7 @@ std::optional<MappedBlock> mapDmaChannelBlock(const RawInitBlock& block)
                 result.json_block["element_size"] = "byte";
                 result.notes.push_back(
                     "ChannelInit.ReadSize=\"" + assignment->raw_value_text + "\" (" +
-                    assignment->location.file + ":" + std::to_string(assignment->location.line) +
+                    assignment->location.fileName() + ":" + std::to_string(assignment->location.line) +
                     ") — конфигуратор не смог определить размер элемента передачи, укажите "
                     "element_size явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("element_size");

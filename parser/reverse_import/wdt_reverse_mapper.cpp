@@ -104,7 +104,7 @@ std::optional<MappedBlock> mapWdtBlock(const RawInitBlock& block)
             {
                 result.json_block["clock_source"] = "osc32k";
                 result.notes.push_back(
-                    "Init.Clock=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Init.Clock=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) + ") — конфигуратор не смог "
                     "определить clock_source, укажите значение явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("clock_source");
@@ -139,7 +139,7 @@ std::optional<MappedBlock> mapWdtBlock(const RawInitBlock& block)
             {
                 result.json_block["reload_ms"] = 1000;
                 result.notes.push_back(
-                    "Init.ReloadMs=\"" + assignment->raw_value_text + "\" (" + assignment->location.file +
+                    "Init.ReloadMs=\"" + assignment->raw_value_text + "\" (" + assignment->location.fileName() +
                     ":" + std::to_string(assignment->location.line) + ") — конфигуратор не смог "
                     "определить reload_ms, укажите значение явно.");
                 FieldProvenance provenance = makeUnresolvedProvenance("reload_ms");
