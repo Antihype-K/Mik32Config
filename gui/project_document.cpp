@@ -3,6 +3,7 @@
 #include "win_file_io.h"
 #include "project_config.h"
 #include "cross_module_validator.h"
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
@@ -324,6 +325,21 @@ void ProjectDocument::setField(int block_index, const std::string& field_name, c
     }
     document_["peripherals"][block_index][field_name] = value;
     modified_ = true;
+
+    // Пользователь сам указал значение явно — поле больше не unresolved,
+    // независимо от того, подтверждён ли блок целиком "плюсиком".
+    const auto it = unresolved_fields_.find(block_index);
+    if (it != unresolved_fields_.end())
+    {
+        auto& fields = it->second;
+        fields.erase(std::remove_if(fields.begin(), fields.end(),
+            [&field_name](const UnresolvedField& field) { return field.field_name == field_name; }),
+            fields.end());
+        if (fields.empty())
+        {
+            unresolved_fields_.erase(it);
+        }
+    }
 }
 
 void ProjectDocument::eraseField(int block_index, const std::string& field_name)
@@ -375,12 +391,16 @@ std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowle
     // fields_policy): пока хоть одно поле не разобрано однозначно,
     // кодогенерация всего проекта заблокирована — не только затронутого
     // блока.
-    for (const auto& [block_index, field_names] : unresolved_fields_)
+    for (const auto& [block_index, fields] : unresolved_fields_)
     {
-        for (const std::string& field_name : field_names)
+        if (isBlockConfirmed(block_index))
+        {
+            continue;   // пользователь подтвердил блок вручную — не блокировать
+        }
+        for (const UnresolvedField& field : fields)
         {
             diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error,
-                "Поле \"" + field_name + "\" не удалось определить при импорте — "
+                "Поле \"" + field.field_name + "\" не удалось определить при импорте — "
                 "укажите значение явно.", block_index});
         }
     }
@@ -657,25 +677,54 @@ std::vector<std::pair<int, int>> ProjectDocument::claimedPins(
     return pins;
 }
 
-void ProjectDocument::setUnresolvedFields(int block_index, std::vector<std::string> field_names)
+void ProjectDocument::setUnresolvedFields(int block_index, std::vector<UnresolvedField> fields)
 {
-    if (field_names.empty())
+    confirmed_blocks_.erase(block_index);   // новый импорт блока -> подтверждение не актуально
+    if (fields.empty())
     {
         unresolved_fields_.erase(block_index);
         return;
     }
-    unresolved_fields_[block_index] = std::move(field_names);
+    unresolved_fields_[block_index] = std::move(fields);
 }
 
 void ProjectDocument::clearUnresolvedFields()
 {
     unresolved_fields_.clear();
+    confirmed_blocks_.clear();
 }
 
 std::vector<std::string> ProjectDocument::unresolvedFieldNames(int block_index) const
 {
     const auto it = unresolved_fields_.find(block_index);
-    return it == unresolved_fields_.end() ? std::vector<std::string>() : it->second;
+    if (it == unresolved_fields_.end())
+    {
+        return {};
+    }
+    std::vector<std::string> names;
+    names.reserve(it->second.size());
+    for (const UnresolvedField& field : it->second)
+    {
+        names.push_back(field.field_name);
+    }
+    return names;
+}
+
+std::string ProjectDocument::unresolvedFieldDetail(int block_index, const std::string& field_name) const
+{
+    const auto it = unresolved_fields_.find(block_index);
+    if (it == unresolved_fields_.end())
+    {
+        return "";
+    }
+    for (const UnresolvedField& field : it->second)
+    {
+        if (field.field_name == field_name)
+        {
+            return field.detail;
+        }
+    }
+    return "";
 }
 
 bool ProjectDocument::blockHasUnresolvedFields(int block_index) const
@@ -686,4 +735,27 @@ bool ProjectDocument::blockHasUnresolvedFields(int block_index) const
 bool ProjectDocument::hasAnyUnresolvedFields() const
 {
     return !unresolved_fields_.empty();
+}
+
+void ProjectDocument::setBlockConfirmed(int block_index, bool confirmed)
+{
+    if (confirmed)
+    {
+        confirmed_blocks_.insert(block_index);
+    }
+    else
+    {
+        confirmed_blocks_.erase(block_index);
+    }
+    modified_ = true;
+}
+
+bool ProjectDocument::isBlockConfirmed(int block_index) const
+{
+    return confirmed_blocks_.count(block_index) != 0;
+}
+
+bool ProjectDocument::blockBlocksGeneration(int block_index) const
+{
+    return blockHasUnresolvedFields(block_index) && !isBlockConfirmed(block_index);
 }

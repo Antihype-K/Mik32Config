@@ -451,12 +451,17 @@ void MainWindow::onImportProject()
     document_.clearUnresolvedFields();
     for (std::size_t block_index = 0; block_index < imported.block_provenance.size(); ++block_index)
     {
-        std::vector<std::string> unresolved_names;
+        std::vector<ProjectDocument::UnresolvedField> unresolved_names;
         for (const reverse_import::FieldProvenance& field : imported.block_provenance[block_index])
         {
             if (field.unresolved)
             {
-                unresolved_names.push_back(field.json_field);
+                // Детальный текст для GUI: сначала значение правой части, иначе
+                // целая строка исходника, иначе — поле синтезировано мапером.
+                std::string detail = !field.original_raw_value_text.empty()
+                    ? field.original_raw_value_text
+                    : field.original_full_line_text;
+                unresolved_names.push_back({field.json_field, detail});
             }
         }
         document_.setUnresolvedFields(static_cast<int>(block_index), unresolved_names);
@@ -1016,7 +1021,7 @@ void MainWindow::refreshEverything()
         {
             for (int block_index : document_.blockIndices(type.toStdString(), instance))
             {
-                if (document_.blockHasUnresolvedFields(block_index))
+                if (document_.blockBlocksGeneration(block_index))
                 {
                     unresolved.insert(PeripheralTree::keyFor(type, instance));
                     break;

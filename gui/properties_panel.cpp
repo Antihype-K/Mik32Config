@@ -462,23 +462,44 @@ void PropertiesPanel::buildGpioForm(QVBoxLayout* layout, int instance)
 
     // feedback_reverse_import_unresolved_fields_policy: поле, которое
     // reverse-import не смог разобрать, подсвечивается красным прямо в
-    // форме — не только в дереве периферии.
+    // форме — не только в дереве периферии. Тултип показывает, что именно
+    // не разобралось (исходный текст из .c-файла), а не общую фразу — иначе
+    // пользователю приходится гадать, какое значение проверять.
     const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
     auto isUnresolved = [&unresolved_fields](const char* field_name)
     {
         return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
     };
-    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
-            label->setToolTip(QString::fromUtf8(
-                "Значение не удалось определить при импорте — укажите явно."));
+            const std::string detail = document_->unresolvedFieldDetail(block_index, field_name);
+            label->setToolTip(detail.empty()
+                ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
+                : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
+                      .arg(QString::fromStdString(detail)));
         }
         return label;
     };
+    if (!unresolved_fields.empty())
+    {
+        // "Плюсик" — пользователь подтверждает блок без правки всех полей
+        // (например, если нераспознанное значение и так совпадает с тем,
+        // что он хочет). Снимает блокировку кодогена и красную подсветку
+        // дерева для этого блока, см. ProjectDocument::setBlockConfirmed.
+        auto* confirm = new QCheckBox(QString::fromUtf8(
+            "Подтверждаю значения этого блока (несмотря на нераспознанные поля)"));
+        confirm->setChecked(document_->isBlockConfirmed(block_index));
+        connect(confirm, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setBlockConfirmed(block_index, checked);
+            emit documentChanged();
+        });
+        form->addRow(confirm);
+    }
 
     form->addRow(fieldLabel("mode", QString::fromUtf8("Режим:")), stringCombo(
         kGpioModes, document_->field(block_index, "mode").is_string()
@@ -612,23 +633,44 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
 
     // feedback_reverse_import_unresolved_fields_policy: поле, которое
     // reverse-import не смог разобрать, подсвечивается красным прямо в
-    // форме — не только в дереве периферии.
+    // форме — не только в дереве периферии. Тултип показывает, что именно
+    // не разобралось (исходный текст из .c-файла), а не общую фразу — иначе
+    // пользователю приходится гадать, какое значение проверять.
     const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
     auto isUnresolved = [&unresolved_fields](const char* field_name)
     {
         return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
     };
-    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
-            label->setToolTip(QString::fromUtf8(
-                "Значение не удалось определить при импорте — укажите явно."));
+            const std::string detail = document_->unresolvedFieldDetail(block_index, field_name);
+            label->setToolTip(detail.empty()
+                ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
+                : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
+                      .arg(QString::fromStdString(detail)));
         }
         return label;
     };
+    if (!unresolved_fields.empty())
+    {
+        // "Плюсик" — пользователь подтверждает блок без правки всех полей
+        // (например, если нераспознанное значение и так совпадает с тем,
+        // что он хочет). Снимает блокировку кодогена и красную подсветку
+        // дерева для этого блока, см. ProjectDocument::setBlockConfirmed.
+        auto* confirm = new QCheckBox(QString::fromUtf8(
+            "Подтверждаю значения этого блока (несмотря на нераспознанные поля)"));
+        confirm->setChecked(document_->isBlockConfirmed(block_index));
+        connect(confirm, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setBlockConfirmed(block_index, checked);
+            emit documentChanged();
+        });
+        form->addRow(confirm);
+    }
 
     const nlohmann::json baud = document_->field(block_index, "baud_rate");
     form->addRow(fieldLabel("baud_rate", QString::fromUtf8("Скорость:")), intCombo(
@@ -993,23 +1035,44 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
 
     // feedback_reverse_import_unresolved_fields_policy: поле, которое
     // reverse-import не смог разобрать, подсвечивается красным прямо в
-    // форме — не только в дереве периферии.
+    // форме — не только в дереве периферии. Тултип показывает, что именно
+    // не разобралось (исходный текст из .c-файла), а не общую фразу — иначе
+    // пользователю приходится гадать, какое значение проверять.
     const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
     auto isUnresolved = [&unresolved_fields](const char* field_name)
     {
         return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
     };
-    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
-            label->setToolTip(QString::fromUtf8(
-                "Значение не удалось определить при импорте — укажите явно."));
+            const std::string detail = document_->unresolvedFieldDetail(block_index, field_name);
+            label->setToolTip(detail.empty()
+                ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
+                : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
+                      .arg(QString::fromStdString(detail)));
         }
         return label;
     };
+    if (!unresolved_fields.empty())
+    {
+        // "Плюсик" — пользователь подтверждает блок без правки всех полей
+        // (например, если нераспознанное значение и так совпадает с тем,
+        // что он хочет). Снимает блокировку кодогена и красную подсветку
+        // дерева для этого блока, см. ProjectDocument::setBlockConfirmed.
+        auto* confirm = new QCheckBox(QString::fromUtf8(
+            "Подтверждаю значения этого блока (несмотря на нераспознанные поля)"));
+        confirm->setChecked(document_->isBlockConfirmed(block_index));
+        connect(confirm, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setBlockConfirmed(block_index, checked);
+            emit documentChanged();
+        });
+        form->addRow(confirm);
+    }
 
     const std::string mode = document_->field(block_index, "mode").is_string()
         ? document_->field(block_index, "mode").get<std::string>() : "period";
@@ -1290,23 +1353,44 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
 
     // feedback_reverse_import_unresolved_fields_policy: поле, которое
     // reverse-import не смог разобрать, подсвечивается красным прямо в
-    // форме — не только в дереве периферии.
+    // форме — не только в дереве периферии. Тултип показывает, что именно
+    // не разобралось (исходный текст из .c-файла), а не общую фразу — иначе
+    // пользователю приходится гадать, какое значение проверять.
     const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
     auto isUnresolved = [&unresolved_fields](const char* field_name)
     {
         return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
     };
-    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
-            label->setToolTip(QString::fromUtf8(
-                "Значение не удалось определить при импорте — укажите явно."));
+            const std::string detail = document_->unresolvedFieldDetail(block_index, field_name);
+            label->setToolTip(detail.empty()
+                ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
+                : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
+                      .arg(QString::fromStdString(detail)));
         }
         return label;
     };
+    if (!unresolved_fields.empty())
+    {
+        // "Плюсик" — пользователь подтверждает блок без правки всех полей
+        // (например, если нераспознанное значение и так совпадает с тем,
+        // что он хочет). Снимает блокировку кодогена и красную подсветку
+        // дерева для этого блока, см. ProjectDocument::setBlockConfirmed.
+        auto* confirm = new QCheckBox(QString::fromUtf8(
+            "Подтверждаю значения этого блока (несмотря на нераспознанные поля)"));
+        confirm->setChecked(document_->isBlockConfirmed(block_index));
+        connect(confirm, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setBlockConfirmed(block_index, checked);
+            emit documentChanged();
+        });
+        form->addRow(confirm);
+    }
 
     const std::string mode = document_->field(block_index, "mode").is_string()
         ? document_->field(block_index, "mode").get<std::string>() : "master";
@@ -1540,23 +1624,44 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
 
     // feedback_reverse_import_unresolved_fields_policy: поле, которое
     // reverse-import не смог разобрать, подсвечивается красным прямо в
-    // форме — не только в дереве периферии.
+    // форме — не только в дереве периферии. Тултип показывает, что именно
+    // не разобралось (исходный текст из .c-файла), а не общую фразу — иначе
+    // пользователю приходится гадать, какое значение проверять.
     const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
     auto isUnresolved = [&unresolved_fields](const char* field_name)
     {
         return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
     };
-    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
-            label->setToolTip(QString::fromUtf8(
-                "Значение не удалось определить при импорте — укажите явно."));
+            const std::string detail = document_->unresolvedFieldDetail(block_index, field_name);
+            label->setToolTip(detail.empty()
+                ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
+                : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
+                      .arg(QString::fromStdString(detail)));
         }
         return label;
     };
+    if (!unresolved_fields.empty())
+    {
+        // "Плюсик" — пользователь подтверждает блок без правки всех полей
+        // (например, если нераспознанное значение и так совпадает с тем,
+        // что он хочет). Снимает блокировку кодогена и красную подсветку
+        // дерева для этого блока, см. ProjectDocument::setBlockConfirmed.
+        auto* confirm = new QCheckBox(QString::fromUtf8(
+            "Подтверждаю значения этого блока (несмотря на нераспознанные поля)"));
+        confirm->setChecked(document_->isBlockConfirmed(block_index));
+        connect(confirm, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setBlockConfirmed(block_index, checked);
+            emit documentChanged();
+        });
+        form->addRow(confirm);
+    }
 
     const std::string mode = document_->field(block_index, "mode").is_string()
         ? document_->field(block_index, "mode").get<std::string>() : "master";
@@ -1731,23 +1836,44 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
 
     // feedback_reverse_import_unresolved_fields_policy: поле, которое
     // reverse-import не смог разобрать, подсвечивается красным прямо в
-    // форме — не только в дереве периферии.
+    // форме — не только в дереве периферии. Тултип показывает, что именно
+    // не разобралось (исходный текст из .c-файла), а не общую фразу — иначе
+    // пользователю приходится гадать, какое значение проверять.
     const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
     auto isUnresolved = [&unresolved_fields](const char* field_name)
     {
         return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
     };
-    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
-            label->setToolTip(QString::fromUtf8(
-                "Значение не удалось определить при импорте — укажите явно."));
+            const std::string detail = document_->unresolvedFieldDetail(block_index, field_name);
+            label->setToolTip(detail.empty()
+                ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
+                : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
+                      .arg(QString::fromStdString(detail)));
         }
         return label;
     };
+    if (!unresolved_fields.empty())
+    {
+        // "Плюсик" — пользователь подтверждает блок без правки всех полей
+        // (например, если нераспознанное значение и так совпадает с тем,
+        // что он хочет). Снимает блокировку кодогена и красную подсветку
+        // дерева для этого блока, см. ProjectDocument::setBlockConfirmed.
+        auto* confirm = new QCheckBox(QString::fromUtf8(
+            "Подтверждаю значения этого блока (несмотря на нераспознанные поля)"));
+        confirm->setChecked(document_->isBlockConfirmed(block_index));
+        connect(confirm, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setBlockConfirmed(block_index, checked);
+            emit documentChanged();
+        });
+        form->addRow(confirm);
+    }
 
     // Блок, только что включённый через buildDisabledPlaceholder, приходит
     // без ЭТИХ полей: gui/project_document.cpp, defaultBlock() не содержит
@@ -2709,23 +2835,44 @@ void PropertiesPanel::buildAdcForm(QVBoxLayout* layout)
 
     // feedback_reverse_import_unresolved_fields_policy: поле, которое
     // reverse-import не смог разобрать, подсвечивается красным прямо в
-    // форме — не только в дереве периферии.
+    // форме — не только в дереве периферии. Тултип показывает, что именно
+    // не разобралось (исходный текст из .c-файла), а не общую фразу — иначе
+    // пользователю приходится гадать, какое значение проверять.
     const std::vector<std::string> unresolved_fields = document_->unresolvedFieldNames(block_index);
     auto isUnresolved = [&unresolved_fields](const char* field_name)
     {
         return std::find(unresolved_fields.begin(), unresolved_fields.end(), field_name) != unresolved_fields.end();
     };
-    auto fieldLabel = [&isUnresolved](const char* field_name, const QString& text)
+    auto fieldLabel = [this, block_index, &isUnresolved](const char* field_name, const QString& text)
     {
         QLabel* label = new QLabel(text);
         if (isUnresolved(field_name))
         {
             label->setStyleSheet("color: #d92d20; font-weight: bold;");
-            label->setToolTip(QString::fromUtf8(
-                "Значение не удалось определить при импорте — укажите явно."));
+            const std::string detail = document_->unresolvedFieldDetail(block_index, field_name);
+            label->setToolTip(detail.empty()
+                ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
+                : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
+                      .arg(QString::fromStdString(detail)));
         }
         return label;
     };
+    if (!unresolved_fields.empty())
+    {
+        // "Плюсик" — пользователь подтверждает блок без правки всех полей
+        // (например, если нераспознанное значение и так совпадает с тем,
+        // что он хочет). Снимает блокировку кодогена и красную подсветку
+        // дерева для этого блока, см. ProjectDocument::setBlockConfirmed.
+        auto* confirm = new QCheckBox(QString::fromUtf8(
+            "Подтверждаю значения этого блока (несмотря на нераспознанные поля)"));
+        confirm->setChecked(document_->isBlockConfirmed(block_index));
+        connect(confirm, &QCheckBox::toggled, this, [this, block_index](bool checked)
+        {
+            document_->setBlockConfirmed(block_index, checked);
+            emit documentChanged();
+        });
+        form->addRow(confirm);
+    }
 
     const nlohmann::json channel_value = document_->field(block_index, "channel");
     form->addRow(fieldLabel("channel", QString::fromUtf8("Начальный канал:")), labelledIntCombo(

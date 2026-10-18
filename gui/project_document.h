@@ -27,6 +27,7 @@
 #define MIK32_CONFIGURATOR_PROJECT_DOCUMENT_H
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include "json.hpp"
@@ -146,21 +147,45 @@ public:
     // См. feedback_reverse_import_unresolved_fields_policy в памяти
     // ассистента: поля, которые reverse-import не смог разобрать, не
     // получают угаданный дефолт — вызывающий (MainWindow::onImportProject)
-    // передаёт сюда их имена по индексу блока сразу после loadFromDocument.
-    // Индексация соответствует document()["peripherals"] НА МОМЕНТ импорта
-    // — как и block_provenance в reverse_import::ImportedProject, этот
-    // список не переживает удаление/переупорядочивание блоков.
-    void setUnresolvedFields(int block_index, std::vector<std::string> field_names);
+    // передаёт сюда их имена и исходный текст (detail — что именно не
+    // разобралось, для отображения в форме) по индексу блока сразу после
+    // loadFromDocument. Индексация соответствует document()["peripherals"]
+    // НА МОМЕНТ импорта — как и block_provenance в
+    // reverse_import::ImportedProject, этот список не переживает
+    // удаление/переупорядочивание блоков.
+    struct UnresolvedField
+    {
+        std::string field_name;
+        std::string detail;   // исходный текст из .c-файла, если известен
+    };
+
+    void setUnresolvedFields(int block_index, std::vector<UnresolvedField> fields);
     void clearUnresolvedFields();
     std::vector<std::string> unresolvedFieldNames(int block_index) const;
+    std::string unresolvedFieldDetail(int block_index, const std::string& field_name) const;
     bool blockHasUnresolvedFields(int block_index) const;
     bool hasAnyUnresolvedFields() const;
+
+    // Пользователь вручную отметил, что проверил блок несмотря на
+    // оставшиеся unresolved-поля ("плюсик" в форме свойств) — снимает
+    // блокировку кодогенерации и красную подсветку для этого блока, не
+    // трогая сами значения полей. Сбрасывается автоматически, если список
+    // unresolved-полей блока меняется (новый импорт того же блока).
+    void setBlockConfirmed(int block_index, bool confirmed);
+    bool isBlockConfirmed(int block_index) const;
+
+    // true <=> блок всё ещё блокирует кодогенерацию: есть unresolved-поля
+    // И пользователь не подтвердил блок вручную. Дерево периферии и
+    // ProjectDocument::validate() должны проверять именно это, а не
+    // blockHasUnresolvedFields() напрямую.
+    bool blockBlocksGeneration(int block_index) const;
 
 private:
     nlohmann::json document_;
     std::string file_path_;
     bool modified_ = false;
-    std::map<int, std::vector<std::string>> unresolved_fields_;
+    std::map<int, std::vector<UnresolvedField>> unresolved_fields_;
+    std::set<int> confirmed_blocks_;
 };
 
 #endif //MIK32_CONFIGURATOR_PROJECT_DOCUMENT_H
