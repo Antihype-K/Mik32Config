@@ -29,6 +29,7 @@
 //    строк) текст к обеим.
 //
 #include "uart_reverse_mapper.h"
+#include "c_literal_parser.h"
 
 #include <algorithm>
 #include <cctype>
@@ -121,39 +122,12 @@ std::optional<PrefixedNumber> parsePrefixedNumber(const std::string& text)
     }
 }
 
-// Целочисленный литерал, возможно с C-суффиксом (u/U/l/L/ul/UL...) —
-// husart0.baudrate = 38400; не имеет суффикса в реальном файле, но другие
-// прошивки нередко пишут "38400u" — не хотим ложно считать это выражением.
+// Целочисленный литерал, возможно hex/binary/восьмеричный, с C-суффиксом —
+// husart0.baudrate = 38400; обычно десятичный, но общий парсер (см.
+// c_literal_parser.h) также покрывает "0x1C200u" без тихого обрезания на 'x'.
 std::optional<long long> parsePlainInteger(const std::string& text)
 {
-    std::string trimmed = trimText(text);
-    if (trimmed.empty())
-    {
-        return std::nullopt;
-    }
-    std::size_t end = trimmed.size();
-    while (end > 0 && std::isalpha(static_cast<unsigned char>(trimmed[end - 1])))
-    {
-        --end;
-    }
-    const std::string digits = trimmed.substr(0, end);
-    if (digits.empty())
-    {
-        return std::nullopt;
-    }
-    const std::size_t first_non_digit = digits.find_first_not_of("0123456789-");
-    if (first_non_digit != std::string::npos)
-    {
-        return std::nullopt;
-    }
-    try
-    {
-        return std::stoll(digits);
-    }
-    catch (const std::exception&)
-    {
-        return std::nullopt;
-    }
+    return parseCIntegerLiteral(text);
 }
 
 // "Frame_7bit"/"Frame_8bit"/"Frame_9bit" -> 7/8/9. Реализовано через regex,

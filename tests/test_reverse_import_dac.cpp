@@ -90,6 +90,29 @@ TEST(DacReverseMapper, RealExampleParsesAllFourFields)
     }
 }
 
+TEST(DacReverseMapper, HexDivLiteralIsResolved)
+{
+    const std::string file = "hex_div/src/main.c";
+    RawInitBlock block;
+    block.handle_name = "hdac1";
+    block.handle_type = "DAC_HandleTypeDef";
+    block.assignments = {
+        makeAssignment("hdac1", "Instance_dac", "HAL_DAC0", file, 10),
+        makeAssignment("hdac1", "Init.DIV", "0x1F", file, 11),
+        makeAssignment("hdac1", "Init.EXTRef", "DAC_EXTREF_OFF", file, 12),
+        makeAssignment("hdac1", "Init.EXTClb", "DAC_EXTCLB_CLBREF", file, 13),
+    };
+    block.init_function_name = "HAL_DAC_Init";
+
+    const std::optional<MappedBlock> mapped = mapDacBlock(block);
+    ASSERT_TRUE(mapped.has_value());
+    EXPECT_EQ(mapped->json_block["div"], 31);
+
+    const FieldProvenance* provenance = findProvenance(*mapped, "div");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_FALSE(provenance->unresolved);
+}
+
 TEST(DacReverseMapper, MissingFieldIsUnresolvedNotDefaulted)
 {
     const std::string file = "no_instance/src/main.c";

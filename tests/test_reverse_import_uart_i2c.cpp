@@ -404,6 +404,27 @@ const FieldProvenance* findProvenance(const MappedBlock& mapped, const std::stri
 
 // ---- UART: unresolved-политика (feedback_reverse_import_unresolved_fields_policy) ----
 
+TEST(UartReverseMapper, HexBaudRateLiteralIsResolved)
+{
+    // Given: baudrate = 0x1C200 (115200 в hex) — редкий, но валидный стиль записи.
+    RawInitBlock block = buildRealUsart0Block();
+    for (RawFieldAssignment& assignment : block.assignments)
+    {
+        if (assignment.field_path == "baudrate")
+        {
+            assignment.raw_value_text = "0x1C200";
+        }
+    }
+
+    const std::optional<MappedBlock> mapped = mapUartBlock(block);
+
+    ASSERT_TRUE(mapped.has_value());
+    EXPECT_EQ(mapped->json_block.at("baud_rate"), 115200);
+    const FieldProvenance* provenance = findProvenance(*mapped, "baud_rate");
+    ASSERT_NE(provenance, nullptr);
+    EXPECT_FALSE(provenance->unresolved);
+}
+
 TEST(UartReverseMapper, MissingBaudRateIsUnresolvedNotDefaulted)
 {
     const std::string file = "no_baud/src/main.c";

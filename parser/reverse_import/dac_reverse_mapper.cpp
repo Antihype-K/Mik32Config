@@ -5,6 +5,7 @@
 // DAC_EXTREF_OFF; .Init.EXTClb = DAC_EXTCLB_DACREF.
 //
 #include "dac_reverse_mapper.h"
+#include "c_literal_parser.h"
 
 namespace reverse_import
 {
@@ -77,17 +78,12 @@ std::optional<int> parseDacInstance(const std::string& text)
 // Целый литерал 0-255 (DIV — делитель, не enum-макрос, в отличие от ADC).
 std::optional<int> parseDiv(const std::string& text)
 {
-    const std::string trimmed = trimText(text);
-    if (trimmed.empty() || trimmed.find_first_not_of("0123456789") != std::string::npos)
+    const std::optional<long long> value = parseCIntegerLiteral(text);
+    if (!value.has_value() || *value < 0 || *value > 255)
     {
         return std::nullopt;
     }
-    const int value = std::stoi(trimmed);
-    if (value < 0 || value > 255)
-    {
-        return std::nullopt;
-    }
-    return value;
+    return static_cast<int>(*value);
 }
 
 std::optional<bool> parseExtRef(const std::string& text)
