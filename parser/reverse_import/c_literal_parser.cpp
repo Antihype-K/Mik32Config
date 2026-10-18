@@ -6,6 +6,49 @@
 namespace reverse_import
 {
 
+namespace
+{
+
+// shortcut: только один оператор без приоритета/скобок — этого достаточно
+// для реальных ARR/CMP-выражений вендорных примеров ("0xFFFF / 2",
+// "7544 >> 1"); многооператорные выражения и переменные остаются unresolved.
+std::optional<long long> tryParseBinaryExpr(const std::string& core)
+{
+    static const char* kOps[] = {">>", "<<", "/"};
+    for (const char* op : kOps)
+    {
+        const std::size_t pos = core.find(op);
+        if (pos == std::string::npos || pos == 0)
+        {
+            continue;
+        }
+        const std::string lhs_text = core.substr(0, pos);
+        const std::string rhs_text = core.substr(pos + std::string(op).size());
+        const auto lhs = parseCIntegerLiteral(lhs_text);
+        const auto rhs = parseCIntegerLiteral(rhs_text);
+        if (!lhs || !rhs)
+        {
+            continue;
+        }
+        if (std::string(op) == "/")
+        {
+            if (*rhs == 0)
+            {
+                return std::nullopt;
+            }
+            return *lhs / *rhs;
+        }
+        if (std::string(op) == ">>")
+        {
+            return *lhs >> *rhs;
+        }
+        return *lhs << *rhs;   // "<<"
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
 std::optional<long long> parseCIntegerLiteral(const std::string& text)
 {
     std::size_t begin = text.find_first_not_of(" \t\r\n");
@@ -65,13 +108,13 @@ std::optional<long long> parseCIntegerLiteral(const std::string& text)
         const long long value = std::stoll(digits, &consumed, base);
         if (consumed != digits.size())
         {
-            return std::nullopt;   // хвост -> это выражение, а не литерал
+            return tryParseBinaryExpr(core);   // хвост -> возможно "лит OP лит"
         }
         return negative ? -value : value;
     }
     catch (const std::exception&)
     {
-        return std::nullopt;
+        return tryParseBinaryExpr(core);
     }
 }
 
