@@ -91,6 +91,10 @@ std::optional<MappedBlock> mapTsensBlock(const RawInitBlock& block)
 
     MappedBlock result;
     result.json_block["type"] = "tsens";
+    // TSENS глобален (один блок на проект), но ProjectDocument::blockIndices()
+    // ищет "tsens" по instance=0 (properties_panel.cpp:3026, peripheral_tree.cpp:64) —
+    // без этого поля блок есть в peripherals[], но дерево/форма его не находят.
+    result.json_block["instance"] = 0;
 
     // ---- clock_source (из "Clock = HAL_TSENS_*;") ----
     {

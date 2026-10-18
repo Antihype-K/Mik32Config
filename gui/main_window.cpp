@@ -452,7 +452,10 @@ void MainWindow::onImportProject()
     // кодогенерацию всего проекта и подсвечиваются красным — см.
     // ProjectDocument::validate()/peripheral_tree.cpp/properties_panel.cpp.
     document_.clearUnresolvedFields();
-    for (std::size_t block_index = 0; block_index < imported.block_provenance.size(); ++block_index)
+    const std::size_t peripherals_count = imported.document["peripherals"].size();
+    for (std::size_t block_index = 0;
+         block_index < imported.block_provenance.size() && block_index < peripherals_count;
+         ++block_index)
     {
         std::vector<ProjectDocument::UnresolvedField> unresolved_names;
         for (const reverse_import::FieldProvenance& field : imported.block_provenance[block_index])

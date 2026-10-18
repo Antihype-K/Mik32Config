@@ -76,6 +76,10 @@ std::optional<MappedBlock> mapWdtBlock(const RawInitBlock& block)
 
     MappedBlock result;
     result.json_block["type"] = "wdt";
+    // WDT глобален (один блок на проект), но ProjectDocument::blockIndices()
+    // ищет "wdt" по instance=0 (properties_panel.cpp:2718, peripheral_tree.cpp:54) —
+    // без этого поля блок есть в peripherals[], но дерево/форма его не находят.
+    result.json_block["instance"] = 0;
 
     // ---- clock_source (из "Init.Clock = HAL_WDT_*;") ----
     {

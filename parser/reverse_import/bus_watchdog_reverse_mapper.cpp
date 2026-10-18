@@ -70,6 +70,9 @@ std::optional<MappedBlock> scanBusWatchdogBlockFromFileContent(
 
     MappedBlock result;
     result.json_block["type"] = "bus_watchdog";
+    // Глобальный блок (один на проект) — blockIndices() ищет "bus_watchdog" по
+    // instance=0 (properties_panel.cpp:3221), см. wdt/tsens-мапперы.
+    result.json_block["instance"] = 0;
 
     // ---- timeout ----
     {

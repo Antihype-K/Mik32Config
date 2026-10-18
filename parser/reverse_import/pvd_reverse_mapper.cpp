@@ -71,6 +71,9 @@ std::optional<MappedBlock> scanPvdBlockFromFileContent(
 
     MappedBlock result;
     result.json_block["type"] = "pvd";
+    // Глобальный блок (один на проект) — blockIndices() ищет "pvd" по
+    // instance=0 (properties_panel.cpp:3151), см. wdt/tsens-мапперы.
+    result.json_block["instance"] = 0;
 
     // ---- digital_filter_value ----
     {
