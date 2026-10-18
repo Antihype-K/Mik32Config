@@ -436,8 +436,13 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
     // "GPIO_InitTypeDef GPIO_InitStruct = {0};" (см. codegen/project/
     // gpio_contribution.cpp) — без поддержки "= ..." декларация в СВОИХ ЖЕ
     // сгенерированных проектах не находилась бы вообще.
+    // "static "/"const " перед типом — частый случай в прикладном коде
+    // (file-scope хендл, видимый только внутри .c), найдено на
+    // docs/examples/fdir_manager/src/port_mik32.c:69 ("static
+    // WDT_HandleTypeDef hwdt;") — без этого префикса хендл считался
+    // необъявленным в этом же файле, хотя физически объявлен прямо тут.
     static const std::regex kDeclaration(
-        R"(^\s*([A-Za-z_]\w*(?:HandleTypeDef|InitTypeDef))\s+([A-Za-z_]\w*)\s*(?:=\s*.*)?;\s*$)");
+        R"(^\s*(?:static\s+|const\s+)*([A-Za-z_]\w*(?:HandleTypeDef|InitTypeDef))\s+([A-Za-z_]\w*)\s*(?:=\s*.*)?;\s*$)");
 
     // "<handle>.<field.path> = <value>;" — допускает вложенность через точку
     // (Init.Mode, Clock.PRESC) и одиночный индекс массива ([0]) в field_path.
