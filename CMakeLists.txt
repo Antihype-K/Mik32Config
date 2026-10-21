@@ -42,6 +42,7 @@ set(CORE_SOURCES
         parser/pvd/pvd_parser.cpp
         parser/bus_watchdog/bus_watchdog_parser.cpp
         parser/dma/dma_parser.cpp
+        parser/spifi/spifi_parser.cpp
 
         # База знаний МИК32: аппаратные факты из даташита и errata
         knowledge_base/gpio_knowledge.cpp
@@ -81,10 +82,12 @@ set(CORE_SOURCES
         codegen/project/pvd_contribution.cpp
         codegen/project/bus_watchdog_contribution.cpp
         codegen/project/dma_contribution.cpp
+        codegen/project/spifi_contribution.cpp
         codegen/project/freertos_codegen.cpp
         codegen/project/project_codegen.cpp
         codegen/project/cmake_project_codegen.cpp
         codegen/user_code_markers.cpp
+        codegen/legacy_main_c_migrator.cpp
 
         # Rust-ветка кодогенерации — второй целевой язык
         # (docs/implementations/rust_codegen.md)
@@ -117,7 +120,9 @@ set(CORE_SOURCES
         parser/reverse_import/dac_reverse_mapper.cpp
         parser/reverse_import/crypto_reverse_mapper.cpp
         parser/reverse_import/dma_reverse_mapper.cpp
+        parser/reverse_import/uart_dma_channel_reverse_mapper.cpp
         parser/reverse_import/eeprom_reverse_mapper.cpp
+        parser/reverse_import/spifi_reverse_mapper.cpp
         parser/reverse_import/reverse_patch_writer.cpp
         parser/reverse_import/reverse_import.cpp
         parser/reverse_import/reverse_import_apply.cpp
@@ -150,6 +155,7 @@ target_include_directories(mik32-core
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/pvd
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/bus_watchdog
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/dma
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/spifi
         ${CMAKE_CURRENT_SOURCE_DIR}/parser/reverse_import
         ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/project
@@ -169,6 +175,11 @@ target_link_libraries(MIK32-Configurator PRIVATE mik32-core)
 add_executable(reverse-import-smoke tools/reverse_import_smoke_test.cpp)
 target_link_libraries(reverse-import-smoke PRIVATE mik32-core)
 
+add_executable(reverse-import-dump-json tools/reverse_import_dump_json.cpp)
+target_link_libraries(reverse-import-dump-json PRIVATE mik32-core)
+
+add_executable(forward-codegen-from-json tools/forward_codegen_from_json.cpp)
+target_link_libraries(forward-codegen-from-json PRIVATE mik32-core)
 # ==============================================================================
 # 6. ГРАФИЧЕСКИЙ ИНТЕРФЕЙС (ТЗ §3.1.9, §3.4 п.5 — Qt 6.x)
 # ==============================================================================
@@ -200,7 +211,11 @@ if(BUILD_GUI)
                         get_target_property(_qt_tool_exe Qt6::${qt_tool} IMPORTED_LOCATION)
                         if(_qt_tool_exe MATCHES "\\.exe$")
                             set(_wrapper "${CMAKE_BINARY_DIR}/qt-wine-wrappers/${qt_tool}")
-                            file(WRITE "${_wrapper}" "#!/bin/sh\nexec \"${WINE_EXECUTABLE}\" \"${_qt_tool_exe}\" \"$@\"\n")
+                            # wine резолвит абсолютные пути заголовков в своё Z:-представление
+                            # Windows-диска и подставляет "Z:/..." в генерируемый #include —
+                            # реальный (нативный Linux) mingw-компилятор такой путь не находит.
+                            # sed откатывает Z:/ обратно в /, раз Z: у wine по умолчанию = корень "/".
+                            file(WRITE "${_wrapper}" "#!/bin/sh\n\"${WINE_EXECUTABLE}\" \"${_qt_tool_exe}\" \"$@\"\noutfile=\"\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"-o\" ]; then outfile=\"$a\"; fi\n  prev=\"$a\"\ndone\nif [ -n \"$outfile\" ] && [ -f \"$outfile\" ]; then sed -i 's#Z:/#/#g' \"$outfile\"; fi\n")
                             file(CHMOD "${_wrapper}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
                             set_target_properties(Qt6::${qt_tool} PROPERTIES IMPORTED_LOCATION "${_wrapper}")
                         endif()
@@ -293,6 +308,7 @@ if(BUILD_TESTING)
             tests/test_reverse_import_dac.cpp
             tests/test_reverse_import_crypto.cpp
             tests/test_reverse_import_dma.cpp
+            tests/test_reverse_import_uart_dma.cpp
             tests/test_reverse_import_eeprom.cpp
             tests/test_reverse_import_rtc.cpp
             tests/test_reverse_import_crc.cpp
@@ -301,6 +317,7 @@ if(BUILD_TESTING)
             tests/test_reverse_import_wdt.cpp
             tests/test_reverse_import_pvd.cpp
             tests/test_reverse_import_bus_watchdog.cpp
+            tests/test_reverse_import_spifi.cpp
             tests/test_freertos.cpp
             tests/test_rust_project_codegen.cpp
     )
@@ -318,4 +335,23 @@ if(BUILD_TESTING)
     gtest_discover_tests(MIK32-Parser-Tests
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )
+endif()
+
+# ==============================================================================
+# 8. ПАКЕТ .deb (Linux) — CPack/DEB
+# ==============================================================================
+# NOT CMAKE_CROSSCOMPILING: при сборке под Windows-тулчейн (packaging/windows/)
+# CPack/DEB не имеет смысла — получился бы .deb с PE-бинарником внутри.
+if(TARGET MIK32-Configurator-GUI AND NOT CMAKE_CROSSCOMPILING)
+    install(TARGETS MIK32-Configurator-GUI RUNTIME DESTINATION bin)
+
+    set(CPACK_PACKAGE_NAME "mik32-configurator")
+    set(CPACK_PACKAGE_VERSION "1.0.0")
+    set(CPACK_PACKAGE_CONTACT "noreply@example.com")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "GUI-конфигуратор и генератор init-кода для МК МИК32")
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt6core6, libqt6gui6, libqt6widgets6")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "noreply@example.com")
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    include(CPack)
 endif()
