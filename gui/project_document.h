@@ -62,6 +62,15 @@ struct Diagnostic
     // Нужно, чтобы клик по сообщению подсвечивал не весь блок, а именно
     // проблемную строку в форме свойств.
     std::string field_name;
+
+    // Нужен PropertiesPanel::setDiagnostics, чтобы не перестраивать форму
+    // (refresh()) на каждый вызов, если список фактически не изменился —
+    // refreshEverything() вызывается на каждое изменение документа.
+    bool operator==(const Diagnostic& other) const
+    {
+        return severity == other.severity && message == other.message
+            && block_index == other.block_index && field_name == other.field_name;
+    }
 };
 
 class ProjectDocument
@@ -86,6 +95,18 @@ public:
     // остаётся неизменным» — при простом открытии на запись усечённый файл
     // уже уничтожил бы предыдущую версию.
     bool save(const std::string& path, std::string& error_out);
+
+    // Пишет копию документа с проставленным "output_path" = output_dir в
+    // "<output_dir>/project.json" — вызывается после генерации проекта
+    // (ADR 0001), чтобы конфиг жил рядом со сгенерированным кодом и его
+    // можно было открыть позже даже без знания, где исходный файл
+    // настроек. В отличие от save() не трогает filePath()/isModified() —
+    // это побочная копия, а не смена "текущего редактируемого файла".
+    bool saveColocatedConfig(const std::string& output_dir, std::string& error_out) const;
+
+    // Путь из поля верхнего уровня "output_path" (ADR 0001), либо пустая
+    // строка, если поля нет (старый файл конфига или новый проект).
+    std::string outputPath() const;
 
     const std::string& filePath() const { return file_path_; }
     bool isModified() const { return modified_; }
@@ -172,6 +193,12 @@ public:
     bool blockHasUnresolvedFields(int block_index) const;
     bool hasAnyUnresolvedFields() const;
 
+    // true <=> поле когда-то было unresolved и пользователь сам задал ему
+    // значение через setField (щёлкнул по параметру и выбрал корректное) —
+    // ошибка для этого поля уже снята, но форма помечает поле жёлтым, чтобы
+    // отличить ручной выбор от значений, которые импорт распознал сам.
+    bool wasManuallyResolved(int block_index, const std::string& field_name) const;
+
     // Пользователь вручную отметил, что проверил блок несмотря на
     // оставшиеся unresolved-поля ("плюсик" в форме свойств) — снимает
     // блокировку кодогенерации и красную подсветку для этого блока, не
@@ -192,6 +219,7 @@ private:
     bool modified_ = false;
     std::map<int, std::vector<UnresolvedField>> unresolved_fields_;
     std::set<int> confirmed_blocks_;
+    std::map<int, std::set<std::string>> manually_resolved_fields_;
 };
 
 #endif //MIK32_CONFIGURATOR_PROJECT_DOCUMENT_H

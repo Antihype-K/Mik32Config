@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <fstream>
 #include <map>
+#include <regex>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -19,9 +20,11 @@
 #include "dac_reverse_mapper.h"
 #include "crypto_reverse_mapper.h"
 #include "dma_reverse_mapper.h"
+#include "uart_dma_channel_reverse_mapper.h"
 #include "eeprom_reverse_mapper.h"
 #include "rtc_reverse_mapper.h"
 #include "crc_reverse_mapper.h"
+#include "spifi_reverse_mapper.h"
 #include "tsens_reverse_mapper.h"
 #include "otp_reverse_mapper.h"
 #include "wdt_reverse_mapper.h"
@@ -227,6 +230,92 @@ void mergeIdenticalGpioGroups(ImportedProject& result)
     result.block_provenance = rebuilt_provenance;
 }
 
+// GPIO_MUX_PORT<P>_<N>_LINE_<L> и GPIO_INT_MODE_<X> самодостаточны (та же
+// кодировка, что codegen/project/gpio_contribution.cpp пишет при генерации,
+// knowledge_base/gpio.json::irq_mux_enum — прямой словарь той же схемы) —
+// расшифровка по имени макроса, без обращения к knowledge_base.
+void attachGpioInterrupts(ImportedProject& result, const std::vector<RawGpioInterruptCall>& calls)
+{
+    static const std::regex kMux(R"(^GPIO_MUX_PORT(\d+)_(\d+)_LINE_(\d+)$)");
+    static const std::regex kMode(R"(^GPIO_INT_MODE_(LOW|HIGH|FALLING|RISING|CHANGE)$)");
+    static const std::unordered_map<std::string, std::string> kTriggerOf{
+        {"LOW", "low"}, {"HIGH", "high"}, {"FALLING", "falling"},
+        {"RISING", "rising"}, {"CHANGE", "change"}};
+
+    for (const RawGpioInterruptCall& call : calls)
+    {
+        std::smatch mux_match;
+        std::smatch mode_match;
+        if (!std::regex_match(call.mux_macro, mux_match, kMux) ||
+            !std::regex_match(call.mode_macro, mode_match, kMode))
+        {
+            result.notes.push_back(
+                "HAL_GPIO_InitInterruptLine(" + call.mux_macro + ", " + call.mode_macro +
+                ") — не распознан формат аргументов (" + call.location.fileName() + ":" +
+                std::to_string(call.location.line) + "), прерывание не перенесено в конфиг");
+            continue;
+        }
+
+        const int instance = std::stoi(mux_match[1].str());
+        const int pin = std::stoi(mux_match[2].str());
+        const int line = std::stoi(mux_match[3].str());
+        const std::string trigger = kTriggerOf.at(mode_match[1].str());
+
+        bool attached = false;
+        for (std::size_t i = 0; i < result.document["peripherals"].size(); ++i)
+        {
+            nlohmann::json& peripheral = result.document["peripherals"][i];
+            if (peripheral.value("type", std::string()) != "gpio" ||
+                peripheral.value("instance", -1) != instance)
+            {
+                continue;
+            }
+            bool pin_in_block = false;
+            for (const auto& block_pin : peripheral["pins"])
+            {
+                if (block_pin.is_number_integer() && block_pin.get<int>() == pin)
+                {
+                    pin_in_block = true;
+                    break;
+                }
+            }
+            if (!pin_in_block)
+            {
+                continue;
+            }
+
+            if (!peripheral.contains("interrupts"))
+            {
+                peripheral["interrupts"] = nlohmann::json::array();
+            }
+            peripheral["interrupts"].push_back(
+                nlohmann::json{{"pin", pin}, {"line", line}, {"trigger", trigger}});
+
+            FieldProvenance provenance;
+            provenance.json_field = "interrupts";
+            provenance.location = call.location;
+            provenance.original_full_line_text = call.full_line_text;
+            // Правка одного прерывания в составе массива построчным
+            // patch-writer'ом не реализована (тот же случай, что GPIO
+            // instance/pins выше) — показываем значение, но не редактируемым.
+            provenance.editable = false;
+            result.block_provenance[i].push_back(provenance);
+
+            attached = true;
+            break;
+        }
+
+        if (!attached)
+        {
+            result.notes.push_back(
+                "HAL_GPIO_InitInterruptLine(" + call.mux_macro + ", " + call.mode_macro +
+                ") (" + call.location.fileName() + ":" + std::to_string(call.location.line) +
+                ") ссылается на пин " + std::to_string(pin) + " порта GPIO_" + std::to_string(instance) +
+                ", не найденный ни в одном распознанном блоке GPIO — прерывание не перенесено в конфиг");
+        }
+    }
+}
+
 } // namespace
 
 ImportedProject importProjectFromDirectory(const std::string& root_dir)
@@ -253,6 +342,8 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
     // каналов ко второму проходу; для всех остальных типов периферии не
     // используется.
     std::unordered_map<std::string, std::size_t> timer32_block_index_by_handle;
+    std::unordered_map<int, std::size_t> uart_block_index_by_instance;
+    std::vector<const RawInitBlock*> uart_dma_channel_blocks;
 
     for (const RawInitBlock& block : scanned.blocks)
     {
@@ -282,6 +373,17 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
             continue;
         }
 
+        if (block.handle_type == "DMA_ChannelHandleTypeDef" &&
+            mapUartDmaChannelBlock(block).has_value())
+        {
+            // Канал ПДП, обслуживающий UART (ChannelInit.Read/WriteRequest ==
+            // DMA_CHANNEL_USART_<n>_REQUEST) — см. uart_dma_channel_reverse_mapper.h,
+            // он складывается в uart.dma[] родителя, а не в generic
+            // "dma"-периферию (там для USART нет request-а в принципе).
+            uart_dma_channel_blocks.push_back(&block);
+            continue;
+        }
+
         std::optional<MappedBlock> mapped;
 
         if (block.handle_type == "USART_HandleTypeDef")
@@ -298,7 +400,7 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         }
         else if (block.handle_type == "GPIO_InitTypeDef")
         {
-            mapped = mapGpioBlock(block);
+            mapped = mapGpioBlock(block, scanned.macro_aliases);
         }
         else if (block.handle_type == "Timer16_HandleTypeDef")
         {
@@ -335,6 +437,10 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         else if (block.handle_type == "CRC_HandleTypeDef")
         {
             mapped = mapCrcBlock(block);
+        }
+        else if (block.handle_type == "SPIFI_MemoryModeConfig_HandleTypeDef")
+        {
+            mapped = mapSpifiBlock(block);
         }
         else if (block.handle_type == "TSENS_HandleTypeDef")
         {
@@ -395,9 +501,31 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
             result.notes.push_back(note);
         }
 
+        // HAL_EPIC_MaskEdgeSet(HAL_EPIC_ADC_MASK) не привязан к хендлу ADC
+        // (регистр ядра EPIC, не периферии, см. RawEpicMaskCall) — поэтому
+        // не внутри adc_reverse_mapper, а здесь, после того как блок уже
+        // создан и известен его block_index.
+        if (block.handle_type == "ADC_HandleTypeDef")
+        {
+            const bool found = std::any_of(scanned.epic_mask_calls.begin(), scanned.epic_mask_calls.end(),
+                [](const RawEpicMaskCall& call) { return call.mask_macro == "HAL_EPIC_ADC_MASK"; });
+            if (found)
+            {
+                result.document["peripherals"][block_index]["interrupt_enabled"] = true;
+                result.notes.push_back(
+                    "Обнаружено включение прерывания ADC (HAL_EPIC_MaskEdgeSet(HAL_EPIC_ADC_MASK)) — "
+                    "interrupt_enabled восстановлен как true. Подключение обработчика к вашему "
+                    "raw_trap_handler конфигуратор не восстанавливает (это прикладной код).");
+            }
+        }
+
         if (block.handle_type == "TIMER32_HandleTypeDef")
         {
             timer32_block_index_by_handle[block.handle_name] = block_index;
+        }
+        else if (block.handle_type == "USART_HandleTypeDef")
+        {
+            uart_block_index_by_instance[mapped->json_block.value("instance", 0)] = block_index;
         }
     }
 
@@ -469,7 +597,61 @@ ImportedProject importProjectFromDirectory(const std::string& root_dir)
         }
     }
 
+    // Второй проход: присоединить UART-DMA-каналы к родительскому uart-блоку
+    // по instance (не по имени хендла — см. uart_dma_channel_reverse_mapper.h,
+    // вендорные примеры называют хендл канала произвольно).
+    for (const RawInitBlock* uart_dma_block_ptr : uart_dma_channel_blocks)
+    {
+        const RawInitBlock& uart_dma_block = *uart_dma_block_ptr;
+        const std::optional<MappedUartDmaChannel> mapped_channel =
+            mapUartDmaChannelBlock(uart_dma_block);
+
+        if (!mapped_channel.has_value())
+        {
+            result.notes.push_back(
+                "Маппер UART-DMA-канала отказался разобрать блок \"" + uart_dma_block.handle_name +
+                "\" в " + uart_dma_block.init_call_location.fileName() + ":" +
+                std::to_string(uart_dma_block.init_call_location.line) + " — пропущено.");
+            continue;
+        }
+
+        for (const std::string& note : mapped_channel->notes)
+        {
+            result.notes.push_back(note);
+        }
+
+        const auto parent_it = uart_block_index_by_instance.find(mapped_channel->target_uart_instance);
+        if (parent_it == uart_block_index_by_instance.end())
+        {
+            result.notes.push_back(
+                "UART-DMA-канал \"" + uart_dma_block.handle_name + "\" ссылается на USART" +
+                std::to_string(mapped_channel->target_uart_instance) +
+                ", который сканер не нашёл/не смог разобрать в этом же обходе — канал не "
+                "присоединён: " + uart_dma_block.init_call_location.fileName() + ":" +
+                std::to_string(uart_dma_block.init_call_location.line));
+            continue;
+        }
+
+        nlohmann::json& parent_block = result.document["peripherals"][parent_it->second];
+        if (!parent_block.contains("dma") || !parent_block["dma"].is_array())
+        {
+            parent_block["dma"] = nlohmann::json::array();
+        }
+        parent_block["dma"].push_back(mapped_channel->dma_json);
+        const std::size_t dma_position = parent_block["dma"].size() - 1;
+
+        std::vector<FieldProvenance>& parent_provenance = result.block_provenance[parent_it->second];
+        const std::string prefix = "dma[" + std::to_string(dma_position) + "].";
+        for (const FieldProvenance& dma_field_provenance : mapped_channel->provenance)
+        {
+            FieldProvenance renamed = dma_field_provenance;
+            renamed.json_field = prefix + dma_field_provenance.json_field;
+            parent_provenance.push_back(renamed);
+        }
+    }
+
     mergeIdenticalGpioGroups(result);
+    attachGpioInterrupts(result, scanned.gpio_interrupt_calls);
 
     // PVD — единственный блок без HandleTypeDef/Init-вызова (Тир 3, прямая
     // работа с регистром PVD_CONTROL->CONFIG), поэтому он не появляется в

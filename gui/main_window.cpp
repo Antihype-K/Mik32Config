@@ -1,9 +1,11 @@
 #include "main_window.h"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDialog>
+#include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
@@ -20,6 +22,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTimer>
+#include <QUrl>
 #include <QSet>
 #include <QSettings>
 #include <QSplitter>
@@ -27,6 +30,7 @@
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTextEdit>
+#include <QTabWidget>
 #include <QTextStream>
 #include <QVBoxLayout>
 
@@ -205,6 +209,8 @@ void MainWindow::buildLayout()
     connect(home_screen_, &HomeScreen::newProjectRequested, this, &MainWindow::onHomeNewProjectRequested);
     connect(home_screen_, &HomeScreen::openProjectRequested, this, &MainWindow::onHomeOpenProjectRequested);
     connect(home_screen_, &HomeScreen::recentProjectChosen, this, &MainWindow::onHomeRecentProjectChosen);
+    connect(home_screen_, &HomeScreen::recentProjectRemoveRequested, this,
+            &MainWindow::onHomeRecentProjectRemoveRequested);
     connect(new_project_screen_, &NewProjectScreen::createRequested,
             this, &MainWindow::onNewProjectCreateRequested);
     connect(clock_config_screen_, &ClockConfigScreen::documentChanged,
@@ -299,6 +305,24 @@ void MainWindow::applyViewModel()
     }
 }
 
+void MainWindow::showProjectGeneratedDialog(const QString& output_dir, const QString& main_file_name)
+{
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Information);
+    box.setWindowTitle(QString::fromUtf8("Проект сгенерирован"));
+    box.setText(QString::fromUtf8("Проект записан в:\n%1\n\nСодержимое между маркерами "
+                                  "USER CODE BEGIN/END в %2 сохранено.")
+                    .arg(output_dir, main_file_name));
+    QAbstractButton* open_button = box.addButton(
+        QString::fromUtf8("Открыть каталог"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Ok);
+    box.exec();
+    if (box.clickedButton() == open_button)
+    {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(output_dir));
+    }
+}
+
 QString MainWindow::defaultTitle(const QString& type, int instance)
 {
     // Имена совпадают с подписями листьев дерева (gui/peripheral_tree.cpp):
@@ -388,6 +412,11 @@ bool MainWindow::onOpen()
 
 bool MainWindow::openPath(const QString& path)
 {
+    if (QFileInfo(path).isDir())
+    {
+        return importFromDirectory(path);
+    }
+
     std::string error;
     if (!document_.load(path.toStdString(), error))
     {
@@ -402,6 +431,32 @@ bool MainWindow::openPath(const QString& path)
     reverse_import_active_ = false;
     properties_->showPeripheral(QString(), -1);
     refreshEverything();
+
+    // ADR 0001: "output_path" может указывать на каталог, который успели
+    // удалить/перенести (сам project.json могли скопировать отдельно от
+    // проекта) — тихо генерировать в несуществующее/чужое место нельзя.
+    const std::string output_path = document_.outputPath();
+    if (!output_path.empty() && !QFileInfo(QString::fromStdString(output_path)).isDir())
+    {
+        const QMessageBox::StandardButton answer = QMessageBox::warning(
+            this, QString::fromUtf8("Каталог проекта не найден"),
+            QString::fromUtf8(
+                "Каталог проекта, указанный в конфиге (%1), не найден — возможно, "
+                "его перенесли или удалили.\n\nВыбрать новый каталог для перегенерации? "
+                "При перегенерации весь код вне блоков USER CODE BEGIN/END в выбранном "
+                "каталоге будет перезаписан.")
+                .arg(QString::fromStdString(output_path)),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer == QMessageBox::Yes)
+        {
+            const QString new_dir = QFileDialog::getExistingDirectory(
+                this, QString::fromUtf8("Новый каталог проекта"));
+            if (!new_dir.isEmpty())
+            {
+                document_.setProjectSetting("output_path", new_dir.toStdString());
+            }
+        }
+    }
 
     // Открытие файла — из File>Open, из Home (недавние) или из аргумента
     // командной строки (gui_main.cpp) — всегда ведёт в главное окно и всегда
@@ -427,6 +482,11 @@ void MainWindow::onImportProject()
         return;
     }
 
+    importFromDirectory(dir);
+}
+
+bool MainWindow::importFromDirectory(const QString& dir)
+{
     reverse_import::ImportedProject imported = reverse_import::importProjectFromDirectory(dir.toStdString());
 
     if (imported.document["peripherals"].empty())
@@ -440,13 +500,14 @@ void MainWindow::onImportProject()
                 QString::fromStdString(imported.notes.front());
         }
         QMessageBox::warning(this, QString::fromUtf8("Периферия не найдена"), message);
-        return;
+        return false;
     }
 
     document_.loadFromDocument(imported.document);
     reverse_import_root_ = dir;
     imported_project_ = imported;
     reverse_import_active_ = true;
+    pushRecentProject(dir);
 
     // feedback_reverse_import_unresolved_fields_policy: поля, которые
     // маппер не смог разобрать (FieldProvenance::unresolved), блокируют
@@ -454,6 +515,13 @@ void MainWindow::onImportProject()
     // ProjectDocument::validate()/peripheral_tree.cpp/properties_panel.cpp.
     document_.clearUnresolvedFields();
     const std::size_t peripherals_count = imported.document["peripherals"].size();
+    // Сводка для диалога ниже: инженер должен увидеть фронт работы целиком
+    // сразу после импорта (все блоки и поля), а не натыкаться на них по
+    // одному при переключении блоков в дереве — иначе на крупном проекте
+    // (десятки блоков) неопознанные поля "всплывают" по одному, и непонятно,
+    // сколько их всего и где искать.
+    QString unresolved_summary;
+    int unresolved_block_count = 0;
     for (std::size_t block_index = 0;
          block_index < imported.block_provenance.size() && block_index < peripherals_count;
          ++block_index)
@@ -472,6 +540,25 @@ void MainWindow::onImportProject()
             }
         }
         document_.setUnresolvedFields(static_cast<int>(block_index), unresolved_names);
+
+        if (!unresolved_names.empty())
+        {
+            ++unresolved_block_count;
+            const nlohmann::json& block = imported.document["peripherals"][block_index];
+            const QString block_title = blockTitle(
+                QString::fromStdString(block.value("type", std::string())),
+                block.value("instance", -1));
+            unresolved_summary += QString::fromUtf8("• %1:\n").arg(block_title);
+            for (const ProjectDocument::UnresolvedField& field : unresolved_names)
+            {
+                unresolved_summary += QString::fromUtf8("    %1 — %2\n")
+                    .arg(QString::fromStdString(field.field_name),
+                         field.detail.empty()
+                             ? QString::fromUtf8("значение не определено")
+                             : QString::fromStdString(field.detail));
+            }
+            unresolved_summary += "\n";
+        }
     }
 
     properties_->showPeripheral(QString(), -1);
@@ -487,31 +574,62 @@ void MainWindow::onImportProject()
     // Пользователь должен видеть, что НЕ распознано, а не только то, что
     // распознано — цель фичи. Полный список может быть длинным (десятки
     // файлов), поэтому в диалог — а не в statusBar на несколько секунд.
-    if (!imported.notes.empty())
+    if (!imported.notes.empty() || !unresolved_summary.isEmpty())
     {
-        QString details;
+        // Ошибки (блокируют кодоген, см. unresolved-поля) и предупреждения
+        // (imported.notes — не блокируют) показываются раздельно, а не одним
+        // сплошным текстом — тот же принцип разделения, что и в
+        // DiagnosticsPanel.
+        QString errors_text;
+        if (!unresolved_summary.isEmpty())
+        {
+            errors_text += QString::fromUtf8(
+                "НЕОПОЗНАННЫЕ ПОЛЯ (%1 блок(ов)) — требуют ручной проверки, "
+                "блокируют кодогенерацию до исправления или подтверждения "
+                "блока (\"+\" в панели свойств):\n\n").arg(unresolved_block_count);
+            errors_text += unresolved_summary;
+        }
+        QString warnings_text;
         for (const std::string& note : imported.notes)
         {
-            details += QString::fromStdString(note) + "\n\n";
+            warnings_text += QString::fromStdString(note) + "\n\n";
         }
 
         // QMessageBox::information не прокручивается — на сотнях заметок
         // диалог растягивался за пределы экрана. QTextEdit в QDialog
         // прокручивается и нормально resize'ится.
         QDialog dialog(this);
-        dialog.setWindowTitle(QString::fromUtf8("Импорт: %1 предупреждени(е/я/й)")
-                                   .arg(imported.notes.size()));
+        dialog.setWindowTitle(unresolved_summary.isEmpty()
+            ? QString::fromUtf8("Импорт: %1 предупреждени(е/я/й)").arg(imported.notes.size())
+            : QString::fromUtf8("Импорт: %1 неопознанных блок(ов), %2 предупреждени(е/я/й)")
+                  .arg(unresolved_block_count).arg(imported.notes.size()));
         dialog.resize(700, 500);
         auto* layout = new QVBoxLayout(&dialog);
-        auto* text = new QTextEdit(&dialog);
-        text->setReadOnly(true);
-        text->setPlainText(details.trimmed());
-        layout->addWidget(text);
+
+        auto* tabs = new QTabWidget(&dialog);
+        if (!errors_text.isEmpty())
+        {
+            auto* errors_view = new QTextEdit(&dialog);
+            errors_view->setReadOnly(true);
+            errors_view->setPlainText(errors_text.trimmed());
+            tabs->addTab(errors_view, QString::fromUtf8("Ошибки (%1)").arg(unresolved_block_count));
+        }
+        if (!warnings_text.isEmpty())
+        {
+            auto* warnings_view = new QTextEdit(&dialog);
+            warnings_view->setReadOnly(true);
+            warnings_view->setPlainText(warnings_text.trimmed());
+            tabs->addTab(warnings_view, QString::fromUtf8("Предупреждения (%1)").arg(imported.notes.size()));
+        }
+        layout->addWidget(tabs);
+
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
         connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
         layout->addWidget(buttons);
         dialog.exec();
     }
+
+    return true;
 }
 
 void MainWindow::applyReverseImportChanges()
@@ -655,25 +773,64 @@ void MainWindow::onGenerate()
     // для обычных проектов (userflow.drawio, ЭТАП 4), а не молчаливый обход.
     if (reverse_import_active_)
     {
-        if (diagnostics_->errorCount() > 0)
+        // Импортированный проект — у пользователя две равноценные стратегии
+        // (как в STM32CubeMX: "keep user code" при перегенерации против
+        // ручного патча). Точечная правка не трогает код, который конфигуратор
+        // не распознал при импорте; полная перегенерация переписывает весь
+        // периферийный код по шаблону и накатывает его поверх каталога
+        // reverse_import_root_, сохраняя блоки USER CODE BEGIN/END в main.c
+        // (mergeUserCodeSections, см. project_codegen.cpp) — остальной
+        // нераспознанный ручной код вне main.c при этом будет потерян.
+        QMessageBox regenerateChoice(this);
+        regenerateChoice.setWindowTitle(QString::fromUtf8("Импортированный проект"));
+        regenerateChoice.setText(QString::fromUtf8(
+            "Как применить изменения к импортированному проекту?"));
+        regenerateChoice.setInformativeText(QString::fromUtf8(
+            "«Точечно применить правки» — меняет в исходниках только то, что вы изменили "
+            "в конфигураторе, остальной код проекта не трогается.\n\n"
+            "«Перегенерировать проект» — полностью переписывает код периферии по текущей "
+            "конфигурации (как в STM32CubeMX), сохраняя только блоки USER CODE BEGIN/END "
+            "в main.c. Весь остальной ручной код вне этих блоков будет потерян."));
+        QPushButton* patchButton = regenerateChoice.addButton(
+            QString::fromUtf8("Точечно применить правки"), QMessageBox::AcceptRole);
+        QPushButton* regenerateButton = regenerateChoice.addButton(
+            QString::fromUtf8("Перегенерировать проект"), QMessageBox::DestructiveRole);
+        regenerateChoice.addButton(QMessageBox::Cancel);
+        regenerateChoice.setDefaultButton(patchButton);
+        regenerateChoice.exec();
+
+        if (regenerateChoice.clickedButton() == regenerateButton)
         {
-            const QMessageBox::StandardButton answer = QMessageBox::warning(
-                this, QString::fromUtf8("В импортированном проекте есть ошибки"),
-                QString::fromUtf8(
-                    "Диагностика нашла %1 ошибк(у/и) — как правило, это конфликты, уже "
-                    "существующие в исходном коде самого проекта (например, один вывод "
-                    "занят сразу двумя периферийными блоками), а не что-то, что вносит "
-                    "точечное применение правки. Игнорировать и всё равно применить "
-                    "изменённые поля?")
-                    .arg(diagnostics_->errorCount()),
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-            if (answer != QMessageBox::Yes)
-            {
-                return;
-            }
+            // Падаем дальше, в обычный путь полной кодогенерации — он уже
+            // умеет мержить USER CODE секции в main.c при повторной записи
+            // (см. project_codegen.cpp: mergeUserCodeSections).
         }
-        applyReverseImportChanges();
-        return;
+        else if (regenerateChoice.clickedButton() == patchButton)
+        {
+            if (diagnostics_->errorCount() > 0)
+            {
+                const QMessageBox::StandardButton answer = QMessageBox::warning(
+                    this, QString::fromUtf8("В импортированном проекте есть ошибки"),
+                    QString::fromUtf8(
+                        "Диагностика нашла %1 ошибк(у/и) — как правило, это конфликты, уже "
+                        "существующие в исходном коде самого проекта (например, один вывод "
+                        "занят сразу двумя периферийными блоками), а не что-то, что вносит "
+                        "точечное применение правки. Игнорировать и всё равно применить "
+                        "изменённые поля?")
+                        .arg(diagnostics_->errorCount()),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                if (answer != QMessageBox::Yes)
+                {
+                    return;
+                }
+            }
+            applyReverseImportChanges();
+            return;
+        }
+        else
+        {
+            return;
+        }
     }
 
     if (diagnostics_->errorCount() > 0)
@@ -709,9 +866,13 @@ void MainWindow::onGenerate()
         return;
     }
 
+    const QString default_output_dir = reverse_import_active_ && !reverse_import_root_.isEmpty()
+        ? reverse_import_root_
+        : !document_.outputPath().empty()
+            ? QString::fromStdString(document_.outputPath())
+            : QString::fromStdString(paths_.generated_root_dir) + "/new_project";
     const QString output_dir = QFileDialog::getSaveFileName(
-        this, QString::fromUtf8("Каталог проекта прошивки"),
-        QString::fromStdString(paths_.generated_root_dir) + "/new_project",
+        this, QString::fromUtf8("Каталог проекта прошивки"), default_output_dir,
         QString(), nullptr, QFileDialog::DontConfirmOverwrite);
     if (output_dir.isEmpty())
     {
@@ -754,10 +915,11 @@ void MainWindow::onGenerate()
             return;
         }
 
-        QMessageBox::information(this, QString::fromUtf8("Проект сгенерирован"),
-            QString::fromUtf8("Проект записан в:\n%1\n\nСодержимое между маркерами "
-                              "USER CODE BEGIN/END в src/main.rs сохранено.")
-                .arg(output_dir));
+        {
+            std::string colocated_error;
+            document_.saveColocatedConfig(output_dir.toStdString(), colocated_error);
+        }
+        showProjectGeneratedDialog(output_dir, QString::fromUtf8("src/main.rs"));
         statusBar()->showMessage(QString::fromUtf8("Сгенерировано: %1").arg(output_dir), 5000);
 
         code_preview_screen_->setContentsRust(
@@ -813,12 +975,14 @@ void MainWindow::onGenerate()
         return;
     }
 
+    {
+        std::string colocated_error;
+        document_.saveColocatedConfig(output_dir.toStdString(), colocated_error);
+    }
+
     // Про USER CODE говорим явно: пользователь, правивший main.c руками,
     // должен знать, что его правки сохранены, а не затёрты (ТЗ §3.1.7.3).
-    QMessageBox::information(this, QString::fromUtf8("Проект сгенерирован"),
-        QString::fromUtf8("Проект записан в:\n%1\n\nСодержимое между маркерами "
-                          "USER CODE BEGIN/END в src/main.c сохранено.")
-            .arg(output_dir));
+    showProjectGeneratedDialog(output_dir, QString::fromUtf8("src/main.c"));
     statusBar()->showMessage(QString::fromUtf8("Сгенерировано: %1").arg(output_dir), 5000);
 
     // Вкладка «Просмотр кода» показывает то, что РЕАЛЬНО легло на диск
@@ -1056,6 +1220,7 @@ void MainWindow::refreshEverything()
     // строка, и запрет генерации смотрят на её счётчики, а не считают заново.
     const std::vector<Diagnostic> diagnostics = document_.validate(knowledge_);
     diagnostics_->setDiagnostics(diagnostics);
+    properties_->setDiagnostics(diagnostics);
 
     // 3. Схема корпуса.
     updatePackageColors();
@@ -1322,13 +1487,12 @@ void MainWindow::onPinClicked(int pin_number)
 
     // Timer32 намеренно исключён: его фиксированные выводы закреплены не за
     // instance целиком, а за парой (instance, channel_index)
-    // (Timer32Knowledge::instance_channel_fixed_pin), а канал — это часть
-    // конфигурации канала, которую ProjectDocument::defaultBlock для типа
-    // "timer32" не заполняет (в отличие от gpio/uart/timer16/i2c/spi). Кроме
-    // того, "timer32" ещё не входит в kSupportedBlocks этого файла — дерево
-    // блоков его тоже пока не показывает как включаемый. Добавление пункта
-    // меню создавало бы блок, который построением не проходит
-    // schema-валидацию без дополнительной ручной настройки в панели свойств.
+    // (Timer32Knowledge::instance_channel_fixed_pin), а не просто за
+    // instance, как у остальных четырёх типов. Добавление пункта меню
+    // "Добавить Timer32_N" по образцу остальных создавало бы блок, который
+    // не займёт кликнутый пин (канал придётся настроить в панели свойств
+    // отдельно), то есть меню будет визуально утверждать "пин занят", хотя
+    // это не так — дизайн-решение, требующее separate UX обсуждения.
 
     QMenu menu(this);
     QAction* gpio_action = menu.addAction(QString::fromUtf8("Настроить как GPIO (вход/выход)"));
@@ -1480,6 +1644,14 @@ void MainWindow::onHomeRecentProjectChosen(const QString& path)
     // При неудаче openPath уже показал причину (диалог ошибки) и не менял
     // ни документ, ни экран — остаёмся на Home.
     openPath(path);
+}
+
+void MainWindow::onHomeRecentProjectRemoveRequested(const QString& path)
+{
+    recent_projects_.removeAll(path);
+    QSettings settings;
+    settings.setValue("recentProjects", recent_projects_);
+    home_screen_->setRecentProjects(recent_projects_);
 }
 
 void MainWindow::onNewProjectCreateRequested(const NewProjectParams& params)

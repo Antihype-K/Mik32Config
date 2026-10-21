@@ -30,6 +30,7 @@
 #include "timer32_knowledge.h"
 #include "spi_knowledge.h"
 #include "rtc_knowledge.h"
+#include "dac_knowledge.h"
 #include "cross_module_validator.h"
 
 namespace
@@ -81,6 +82,12 @@ namespace
             std::cerr << "Ошибка knowledge_base/rtc.json: " << rtc.error << "\n";
             return false;
         }
+        ParseResult<DacKnowledge> dac = loadDacKnowledge("knowledge_base/dac.json");
+        if (!dac.success)
+        {
+            std::cerr << "Ошибка knowledge_base/dac.json: " << dac.error << "\n";
+            return false;
+        }
 
         knowledge.gpio = *gpio.config;
         knowledge.uart = *uart.config;
@@ -88,6 +95,7 @@ namespace
         knowledge.i2c = *i2c.config;
         knowledge.timer32 = *timer32.config;
         knowledge.spi = *spi.config;
+        knowledge.dac = *dac.config;
         knowledge.rtc = *rtc.config;
         return true;
     }

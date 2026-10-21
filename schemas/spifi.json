@@ -1,0 +1,42 @@
+{
+  "peripheral_type": "spifi",
+  "max_instances": 1,
+  "_comment_max_instances": "Приложение_А ТЗ, раздел «Контроллер внешней памяти (SPIFI)»: один физический контроллер на МК (карта регистров CTRL/CMD/ADDR/IDATA/CLIMIT/DATA/MCMD/STAT — единый блок SPIFI_CONFIG, mik32_hal_spifi.h). Нет instance, как у CRC/RTC/EEPROM.",
+  "_comment_scope": "Покрывает только режим работы с памятью (Memory Mode) через канонический HAL_SPIFI_MemoryMode_Init(SPIFI_MemoryModeConfig_HandleTypeDef*) — mik32_hal_spifi.c:19-39. Периферийный режим (HAL_SPIFI_SendCommand/_LL — произвольные команды чтения/записи/стирания флеш на произвольных адресах) не покрывается: кодогену нечем угадать последовательность команд конкретной МФП наперёд, как и DMA/CRC не угадывают пользовательские данные (см. docs/implementations/spifi.md).",
+  "required_fields": ["type", "cache_enabled", "cache_limit", "cmd_frame_form", "cmd_field_form", "cmd_op_code"],
+  "fields": {
+    "cache_enabled": {
+      "type": "boolean",
+      "_comment": "SPIFI_MemoryModeConfig_HandleTypeDef.CacheEnable -> SPIFI_CACHE_DISABLE(false)/SPIFI_CACHE_ENABLE(true), CTRL.CACHE_EN (mik32_hal_spifi.h)."
+    },
+    "cache_limit": {
+      "type": "integer",
+      "min": 0,
+      "max": 4294967295,
+      "_comment": "SPIFI_MemoryModeConfig_HandleTypeDef.CacheLimit -> регистр CLIMIT (32 бита). Верхняя граница кэшируемого адреса — ячейки с адресом больше этого значения не кэшируются (Приложение_А ТЗ, регистр CLIMIT). Типичное значение в вендорных примерах — верхняя граница адресного окна памяти SPIFI, например 0x90000000."
+    },
+    "cmd_frame_form": {
+      "type": "enum",
+      "values": ["opcode", "opcode_1addr", "opcode_2addr", "opcode_3addr", "opcode_4addr", "addr_3", "addr_4"],
+      "_comment": "SPIFI_MemoryCommandTypeDef.FrameForm -> HAL_SPIFI_FrameFormTypeDef (mik32_hal_spifi.h:63-72), пишется в MCMD.FRAMEFORM. opcode=только код операции, opcode_1..4addr=код операции+N байт адреса, addr_3/addr_4=без кода операции (N байт адреса). Регистровые значения 0 и 1 зарезервированы (Приложение_А ТЗ, таблица MCMD) и не входят в enum."
+    },
+    "cmd_field_form": {
+      "type": "enum",
+      "values": ["all_serial", "data_parallel", "opcode_serial", "all_parallel"],
+      "_comment": "SPIFI_MemoryCommandTypeDef.FieldForm -> HAL_SPIFI_FieldFormTypeDef (mik32_hal_spifi.h:55-61), пишется в MCMD.FIELDFORM. all_serial — все поля в однобитном последовательном режиме (единственный режим, подтверждённый в вендорном примере HAL_Blink_SPIFI)."
+    },
+    "cmd_op_code": {
+      "type": "integer",
+      "min": 0,
+      "max": 255,
+      "_comment": "SPIFI_MemoryCommandTypeDef.OpCode -> MCMD.OPCODE. Код команды чтения по стандарту JEDEC (0x03 — Read Data, самая распространённая команда, использована в вендорном примере HAL_Blink_SPIFI/src/main.c:36)."
+    },
+    "cmd_interim_length": {
+      "type": "integer",
+      "min": 0,
+      "max": 7,
+      "default": 0,
+      "_comment": "SPIFI_MemoryCommandTypeDef.InterimLength -> MCMD.INTLEN. Число байт промежуточных данных (например, холостые байты между адресом и данными для команд quad-чтения) — 0, если команда их не использует (как в однобитном Read Data)."
+    }
+  }
+}

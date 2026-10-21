@@ -1,10 +1,13 @@
 #include "home_screen.h"
 
+#include <QAction>
 #include <QFileInfo>
 #include <QFont>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -37,8 +40,24 @@ HomeScreen::HomeScreen(QWidget* parent)
 
     recent_list_ = new QListWidget();
     recent_list_->setAlternatingRowColors(true);
+    recent_list_->setContextMenuPolicy(Qt::CustomContextMenu);
+    recent_list_->installEventFilter(this);
     connect(recent_list_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) {
         emit recentProjectChosen(item->data(Qt::UserRole).toString());
+    });
+    connect(recent_list_, &QListWidget::customContextMenuRequested, this,
+            [this](const QPoint& pos) {
+        QListWidgetItem* item = recent_list_->itemAt(pos);
+        if (!item)
+        {
+            return;
+        }
+        QMenu menu(recent_list_);
+        QAction* remove_action = menu.addAction(QString::fromUtf8("Убрать из списка"));
+        connect(remove_action, &QAction::triggered, this, [this, item]() {
+            emit recentProjectRemoveRequested(item->data(Qt::UserRole).toString());
+        });
+        menu.exec(recent_list_->mapToGlobal(pos));
     });
     root->addWidget(recent_list_, 1);
 
@@ -49,6 +68,24 @@ HomeScreen::HomeScreen(QWidget* parent)
         "Документация: «МИК32 конфигуратор - Архитектура.md» в корне репозитория."));
     docs_note->setStyleSheet("color: gray;");
     root->addWidget(docs_note);
+}
+
+bool HomeScreen::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == recent_list_ && event->type() == QEvent::KeyPress)
+    {
+        auto* key_event = static_cast<QKeyEvent*>(event);
+        if (key_event->key() == Qt::Key_Delete)
+        {
+            QListWidgetItem* item = recent_list_->currentItem();
+            if (item)
+            {
+                emit recentProjectRemoveRequested(item->data(Qt::UserRole).toString());
+            }
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void HomeScreen::setRecentProjects(const QStringList& paths)

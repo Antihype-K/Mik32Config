@@ -745,6 +745,21 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
             }
             project.dma_blocks.push_back(*block_result.config);
         }
+        else if (type == "spifi")
+        {
+            if (project.spifi_block.has_value())
+            {
+                return makeError(blockPrefix(block_index, type)
+                    + "в проекте уже есть блок spifi — контроллер внешней памяти в МИК32 один физический блок, "
+                      "второй блок type=\"spifi\" не имеет смысла");
+            }
+            ParseResult<SpifiConfig> block_result = parseSpifiBlock(block);
+            if (!block_result.success)
+            {
+                return makeError(blockPrefix(block_index, type) + block_result.error);
+            }
+            project.spifi_block = *block_result.config;
+        }
         else
         {
             // Тихо пропускать нельзя: пользователь получил бы прошивку без
@@ -753,7 +768,7 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
             // этой веткой, пока модуль не реализован.
             return makeError("Блок #" + std::to_string(block_index + 1)
                 + ": тип периферии \"" + type + "\" пока не поддерживается "
-                  "(реализованы: gpio, uart, timer16, i2c, timer32, spi, rtc, crc, eeprom, wdt, dac, adc, crypto, otp, tsens, pvd, bus_watchdog, dma)");
+                  "(реализованы: gpio, uart, timer16, i2c, timer32, spi, rtc, crc, eeprom, wdt, dac, adc, crypto, otp, tsens, pvd, bus_watchdog, dma, spifi)");
         }
     }
 
@@ -768,7 +783,7 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
         && !project.adc_block.has_value() && !project.crypto_block.has_value()
         && !project.otp_block.has_value() && !project.tsens_block.has_value()
         && !project.pvd_block.has_value() && !project.bus_watchdog_block.has_value()
-        && project.dma_blocks.empty())
+        && project.dma_blocks.empty() && !project.spifi_block.has_value())
     {
         return makeError("Массив \"peripherals\" пуст — нечего генерировать");
     }

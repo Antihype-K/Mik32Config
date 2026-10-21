@@ -37,6 +37,8 @@
 
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace reverse_import
@@ -109,6 +111,17 @@ struct RawInitBlock
     // конкретных имён функций, которые они явно понимают.
     std::vector<RawTrailingCall> trailing_calls;
 
+    // Имя функции-обёртки, внутри которой найден init_call_location (пусто —
+    // блок лежит прямо в main() или на верхнем уровне файла). Используется
+    // только для фильтра недостижимого кода: если эта функция нигде в
+    // просканированном дереве не вызвана ни одной другой функцией, блок
+    // считается мёртвым кодом и не участвует в итоговой конфигурации (см.
+    // scanDirectoryForHalHandles, фильтр отбрасывает такие блоки в
+    // unsupported_notes). main() и *_IRQHandler* всегда считаются
+    // достижимыми — у main вызывающего нет по определению, у обработчика
+    // прерывания вызов идёт из железа, а не из текста исходника.
+    std::string containing_function_name;
+
     // Узкий паттерн: для DMA_ChannelHandleTypeDef, если trailing_calls
     // содержит "HAL_DMA_Start(&<handle>, src, dst, sizeof(<array>) [+-N]);"
     // и <array> — массив, объявленный ОДНОЙ строкой в этом же файле
@@ -121,14 +134,72 @@ struct RawInitBlock
     std::string resolved_buffer_size_bytes_source_text;
 };
 
+// HAL_GPIO_InitInterruptLine(GPIO_MUX_PORT<P>_<N>_LINE_<L>, GPIO_INT_MODE_<X>)
+// не принимает хендл вообще (GPIO не имеет хендла, см. gpio_contribution.cpp)
+// — единственный вызов, не привязанный ни к какому RawInitBlock, поэтому
+// собирается отдельным плоским списком, а не trailing_calls. Расшифровка
+// mux_macro в (port, pin, line) и mode_macro в trigger — на стороне
+// gpio_reverse_mapper, сканер только честно записывает, что вызвано.
+struct RawGpioInterruptCall
+{
+    std::string mux_macro;   // "GPIO_MUX_PORT2_6_LINE_2" как написано в коде
+    std::string mode_macro;  // "GPIO_INT_MODE_RISING" как написано в коде
+    SourceLocation location;
+    std::string full_line_text;
+};
+
+// HAL_EPIC_MaskEdgeSet(HAL_EPIC_ADC_MASK) / HAL_EPIC_MaskLevelSet(...) —
+// включение линии EPIC для конкретной периферии. Как и GPIO-прерывание выше,
+// не привязано ни к какому хендлу (это регистр ядра EPIC, не периферии),
+// поэтому отдельный плоский список. Только однооперандный вызов с ОДНИМ
+// макросом вида "HAL_EPIC_<ИМЯ>_MASK" — комбинированная маска через "|"
+// (несколько периферий одним вызовом) не разбирается, такой вызов уходит в
+// ScannedProject::unsupported_notes вместо молчания.
+struct RawEpicMaskCall
+{
+    std::string function_name;  // "HAL_EPIC_MaskEdgeSet" / "HAL_EPIC_MaskLevelSet"
+    std::string mask_macro;     // "HAL_EPIC_ADC_MASK" как написано в коде
+    SourceLocation location;
+    std::string full_line_text;
+};
+
 struct ScannedProject
 {
     std::vector<RawInitBlock> blocks;          // по всем файлам, в порядке обхода + порядка в файле
+    std::vector<RawGpioInterruptCall> gpio_interrupt_calls;
+    std::vector<RawEpicMaskCall> epic_mask_calls;
     std::vector<std::string> files_scanned;
     // Человекочитаемые причины, почему что-то НЕ попало в blocks — сканер
     // обязан объяснять пропуски, а не тихо терять периферию (сама суть
     // фичи — "вычленять ВСЮ периферию").
     std::vector<std::string> unsupported_notes;
+
+    // Проектные object-like макросы вида "#define NAME IDENT" (RHS — голый
+    // идентификатор, не число) — например "#define STATUS_LED_PORT GPIO_2"
+    // в docs/examples/mik32-examples/HAL_EEPROM/src/main.c. Мапперы читают
+    // это как подсказку при резолве значений (GPIO instance/pins), но текст
+    // в RawFieldAssignment/init_call_args остаётся КАК В ИСХОДНИКЕ — иначе
+    // якорь для reverse_patch_writer перестанет совпадать со строкой файла.
+    std::unordered_map<std::string, std::string> macro_aliases;
+
+    // Имена всех идентификаторов, встреченных в позиции РЕАЛЬНОГО (не
+    // закомментированного) вызова функции (`ident(...)`) ВНУТРИ тела
+    // какой-либо функции — накапливается по всему дереву. НЕ используется
+    // как позитивное условие "функция вызвана где-то" (большинство
+    // reverse-import фикстур/реальных частичных деревьев определяют
+    // *_Init()-обёртки без видимого вызова в просканированном подмножестве
+    // файлов — это нормально, не признак мёртвого кода). Используется только
+    // как перевес против commented_out_call_names ниже: если у функции есть
+    // И закомментированный, И настоящий вызов — она реальная, не мёртвая.
+    std::unordered_set<std::string> called_function_names;
+
+    // Имена функций, встреченные в позиции вызова ВНУТРИ "//"-комментария
+    // (`// ident(...)`) — конкретный сигнал "этот вызов когда-то был, но
+    // его закомментировали" (см. docs/examples/mik32/controlFirmware/src/
+    // utils.cpp:24, "//i2c_bus_recovery(i2c, 32000000, 100000);"). Вместе с
+    // called_function_names определяет фильтр недостижимого кода в
+    // scanDirectoryForHalHandles.
+    std::unordered_set<std::string> commented_out_call_names;
 };
 
 // Рекурсивно обходит root_dir, читает *.c/*.cpp/*.h/*.hpp, ищет объявления

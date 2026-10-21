@@ -806,6 +806,15 @@ CodegenWriteResult writeGeneratedCmakeProject(
     // без него сборка компилируется, но не линкуется (нет точки входа) —
     // при интеграции параллельных сессий это было замечено как открытый
     // пробел (docs/implementations/cmake_toolchain.md) и теперь закрыто.
+    //
+    // crt0.S обрабатывается ОТДЕЛЬНО (ниже, через CRT0_RULE) и не попадает в
+    // этот список: sections.lds матчит стартап-код по буквальному имени
+    // объектного файла "*crt0.o" — обычное target_sources() назвало бы
+    // объект "crt0.S.o"/"crt0.S.obj", wildcard не совпал бы, entry point
+    // уехал бы в середину .text вместо 0x80000000 (найдено реальной
+    // прошивкой на плате 2026-10-20: cmake --build линкуется чисто, но
+    // firmware не стартует — UART молчит).
+    fs::path crt0_relative;
     for (const char* extension : {".c", ".S"})
     {
         for (const fs::path& src_file : collectFilesByExtension(sdk_dest, extension, fs_error))
@@ -815,9 +824,19 @@ CodegenWriteResult writeGeneratedCmakeProject(
             {
                 return fail("Не удалось построить относительный путь для " + src_file.u8string() + ": " + fs_error.message());
             }
+            if (src_file.filename() == "crt0.S")
+            {
+                crt0_relative = relative;
+                continue;
+            }
             source_lines.push_back(relative.generic_string());
         }
     }
+    if (crt0_relative.empty())
+    {
+        return fail("crt0.S не найден в скопированном HAL-дереве (" + sdk_dest.u8string() + ") — стартап-ассемблер обязателен для линковки");
+    }
+    source_lines.push_back("${CMAKE_BINARY_DIR}/crt0.o");
 
     std::vector<std::string> include_lines = {"src"};
     for (const fs::path& include_dir : collectHalIncludeDirs(sdk_dest / "hal", fs_error))
@@ -847,6 +866,26 @@ CodegenWriteResult writeGeneratedCmakeProject(
     if (!insertAfterMarkerLine(cmakelists_content, "# MIK32_CONFIGURATOR: INCLUDE_DIRS", include_lines))
     {
         return fail("Маркер \"# MIK32_CONFIGURATOR: INCLUDE_DIRS\" не найден в шаблоне " + cmakelists_path.u8string());
+    }
+
+    // crt0.o должен называться буквально так (не "crt0.S.o"/"crt0.S.obj",
+    // как назвал бы его обычный target_sources()) — см. комментарий у
+    // crt0_relative выше. Флаги -march/-mabi — те же литералы, что и в
+    // target_compile_options выше в шаблоне (архитектура MIK32 фиксирована,
+    // не конфигурируется пользователем).
+    const std::vector<std::string> crt0_rule_lines = {
+        "add_custom_command(",
+        "    OUTPUT ${CMAKE_BINARY_DIR}/crt0.o",
+        "    COMMAND ${CMAKE_ASM_COMPILER} -march=rv32im_zicsr_zifencei -mabi=ilp32 -c "
+            + crt0_relative.generic_string() + " -o ${CMAKE_BINARY_DIR}/crt0.o",
+        "    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}",
+        "    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/" + crt0_relative.generic_string(),
+        "    COMMENT \"Компиляция crt0.S в crt0.o (имя важно для sections.lds)\"",
+        ")",
+    };
+    if (!insertAfterMarkerLine(cmakelists_content, "# MIK32_CONFIGURATOR: CRT0_RULE", crt0_rule_lines))
+    {
+        return fail("Маркер \"# MIK32_CONFIGURATOR: CRT0_RULE\" не найден в шаблоне " + cmakelists_path.u8string());
     }
 
     if (!config.compiler_path.empty())
@@ -891,7 +930,14 @@ CodegenWriteResult writeGeneratedCmakeProject(
         const FileReadOutcome existing = readUtf8PathFile(existing_main_c_path.u8string());
         if (existing.success)
         {
-            main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content);
+            try
+            {
+                main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content);
+            }
+            catch (const std::exception& merge_error)
+            {
+                return fail(std::string("src/main.c: ") + merge_error.what());
+            }
         }
     }
     const FileWriteOutcome main_c_write = writeUtf8PathFile((tmp_src / "main.c").u8string(), main_c_to_write);

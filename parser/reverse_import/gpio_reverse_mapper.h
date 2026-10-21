@@ -14,6 +14,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 #include "json.hpp"
 #include "mapped_block.h"
@@ -28,7 +29,16 @@ namespace reverse_import
 // нераспознанные значения полей, возвращает MappedBlock с notes,
 // объясняющими примененные заглушки (цель фичи — вычленять ВСЮ периферию
 // честно, а не тихо пропускать то, что не удалось разобрать до конца).
-std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block);
+//
+// macro_aliases — project-wide словарь "#define NAME IDENT" (ScannedProject::
+// macro_aliases), используется ТОЛЬКО как подсказка при разборе instance/
+// pins, если буквальный текст не распознан напрямую (пример: "#define
+// STATUS_LED_PORT GPIO_2" в HAL_EEPROM). original_raw_value_text/
+// original_full_line_text в provenance остаются как в исходнике — иначе
+// reverse_patch_writer потеряет якорь для правки.
+std::optional<MappedBlock> mapGpioBlock(
+    const RawInitBlock& block,
+    const std::unordered_map<std::string, std::string>& macro_aliases = {});
 
 // Строит новый C-литерал для правой части присваивания поля json_field
 // == field_name ("pins", "mode", "pull", "drive_strength"; "instance"

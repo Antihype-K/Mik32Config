@@ -42,6 +42,50 @@ std::vector<int> extractPinNumbers(const std::string& raw_value_text)
     return pins;
 }
 
+// Подставляет известные alias-макросы ("#define STATUS_LED_PIN GPIO_PIN_7")
+// по целым идентификаторам-токенам в тексте — только для РАЗБОРА значения,
+// исходный raw_value_text в provenance не трогаем (см. gpio_reverse_mapper.h).
+// До 4 проходов — на случай цепочки из пары define, этого достаточно для
+// всех реальных примеров (без зацикливания на случайном самоссылающемся
+// макросе since word-boundary не даст подставить то же имя в саму себя).
+const std::regex kIdentifierToken(R"([A-Za-z_]\w*)");
+
+std::string resolveAliases(const std::string& text, const std::unordered_map<std::string, std::string>& aliases)
+{
+    std::string resolved = text;
+    for (int pass = 0; pass < 4 && !aliases.empty(); ++pass)
+    {
+        bool changed = false;
+        std::string next;
+        std::sregex_iterator it(resolved.begin(), resolved.end(), kIdentifierToken);
+        std::sregex_iterator end;
+        std::size_t last = 0;
+        for (; it != end; ++it)
+        {
+            next.append(resolved, last, it->position() - last);
+            const std::string token = it->str();
+            const auto alias_it = aliases.find(token);
+            if (alias_it != aliases.end())
+            {
+                next += alias_it->second;
+                changed = true;
+            }
+            else
+            {
+                next += token;
+            }
+            last = it->position() + it->length();
+        }
+        next.append(resolved, last, std::string::npos);
+        resolved = next;
+        if (!changed)
+        {
+            break;
+        }
+    }
+    return resolved;
+}
+
 // instance берётся из аргумента вызова HAL_GPIO_Init ("GPIO_0"/"GPIO_1"/
 // "GPIO_2" — см. templates/mik32_sdk_snapshot/shared/include/mik32_memory_map.h:93-95),
 // а не из полей структуры — в GPIO_InitTypeDef физически нет поля "порт".
@@ -130,7 +174,9 @@ FieldProvenance synthesizedProvenance(const std::string& json_field)
 
 } // namespace
 
-std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
+std::optional<MappedBlock> mapGpioBlock(
+    const RawInitBlock& block,
+    const std::unordered_map<std::string, std::string>& macro_aliases)
 {
     if (block.handle_type != "GPIO_InitTypeDef")
     {
@@ -142,15 +188,31 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
 
     // --- instance: из первого аргумента HAL_GPIO_Init, не из полей ---
     {
-        std::smatch match;
+        // resolved_arg_text ОБЪЯВЛЕНА В ЭТОЙ ЖЕ, внешней области видимости
+        // (а не внутри if ниже) — std::smatch хранит ИТЕРАТОРЫ в subject-
+        // строку, не копию текста; если строка выходит из scope раньше,
+        // чем читается match[1], это dangling-iterator UB (ровно так и
+        // был пойман реальный краш: std::stoi бросал invalid_argument на
+        // "нечисловом" match[1], который на самом деле читал память уже
+        // уничтоженной resolved_arg_text).
         bool recognized = false;
         std::string arg_text;
+        std::string resolved_arg_text;
+        std::smatch match;
         if (!block.init_call_args.empty())
         {
             arg_text = trim(block.init_call_args[0]);
             if (std::regex_match(arg_text, match, kGpioPortArg))
             {
                 recognized = true;
+            }
+            else
+            {
+                resolved_arg_text = resolveAliases(arg_text, macro_aliases);
+                if (std::regex_match(resolved_arg_text, match, kGpioPortArg))
+                {
+                    recognized = true;
+                }
             }
         }
 
@@ -192,6 +254,12 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
         {
             has_pin = true;
             std::vector<int> pins = extractPinNumbers(assignment.raw_value_text);
+            bool via_alias = false;
+            if (pins.empty())
+            {
+                pins = extractPinNumbers(resolveAliases(assignment.raw_value_text, macro_aliases));
+                via_alias = !pins.empty();
+            }
 
             FieldProvenance provenance;
             provenance.json_field = "pins";
@@ -204,7 +272,11 @@ std::optional<MappedBlock> mapGpioBlock(const RawInitBlock& block)
                 std::sort(pins.begin(), pins.end());
                 pins.erase(std::unique(pins.begin(), pins.end()), pins.end());
                 mapped.json_block["pins"] = pins;
-                provenance.editable = true;
+                // Значение из #define-алиаса, не из литерала в строке — писать
+                // туда новое значение построчной правкой нельзя: подменит
+                // использование макроса (который может использоваться и в
+                // другом месте файла) на голый литерал без спроса.
+                provenance.editable = !via_alias;
             }
             else
             {

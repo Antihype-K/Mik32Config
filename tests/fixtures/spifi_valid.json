@@ -1,0 +1,15 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "spifi",
+      "cache_enabled": true,
+      "cache_limit": 2415919103,
+      "cmd_frame_form": "opcode_3addr",
+      "cmd_field_form": "all_serial",
+      "cmd_op_code": 3,
+      "cmd_interim_length": 0
+    }
+  ]
+}

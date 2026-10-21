@@ -569,11 +569,32 @@ std::map<std::string, std::vector<std::string>> collectHandleDeclarationsByType(
     return result;
 }
 
+// Номер инстанса в конце имени хендла (hi2c_0 -> 0, htimer32_1_ch0 -> 0,
+// hwdt -> нет). Пустая строка — суффикса нет, нельзя использовать для
+// однозначного сопоставления.
+std::string trailingInstanceNumber(const std::string& name)
+{
+    size_t end = name.size();
+    while (end > 0 && std::isdigit(static_cast<unsigned char>(name[end - 1])))
+    {
+        --end;
+    }
+    return name.substr(end);
+}
+
 // Переименовывает в old_text все вендорские имена хендлов на имена,
 // которыми их назвал генератор в newly_generated_init_c — только там, где
-// количество деклараций данного типа совпадает 1:1 с обеих сторон (иначе
-// угадывание порядка было бы ненадёжным, см. правило "не угадывать", —
-// оставляем как есть, не хуже статус-кво).
+// количество деклараций данного типа совпадает 1:1 с обеих сторон.
+//
+// При count==1 сопоставление однозначно независимо от порядка объявления.
+// При count>1 порядок объявления у вендора — произвольный (не гарантированно
+// совпадает с порядком генератора), поэтому парный по индексу i вендор[i]
+// <-> генератор[i] был риском неверной пары (см. CLAUDE.md «незакрытые
+// баги»). Вместо угадывания по порядку — сопоставление по номеру инстанса,
+// вынесенному в хвост имени обеими сторонами; если у какого-то имени с
+// любой стороны нет числового суффикса или номера не образуют биекцию —
+// тип вообще не переименовывается (не угадываем, см. правило "не угадывать
+// полярность бита" — тот же принцип применён к сопоставлению имён).
 std::string renameVendorHandlesToGeneratorNames(
     const std::string& old_text, const std::string& newly_generated_init_c)
 {
@@ -591,11 +612,56 @@ std::string renameVendorHandlesToGeneratorNames(
         {
             continue;
         }
-        for (size_t i = 0; i < generator_names.size(); ++i)
+        const std::vector<std::string>& vendor_names = vendor_it->second;
+
+        if (generator_names.size() == 1)
         {
-            if (vendor_it->second[i] != generator_names[i])
+            if (vendor_names[0] != generator_names[0])
             {
-                renamed = renameIdentifier(renamed, vendor_it->second[i], generator_names[i]);
+                renamed = renameIdentifier(renamed, vendor_names[0], generator_names[0]);
+            }
+            continue;
+        }
+
+        std::map<std::string, std::string> generator_by_number;
+        bool numbers_usable = true;
+        for (const std::string& name : generator_names)
+        {
+            const std::string number = trailingInstanceNumber(name);
+            if (number.empty() || !generator_by_number.emplace(number, name).second)
+            {
+                numbers_usable = false;
+                break;
+            }
+        }
+        if (!numbers_usable)
+        {
+            continue;
+        }
+
+        std::vector<std::pair<std::string, std::string>> pairs;
+        for (const std::string& vendor_name : vendor_names)
+        {
+            const std::string number = trailingInstanceNumber(vendor_name);
+            const auto generator_match = generator_by_number.find(number);
+            if (number.empty() || generator_match == generator_by_number.end())
+            {
+                numbers_usable = false;
+                break;
+            }
+            pairs.emplace_back(vendor_name, generator_match->second);
+            generator_by_number.erase(generator_match);
+        }
+        if (!numbers_usable || !generator_by_number.empty())
+        {
+            continue;
+        }
+
+        for (const auto& [vendor_name, generator_name] : pairs)
+        {
+            if (vendor_name != generator_name)
+            {
+                renamed = renameIdentifier(renamed, vendor_name, generator_name);
             }
         }
     }
@@ -729,6 +795,7 @@ std::map<std::string, std::string> extractLegacyMainCSections(
     // всё это сваливалось в один Includes-бакет вперемешку с #include.
     std::string header_extra;
     std::string pv_extra;
+    std::string pd_extra;
     std::string zero_functions;
 
     // Прототипы legacy-функций (определение которых окажется в "4",
@@ -773,19 +840,16 @@ std::map<std::string, std::string> extractLegacyMainCSections(
             }
             {
                 // "#define BUFFER_LENGTH 50" и подобные директивы (кроме
-                // #include, те уже отфильтрованы выше) — если положить их в
-                // PFP/Header (как раньше, по умолчанию "else" ниже), они
-                // физически оказываются ПОСЛЕ PV в шаблоне main.c, а PV уже
-                // может использовать этот макрос (видно на HAL_USART_IRQ:
-                // "static char buf[BUFFER_LENGTH];" в PV требует макрос,
-                // объявленный только ниже, в PFP — use-before-define). Includes
-                // — первая секция, физически предшествующая PV, поэтому
-                // директивы без имени (is_function уже обработан выше, значит
-                // это не #if-блок) кладутся туда.
+                // #include, те уже отфильтрованы выше) — по CubeMX-смыслу это
+                // PD (Private Define), не Includes (та только для #include).
+                // Порядок секций в шаблоне main.c: Header -> Includes -> PTD
+                // -> PD -> PM -> PV -> PFP -> "0" — PD физически ПЕРЕД PV,
+                // как и Includes, поэтому "static char buf[BUFFER_LENGTH];" в
+                // PV по-прежнему видит макрос без use-before-define.
                 const std::string code_part = unit.text.substr(leadingComment(unit.text).size());
                 if (unit.name.empty() && !trimmed(code_part).empty() && trimmed(code_part)[0] == '#')
                 {
-                    includes_extra += unit.text + "\n";
+                    pd_extra += unit.text + "\n";
                     continue;
                 }
             }
@@ -853,6 +917,7 @@ std::map<std::string, std::string> extractLegacyMainCSections(
     }
     sections["Header"] = "\n" + trimBlankLines(header_extra) + "\n";
     sections["Includes"] = "\n" + trimBlankLines(includes_extra) + "\n";
+    sections["PD"] = "\n" + trimBlankLines(pd_extra) + "\n";
     sections["PV"] = "\n" + trimBlankLines(pv_extra) + "\n";
     sections["0"] = "\n" + trimBlankLines(zero_functions) + "\n";
 

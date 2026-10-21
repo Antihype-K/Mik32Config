@@ -17,6 +17,11 @@
     "ext_clb": {
       "type": "boolean",
       "_comment": "ADC_InitTypeDef.EXTClb -> ADC_EXTCLB_CLBREF(false)/ADC_EXTCLB_ADCREF(true, внешний вывод ADC_REF=GPIO_1/PIN_11 для V2). Вывод занимается только при ext_ref=true И ext_clb=true одновременно (mik32_hal_adc.c, HAL_ADC_MspInit)."
+    },
+    "interrupt_enabled": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "Необязательное. Как в GPIO/SPI/TSENS/Timer32: EPIC-маскирование (HAL_EPIC_MaskEdgeSet(HAL_EPIC_ADC_MASK)) и HAL_IRQ_EnableInterrupts() остаются на стороне пользователя — конфигуратор только генерирует шаблон обработчика (ADC_IRQHandler_Template) и напоминание, по паттерну RTC."
     }
   }
 }

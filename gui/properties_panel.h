@@ -20,6 +20,7 @@
 
 #include <QWidget>
 #include <QString>
+#include <QStringList>
 #include "project_document.h"
 #include "project_codegen.h"
 
@@ -43,6 +44,15 @@ public:
     // fieldLabel() в .cpp) — нужно DiagnosticsPanel::jumpToBlock, чтобы
     // прокрутить/подсветить именно проблемную строку, а не весь блок.
     QWidget* findFieldWidget(const QString& field_name) const;
+
+    // Текущий список диагностик (MainWindow::refreshEverything, после
+    // document_->validate()). Красит метку поля с Diagnostic::field_name
+    // (не весь блок) постоянно, пока ошибка не исправлена — в отличие от
+    // временной жёлтой подсветки по клику в DiagnosticsPanel (см.
+    // MainWindow::onJumpToBlock). Не перестраивает форму (applyFieldErrorStyles
+    // только меняет стиль уже существующих виджетов) — полный refresh() на
+    // каждое изменение документа сбивал бы фокус/курсор прямо во время набора.
+    void setDiagnostics(const std::vector<Diagnostic>& diagnostics);
 
 signals:
     // Изменилось содержимое документа: окно обязано перевалидировать
@@ -93,10 +103,22 @@ private:
 
     void clearForm();
 
+    // Текст ошибки для данного block_index+field_name из diagnostics_, или
+    // пустая строка, если для этого поля ошибок нет (DiagnosticSeverity::Error
+    // только — Warning/Info не блокируют и не красят поле).
+    std::string fieldErrorMessage(int block_index, const std::string& field_name) const;
+
+    // Красит/перекрашивает виджеты-метки изменившихся полей БЕЗ refresh() —
+    // полная пересборка формы на каждое изменение документа сбивала бы фокус
+    // и позицию курсора прямо во время набора значения (см. setDiagnostics).
+    void applyFieldErrorStyles();
+
     ProjectDocument* document_ = nullptr;
     const ProjectKnowledge* knowledge_ = nullptr;
     QString type_;
     int instance_ = -1;
+    std::vector<Diagnostic> diagnostics_;
+    QStringList error_styled_fields_;
 
     // Индекс редактируемого блока среди блоков этого type+instance.
     // Значим только для gpio: у остальных типов блок всегда один.

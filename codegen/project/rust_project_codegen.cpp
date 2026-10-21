@@ -411,6 +411,16 @@ namespace
     // (rust_hal_source_mode), см. templates/mik32_rust_hal_snapshot/VERSION.md,
     // раздел «Назначение»: mik32v2-hal копируется из снэпшота ВСЕГДА (нет
     // публичного репозитория), pac/rt зависят от режима.
+    //
+    // mik32-rt = { ..., features = ["memory-spifi"] } обязателен во всех
+    // режимах: vendor/rt/build.rs без этого фича-флага подставляет
+    // memory_default.x (FLASH_TEXT = 0x01000000, 8K — тестовая заглушка
+    // апстрима), а не memory_spifi.x (FLASH_TEXT = 0x80000000 — реальная
+    // область загрузки МИК32, та же, куда прошивает elbear_uploader.py и
+    // куда линкуется CMake/PlatformIO-прошивка). Без фичи линковка проходит
+    // чисто, но МК не стартует — entry point уезжает в недостижимый
+    // 0x01000000 (найдено реальной прошивкой на плате 2026-10-20: UART
+    // молчит при чистой сборке `cargo build --release`).
     std::vector<std::string> buildDependencyLines(const ProjectConfig& config)
     {
         std::vector<std::string> lines;
@@ -421,18 +431,18 @@ namespace
                 // (mik32v2-pac-main/Cargo.toml: repository на crates.io;
                 // mik32-hal-main/Cargo.toml: mik32-rt через этот же git URL).
                 lines.push_back("mik32v2-pac = \"0.0.1\"");
-                lines.push_back("mik32-rt = { git = \"https://github.com/mik32-rs/mik32-rt.git\" }");
+                lines.push_back("mik32-rt = { git = \"https://github.com/mik32-rs/mik32-rt.git\", features = [\"memory-spifi\"] }");
                 lines.push_back("mik32v2-hal = { path = \"vendor/hal\" }");
                 break;
             case HalSourceMode::LocalPath:
                 lines.push_back("mik32v2-pac = { path = \"" + config.rust_hal_source_local_path + "/pac\" }");
-                lines.push_back("mik32-rt = { path = \"" + config.rust_hal_source_local_path + "/rt\" }");
+                lines.push_back("mik32-rt = { path = \"" + config.rust_hal_source_local_path + "/rt\", features = [\"memory-spifi\"] }");
                 lines.push_back("mik32v2-hal = { path = \"" + config.rust_hal_source_local_path + "/hal\" }");
                 break;
             case HalSourceMode::Bundled:
             default:
                 lines.push_back("mik32v2-pac = { path = \"vendor/pac\" }");
-                lines.push_back("mik32-rt = { path = \"vendor/rt\" }");
+                lines.push_back("mik32-rt = { path = \"vendor/rt\", features = [\"memory-spifi\"] }");
                 lines.push_back("mik32v2-hal = { path = \"vendor/hal\" }");
                 break;
         }

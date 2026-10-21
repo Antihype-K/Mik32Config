@@ -17,18 +17,26 @@ std::string buildPinMaskExpression(const std::vector<uint8_t>& pins)
     return out.str();
 }
 
-std::string buildPinListComment(const std::vector<uint8_t>& pins)
+std::string wrapInitFunctionWithUserCodeMarkers(const std::string& label, const std::string& function_text)
 {
-    std::ostringstream out;
-    for (size_t i = 0; i < pins.size(); ++i)
+    const size_t open_brace = function_text.find("{\n");
+    const size_t close_brace = function_text.rfind("}\n");
+    if (open_brace == std::string::npos || close_brace == std::string::npos || close_brace <= open_brace)
     {
-        if (i > 0)
-        {
-            out << ", ";
-        }
-        out << static_cast<int>(pins[i]);
+        // Неожиданная форма (нет "{\n"/"}\n") — отдаём текст как есть, не
+        // угадываем структуру чужой функции.
+        return function_text;
     }
-    return out.str();
+
+    const size_t insert_after_open = open_brace + 2;
+    std::string result = function_text.substr(0, insert_after_open);
+    result += "    /* USER CODE BEGIN " + label + "_Init 0 */\n"
+              "    /* USER CODE END " + label + "_Init 0 */\n\n";
+    result += function_text.substr(insert_after_open, close_brace - insert_after_open);
+    result += "\n    /* USER CODE BEGIN " + label + "_Init 2 */\n"
+              "    /* USER CODE END " + label + "_Init 2 */\n";
+    result += function_text.substr(close_brace);
+    return result;
 }
 
 bool copyDirectoryTreeSkipExisting(const std::string& from_dir,

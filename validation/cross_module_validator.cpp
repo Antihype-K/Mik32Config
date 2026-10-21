@@ -127,6 +127,15 @@ CrossModuleValidationResult validatePinConflictsInDocument(
                 // в пайплайне (per-module валидация всегда идёт первой).
                 continue;
             }
+            // mode=analog — явный отказ GPIO от вывода в пользу периферии
+            // (см. vendor-пример controlFirmware: GPIO_PIN_3 переводится в
+            // HAL_GPIO_MODE_ANALOG именно чтобы освободить его для Timer32
+            // channel 3 PWM) — такой блок не должен считаться владельцем пина.
+            if (peripheral.contains("mode") && peripheral["mode"].is_string()
+                && peripheral["mode"].get<std::string>() == "analog")
+            {
+                continue;
+            }
             const int instance = peripheral["instance"].get<int>();
             std::ostringstream owner;
             owner << "GPIO instance " << instance << " (блок #" << gpio_block_index << ")";

@@ -17,7 +17,6 @@
 #include "project_document.h"
 
 class QTableWidget;
-class QCheckBox;
 class QLabel;
 
 class DiagnosticsPanel : public QWidget
@@ -35,16 +34,17 @@ public:
 signals:
     void jumpToBlock(int block_index, const QString& field_name);
 
-private slots:
-    void rebuildTable();
-
 private:
+    // isWanted решает, попадает ли сообщение в эту таблицу (errors_table_ —
+    // только Error; warnings_table_ — Warning и Info вместе, обе не
+    // блокируют кодоген).
+    void fillTable(QTableWidget* table, bool (*isWanted)(DiagnosticSeverity));
+
     std::vector<Diagnostic> diagnostics_;
-    QTableWidget* table_ = nullptr;
-    QCheckBox* show_errors_ = nullptr;
-    QCheckBox* show_warnings_ = nullptr;
-    QCheckBox* show_info_ = nullptr;
-    QLabel* summary_ = nullptr;
+    QTableWidget* errors_table_ = nullptr;
+    QTableWidget* warnings_table_ = nullptr;
+    QLabel* errors_summary_ = nullptr;
+    QLabel* warnings_summary_ = nullptr;
     int error_count_ = 0;
     int warning_count_ = 0;
 };

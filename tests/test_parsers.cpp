@@ -23,6 +23,8 @@
 #include <rtc_contribution.h>
 #include <crc_parser.h>
 #include <crc_contribution.h>
+#include <spifi_parser.h>
+#include <spifi_contribution.h>
 #include <eeprom_parser.h>
 #include <eeprom_contribution.h>
 #include <wdt_parser.h>
@@ -569,6 +571,202 @@ TEST(UserCodeMarkers, NoExistingFileMeansNoMerge)
     EXPECT_EQ(merged, freshly_generated);
 }
 
+// Найдено на docs/examples/mik32-examples/HAL_ADC: первая перегенерация
+// вендорского проекта (ни одного маркера USER CODE в исходнике) раньше
+// стирала файл целиком. Теперь авторазбор должен сам разложить старый код
+// по секциям Includes/Loop — без ручного переноса пользователем.
+TEST(UserCodeMarkers, UnmarkedExistingFileIsAutoSplitNotErased)
+{
+    const std::string existing =
+        "#include \"uart_lib.h\"\n"
+        "ADC_HandleTypeDef hadc;\n"
+        "int main() {\n"
+        "    SystemClock_Config();\n"
+        "    ADC_Init();\n"
+        "    uint16_t v = 0;\n"
+        "    /* это /* не настоящий конец */ комментарий с ловушкой */\n"
+        "    while (1) { v = HAL_ADC_WaitAndGetValue(&hadc); xprintf(\"hi %u\\n\", v); }\n"
+        "}\n"
+        "void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc) { /* заменено GPIO-блоками */ }\n";
+
+    const std::string freshly_generated =
+        "#include \"mik32_hal_pcc.h\"\n"
+        "/* USER CODE BEGIN Includes */\n"
+        "/* USER CODE END Includes */\n"
+        "/* USER CODE BEGIN PV */\n"
+        "/* USER CODE END PV */\n"
+        "void SystemClock_Config(void);\n"
+        "int main() {\n"
+        "    SystemClock_Config();\n"
+        "    GPIO_1_Init();\n"
+        "    ADC_Init();\n"
+        "    /* USER CODE BEGIN Init */\n"
+        "    /* USER CODE END Init */\n"
+        "    while (1) {\n"
+        "        /* USER CODE BEGIN 3 */\n"
+        "        /* USER CODE END 3 */\n"
+        "    }\n"
+        "}\n"
+        "/* USER CODE BEGIN 4 */\n"
+        "/* USER CODE END 4 */\n";
+
+    const std::string merged = mergeUserCodeSections(freshly_generated, existing);
+
+    // Цикл while — пользовательская логика — сохранён целиком в Loop.
+    EXPECT_NE(merged.find("xprintf(\"hi %u\\n\", v)"), std::string::npos);
+    // Чужой #include — в Includes.
+    EXPECT_NE(merged.find("#include \"uart_lib.h\""), std::string::npos);
+    // "ADC_Init();" внутри main() — уже регенерированный вызов, повторно
+    // звать его не нужно, значит в Init его быть не должно.
+    {
+        const size_t init_begin = merged.find("USER CODE BEGIN Init");
+        const size_t init_end = merged.find("USER CODE END Init");
+        const std::string init_body = merged.substr(init_begin, init_end - init_begin);
+        EXPECT_EQ(init_body.find("ADC_Init();"), std::string::npos);
+    }
+    // "uint16_t v = 0;" — не регенерированный вызов, должен попасть в Init.
+    EXPECT_NE(merged.find("uint16_t v = 0;"), std::string::npos);
+    // HAL_ADC_MspInit — замещён GPIO-блоками, не должен дублироваться.
+    EXPECT_EQ(merged.find("HAL_ADC_MspInit"), std::string::npos);
+    // Глобальная "ADC_HandleTypeDef hadc;" превращена в extern (определение
+    // уже в mik32_init.c) — иначе "multiple definition" на линковке.
+    EXPECT_NE(merged.find("extern ADC_HandleTypeDef hadc;"), std::string::npos);
+
+    // Повторный прогон — уже обычные маркеры, идемпотентно.
+    const std::string merged_again = mergeUserCodeSections(freshly_generated, merged);
+    EXPECT_EQ(merged_again, merged);
+}
+
+// Если авторазбор не смог найти int main() хотя бы в одном из текстов —
+// не угадываем структуру: заворачиваем файл целиком в "#if 0", но ничего не
+// стираем.
+TEST(UserCodeMarkers, UnparsableExistingFileFallsBackToIfZeroWrap)
+{
+    const std::string existing = "// совсем не main.c, просто кусок кода\nint x = 1;\n";
+
+    const std::string freshly_generated =
+        "/* USER CODE BEGIN 4 */\n"
+        "/* USER CODE END 4 */\n";
+
+    const std::string merged = mergeUserCodeSections(freshly_generated, existing);
+
+    EXPECT_NE(merged.find("#if 0"), std::string::npos);
+    EXPECT_NE(merged.find("int x = 1;"), std::string::npos);
+}
+
+// Баг найден 2026-10-19: BEGIN <N> с повреждённым/стёртым парным END <N> не
+// матчился regex'ом и секция тихо считалась отсутствующей — пользовательский
+// код внутри терялся без ошибки. Теперь — явный отказ (исключение), а не
+// молчаливая потеря.
+TEST(UserCodeMarkers, OrphanedBeginWithoutMatchingEndThrowsInsteadOfSilentlyDroppingContent)
+{
+    const std::string existing =
+        "/* USER CODE BEGIN Includes */\n"
+        "#include \"my_sensor.h\"\n"
+        "/* USER CODE END Includes */\n"
+        "/* USER CODE BEGIN Loop */\n"
+        "my_sensor_poll();\n";
+        // END Loop отсутствует/стёрт — ровно сценарий из CLAUDE.md.
+
+    const std::string freshly_generated =
+        "/* USER CODE BEGIN Includes */\n"
+        "/* USER CODE END Includes */\n"
+        "/* USER CODE BEGIN Loop */\n"
+        "/* USER CODE END Loop */\n";
+
+    EXPECT_THROW(mergeUserCodeSections(freshly_generated, existing), std::runtime_error);
+}
+
+// Риск, отмеченный самостоятельно после ed785ce: при двух хендлах одного
+// типа старое сопоставление "вендор[i] <-> генератор[i]" по индексу
+// объявления было бы неверным, если вендор объявил их в обратном порядке
+// относительно генератора. Проверяем, что переименование идёт по номеру
+// инстанса в хвосте имени (hi2c1 -> hi2c_1), а не по позиции в файле.
+TEST(UserCodeMarkers, HandleRenameMatchesByInstanceNumberNotDeclarationOrder)
+{
+    const std::string init_c =
+        "I2C_HandleTypeDef hi2c_0;\n"
+        "I2C_HandleTypeDef hi2c_1;\n";
+
+    // Вендор объявил хендлы в ОБРАТНОМ порядке относительно генератора.
+    const std::string existing =
+        "I2C_HandleTypeDef hi2c1;\n"
+        "I2C_HandleTypeDef hi2c0;\n"
+        "int main() {\n"
+        "    uint8_t v1 = HAL_I2C_IsBusy(&hi2c1);\n"
+        "    uint8_t v0 = HAL_I2C_IsBusy(&hi2c0);\n"
+        "    while (1) {}\n"
+        "}\n";
+
+    const std::string freshly_generated =
+        "/* USER CODE BEGIN PV */\n"
+        "/* USER CODE END PV */\n"
+        "int main() {\n"
+        "    /* USER CODE BEGIN Init */\n"
+        "    /* USER CODE END Init */\n"
+        "    while (1) {\n"
+        "        /* USER CODE BEGIN 3 */\n"
+        "        /* USER CODE END 3 */\n"
+        "    }\n"
+        "}\n";
+
+    const std::string merged = mergeUserCodeSections(freshly_generated, existing, init_c);
+
+    // hi2c1 (инстанс 1) должен стать hi2c_1, а не hi2c_0 (позиционное
+    // сопоставление по индексу объявления дало бы обратную, неверную пару).
+    EXPECT_NE(merged.find("HAL_I2C_IsBusy(&hi2c_1)"), std::string::npos);
+    EXPECT_NE(merged.find("HAL_I2C_IsBusy(&hi2c_0)"), std::string::npos);
+}
+
+// generated_projects/HAL_USART_IRQ_refix: вендорский "#define BUFFER_LENGTH
+// 50" перед main() попадал в Includes (или в PV в составе переменной) вместо
+// PD (Private Define) — по смыслу CubeMX-шаблона макросы лежат в PD, не
+// среди #include.
+TEST(UserCodeMarkers, VendorDefineBeforeMainGoesToPdNotIncludes)
+{
+    const std::string init_c = "";
+
+    const std::string existing =
+        "/*\n"
+        " * Демонстрация.\n"
+        " */\n"
+        "\n"
+        "#define BUFFER_LENGTH 50\n"
+        "\n"
+        "static char buf[BUFFER_LENGTH];\n"
+        "int main() {\n"
+        "    while (1) {}\n"
+        "}\n";
+
+    const std::string freshly_generated =
+        "/* USER CODE BEGIN Includes */\n"
+        "/* USER CODE END Includes */\n"
+        "/* USER CODE BEGIN PD */\n"
+        "/* USER CODE END PD */\n"
+        "/* USER CODE BEGIN PV */\n"
+        "/* USER CODE END PV */\n"
+        "int main() {\n"
+        "    /* USER CODE BEGIN Init */\n"
+        "    /* USER CODE END Init */\n"
+        "    while (1) {\n"
+        "        /* USER CODE BEGIN 3 */\n"
+        "        /* USER CODE END 3 */\n"
+        "    }\n"
+        "}\n";
+
+    const std::string merged = mergeUserCodeSections(freshly_generated, existing, init_c);
+
+    const size_t pd_begin = merged.find("USER CODE BEGIN PD");
+    const size_t pd_end = merged.find("USER CODE END PD");
+    const size_t includes_begin = merged.find("USER CODE BEGIN Includes");
+    const size_t includes_end = merged.find("USER CODE END Includes");
+    ASSERT_NE(pd_begin, std::string::npos);
+    ASSERT_NE(pd_end, std::string::npos);
+
+    EXPECT_NE(merged.substr(pd_begin, pd_end - pd_begin).find("#define BUFFER_LENGTH 50"), std::string::npos);
+    EXPECT_EQ(merged.substr(includes_begin, includes_end - includes_begin).find("#define"), std::string::npos);
+}
+
 
 // ТЗ §3.1.6.2: конфликт назначений выводов между GPIO и UART. UART0 TX
 // фиксирован на GPIO_0 pin 6 (knowledge_base/uart.json,
@@ -790,7 +988,7 @@ TEST(ProjectCodegen, EmitsEmptyLoopUnderUserCodeMarkers)
     ASSERT_TRUE(firmware_result.success) << firmware_result.error;
 
     const std::string& main_c = firmware_result.config->main_c;
-    EXPECT_TRUE(contains(main_c, "        /* USER CODE BEGIN Loop */\n        /* USER CODE END Loop */\n"));
+    EXPECT_TRUE(contains(main_c, "        /* USER CODE BEGIN 3 */\n        /* USER CODE END 3 */\n"));
     EXPECT_FALSE(contains(main_c, "HAL_GPIO_TogglePin"));
     EXPECT_FALSE(contains(main_c, "xprintf"));
     // Инициализация при этом остаётся полной.
@@ -816,6 +1014,19 @@ TEST(Timer32Parse, ParsesValidChannelConfig)
     ASSERT_EQ(result.config->channels.size(), 1u);
     EXPECT_EQ(result.config->channels[0].mode, "pwm");
     EXPECT_EQ(result.config->channels[0].ocr, 250u);
+}
+
+// mik32_hal_timer32.h: HAL_TIMER32_CHANNEL_NoiseTypeDef Noise — поле общее для
+// всех режимов канала, не только capture (реальный вендорный код
+// controlFirmware/main.cpp задаёт его и на PWM-каналах). Раньше парсер читал
+// noise_filter только внутри mode=="capture" — PWM-значение тихо терялось.
+TEST(Timer32Parse, ParsesNoiseFilterOnPwmChannel)
+{
+    ParseResult<Timer32Config> result = parseTimer32Config("fixtures/timer32_channel_pwm.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    ASSERT_EQ(result.config->channels.size(), 1u);
+    EXPECT_TRUE(result.config->channels[0].noise_filter);
 }
 
 // ТЗ §3.1.5: «Timer32_0 – базовый счётчик без режимов ШИМ, захвата и
@@ -963,6 +1174,31 @@ TEST(CrossModuleValidator, DetectsTimer32ChannelPinConflict)
     EXPECT_EQ(result.conflicts[0].conflicting_owners.size(), 2u);
 }
 
+// GPIO-блок с mode=analog явно отказывается от вывода в пользу периферии
+// (vendor-пример controlFirmware: GPIO_PIN_3 -> HAL_GPIO_MODE_ANALOG, затем
+// тот же пин используется Timer32 channel 3 PWM) — это не конфликт.
+TEST(CrossModuleValidator, AnalogModeGpioDoesNotConflictWithTimer32Channel)
+{
+    ParseResult<UartKnowledge> uart_knowledge_result = loadUartKnowledge("../knowledge_base/uart.json");
+    ASSERT_TRUE(uart_knowledge_result.success) << uart_knowledge_result.error;
+    ParseResult<Timer16Knowledge> timer16_knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(timer16_knowledge_result.success) << timer16_knowledge_result.error;
+    ParseResult<I2cKnowledge> i2c_knowledge_result = loadI2cKnowledge("../knowledge_base/i2c.json");
+    ASSERT_TRUE(i2c_knowledge_result.success) << i2c_knowledge_result.error;
+    ParseResult<Timer32Knowledge> timer32_knowledge_result = loadTimer32Knowledge("../knowledge_base/timer32.json");
+    ASSERT_TRUE(timer32_knowledge_result.success) << timer32_knowledge_result.error;
+    ParseResult<SpiKnowledge> spi_knowledge_result = loadSpiKnowledge("../knowledge_base/spi.json");
+    ASSERT_TRUE(spi_knowledge_result.success) << spi_knowledge_result.error;
+
+    CrossModuleValidationResult result = validatePinConflicts(
+        "fixtures/cross_timer32_gpio_analog_no_conflict.json", *uart_knowledge_result.config,
+        *timer16_knowledge_result.config, *i2c_knowledge_result.config, *timer32_knowledge_result.config,
+        *spi_knowledge_result.config);
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.conflicts.size(), 0u);
+}
+
 // Base-counter путь (без каналов) не использует _IT-варианты HAL-вызовов —
 // Errata п.9.1 актуальна только когда включается прерывание.
 TEST(ProjectCodegen, Timer32BaseCounterUsesPlainStartWithoutErrataWarning)
@@ -998,6 +1234,10 @@ TEST(ProjectCodegen, Timer32ChannelConfigEmitsErrataWarningAndIrqTemplate)
     const std::string& init_c = firmware_result.config->mik32_init_c;
     EXPECT_TRUE(contains(init_c, "Errata п. 9.1"));
     EXPECT_TRUE(contains(init_c, "HAL_Timer32_PWM_Start_IT(&htimer32_1, &htimer32_1_ch0);"));
+    // Noise — поле TIMER32_CHANNEL_HandleTypeDef общее для всех режимов
+    // (mik32_hal_timer32.h:138), раньше кодоген писал .Noise только для
+    // mode=capture — PWM-канал терял значение при каждой перегенерации.
+    EXPECT_TRUE(contains(init_c, "htimer32_1_ch0.Noise = TIMER32_CHANNEL_FILTER_ON;"));
     EXPECT_TRUE(contains(init_c, "void TIMER32_1_IRQHandler_Template(void)"));
     // Errata §9.1, полный обход: читаем статус ДО очистки, отключаем маску
     // ТОЛЬКО сработавшего источника и сбрасываем ТОЛЬКО его флаг (не общий
@@ -1386,6 +1626,66 @@ TEST(ProjectCodegen, CrcPresetGeneratesCommentNamingThePreset)
     const std::string& init_c = firmware_result.config->mik32_init_c;
     EXPECT_TRUE(contains(init_c, "hcrc.Poly = 0x814141ab;"));
     EXPECT_TRUE(contains(init_c, "preset=\"crc32q\""));
+}
+
+// ============================================================================
+// SPIFI — контроллер внешней памяти. Единственный глобальный блок (нет
+// instance). Покрывает только Memory Mode (HAL_SPIFI_MemoryMode_Init,
+// mik32_hal_spifi.h/.c).
+// ============================================================================
+
+TEST(SpifiParse, ParsesValid)
+{
+    ParseResult<SpifiConfig> result = parseSpifiConfig("fixtures/spifi_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->cache_enabled);
+    EXPECT_EQ(result.config->cache_limit, 2415919103u);
+    EXPECT_EQ(result.config->cmd_frame_form, "opcode_3addr");
+    EXPECT_EQ(result.config->cmd_field_form, "all_serial");
+    EXPECT_EQ(result.config->cmd_op_code, 3);
+    EXPECT_EQ(result.config->cmd_interim_length, 0);
+}
+
+TEST(SpifiParse, RejectsMissingEverything)
+{
+    ParseResult<SpifiConfig> result = parseSpifiConfig("fixtures/spifi_invalid_missing_everything.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(SpifiParse, RejectsUnknownFrameForm)
+{
+    ParseResult<SpifiConfig> result = parseSpifiConfig("fixtures/spifi_invalid_bad_frame_form.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectConfigParse, RejectsSecondSpifiBlock)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/spifi_two_blocks_rejected.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(ProjectCodegen, SpifiGeneratesExpectedInitCode)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/spifi_valid.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "hspifi.Instance = SPIFI_CONFIG;"));
+    EXPECT_TRUE(contains(init_c, "hspifi.CacheEnable = SPIFI_CACHE_ENABLE;"));
+    EXPECT_TRUE(contains(init_c, "hspifi.CacheLimit = 0x8fffffff;"));
+    EXPECT_TRUE(contains(init_c, "hspifi.Command.InterimLength = 0;"));
+    EXPECT_TRUE(contains(init_c, "hspifi.Command.FieldForm = SPIFI_FIELDFORM_ALL_SERIAL;"));
+    EXPECT_TRUE(contains(init_c, "hspifi.Command.FrameForm = SPIFI_FRAMEFORM_OPCODE_3ADDR;"));
+    EXPECT_TRUE(contains(init_c, "hspifi.Command.OpCode = 0x3;"));
+    EXPECT_TRUE(contains(init_c, "HAL_SPIFI_MemoryMode_Init(&hspifi);"));
 }
 
 // ============================================================================
@@ -2583,9 +2883,14 @@ namespace
             fs::create_directories(dir / "hal" / "core" / "Include", ec);
             fs::create_directories(dir / "hal" / "core" / "Source", ec);
             fs::create_directories(dir / "shared" / "periphery", ec);
+            fs::create_directories(dir / "shared" / "runtime", ec);
             std::ofstream(dir / "hal" / "core" / "Source" / "stub.c") << "/* stub */\n";
             std::ofstream(dir / "hal" / "core" / "Include" / "stub.h") << "#pragma once\n";
             std::ofstream(dir / "shared" / "periphery" / "stub.h") << "#pragma once\n";
+            // crt0.S обязателен для cmake_project_codegen.cpp (стартап-код,
+            // компилируется отдельным правилом CRT0_RULE) — без него
+            // генерация теперь ошибается заранее, а не линкуется без него.
+            std::ofstream(dir / "shared" / "runtime" / "crt0.S") << "/* stub crt0 */\n";
         }
         return dir;
     }
@@ -2963,6 +3268,16 @@ TEST(CmakeProjectCodegen, WritesProjectSuccessfullyAndFillsCMakeMarkersFromRealF
     EXPECT_TRUE(contains(cmakelists, "mik32-sdk/shared/periphery"));
     EXPECT_TRUE(contains(cmakelists, "set(MIK32_COMPILER_PATH \"/opt/riscv/bin/riscv32-unknown-elf-gcc\""));
 
+    // Регрессия (найдено реальной прошивкой на плате 2026-10-20): crt0.S
+    // должен компилироваться отдельной командой с объектом, названным
+    // буквально "crt0.o" — sections.lds матчит стартап-код по этому имени,
+    // а обычный target_sources() назвал бы объект "crt0.S.o"/"crt0.S.obj",
+    // из-за чего entry point уезжал в середину .text вместо 0x80000000 и
+    // МК не стартовал (сборка и линковка при этом проходили без ошибок).
+    EXPECT_TRUE(contains(cmakelists, "${CMAKE_BINARY_DIR}/crt0.o"));
+    EXPECT_TRUE(contains(cmakelists, "add_custom_command("));
+    EXPECT_FALSE(contains(cmakelists, "        mik32-sdk/shared/runtime/crt0.S\n"));
+
     fs::remove_all(output_dir, ec);
     fs::remove_all(local_hal, ec);
 }
@@ -3065,6 +3380,39 @@ TEST(ProjectCodegenWriteTransactional, ChangelogSaysNothingChangedOnIdenticalReg
     ASSERT_TRUE(writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string()).success);
     ASSERT_TRUE(writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string()).success);
     EXPECT_TRUE(contains(readBinaryFileToString(output_dir / "CHANGELOG_GENERATED.md"), "ничего не изменилось"));
+
+    test_fs::remove_all(output_dir, cleanup_error);
+}
+
+// Найдено на реальном вендорном проекте (docs/examples/mik32/controlFirmware,
+// entry point — main.cpp, не main.c): до фикса writeGeneratedProject искала
+// существующий main.c только по фиксированному имени и, не найдя его, писала
+// рядом новый main.c с ПУСТЫМИ USER CODE секциями, а старый main.cpp
+// оставался нетронутым — PlatformIO увидел бы два int main() и упал на
+// линковке, а прикладной код терялся бы без единого предупреждения.
+TEST(ProjectCodegenWriteTransactional, MigratesLegacyMainCppAndRemovesItAfterSuccess)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/gpio_codegen_output.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const test_fs::path output_dir = makeTempTestOutputDir("legacy_cpp_entry");
+    std::error_code cleanup_error;
+    test_fs::remove_all(output_dir, cleanup_error);
+    const test_fs::path src_dir = output_dir / "src";
+    test_fs::create_directories(src_dir);
+
+    std::ofstream legacy_main(src_dir / "main.cpp", std::ios::binary);
+    legacy_main << "int unique_marker_variable = 424242;\n\nint main()\n{\n    while (1) {}\n}\n";
+    legacy_main.close();
+
+    ASSERT_TRUE(writeGeneratedProject(*firmware_result.config, "../templates/pio_skeleton", output_dir.u8string()).success);
+
+    EXPECT_FALSE(test_fs::exists(src_dir / "main.cpp"));
+    EXPECT_TRUE(test_fs::exists(src_dir / "main.c"));
+    EXPECT_TRUE(contains(readBinaryFileToString(src_dir / "main.c"), "unique_marker_variable"));
 
     test_fs::remove_all(output_dir, cleanup_error);
 }
@@ -3204,10 +3552,10 @@ TEST(ProjectCodegenWriteTransactional, PreservesUserCodeAcrossRegeneration)
 
     const test_fs::path main_c_path = output_dir / "src" / "main.c";
     std::string main_c_on_disk = readBinaryFileToString(main_c_path);
-    ASSERT_NE(main_c_on_disk.find("/* USER CODE BEGIN Loop */"), std::string::npos);
+    ASSERT_NE(main_c_on_disk.find("/* USER CODE BEGIN 3 */"), std::string::npos);
 
-    // Пользователь вручную вставляет строку внутрь USER CODE-секции Loop.
-    const std::string marker_begin = "/* USER CODE BEGIN Loop */";
+    // Пользователь вручную вставляет строку внутрь USER CODE-секции "3".
+    const std::string marker_begin = "/* USER CODE BEGIN 3 */";
     const size_t insert_at = main_c_on_disk.find(marker_begin) + marker_begin.size();
     const std::string user_marker_line = "\n        MY_HAND_WRITTEN_MARKER_CALL();";
     main_c_on_disk.insert(insert_at, user_marker_line);

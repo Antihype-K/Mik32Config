@@ -91,7 +91,7 @@
         },
         "noise_filter": {
           "type": "boolean",
-          "_comment": "Только для mode=capture. HAL_TIMER32_CHANNEL_NoiseTypeDef. По умолчанию false (TIMER32_CHANNEL_FILTER_OFF), если поле не задано."
+          "_comment": "Общее поле для всех режимов канала (mik32_hal_timer32.h: HAL_TIMER32_CHANNEL_NoiseTypeDef Noise — не только capture; реальный вендорный код задаёт его и на PWM-каналах). По умолчанию false (TIMER32_CHANNEL_FILTER_OFF), если поле не задано."
         }
       }
     }

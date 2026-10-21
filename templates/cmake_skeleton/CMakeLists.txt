@@ -39,6 +39,16 @@ enable_language(C ASM)
 
 add_executable(${MIK32_PROJECT_NAME})
 
+# mik32-sdk/shared/ldscripts/sections.lds (вендоренный, тот же файл, что
+# использует PlatformIO/SCons) матчит стартап-код по буквальному имени
+# объектного файла: "*crt0.o(.text .text.*)". Обычный target_sources()
+# называет объект CMake-ом "crt0.S.o"/"crt0.S.obj" — паттерн не совпадает,
+# crt0 не попадает в .startup по ORIGIN(REGION_TEXT), линкер ставит entry
+# point в середину .text вместо 0x80000000 — МК не стартует (найдено реальной
+# прошивкой на плате: UART молчит при чистой линковке без ошибок). Поэтому
+# crt0.S компилируется отдельной командой с жёстко заданным именем объекта.
+# MIK32_CONFIGURATOR: CRT0_RULE
+
 # Флаги компиляции/линковки перенесены как есть из
 # templates/pio_skeleton/platformio.ini (секция [env] +
 # [env:development-board-bootloader]) — уже проверены на плате 1T Rex Board,

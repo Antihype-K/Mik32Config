@@ -416,6 +416,32 @@ std::unordered_map<std::string, long long> scanObjectLikeMacros(const std::files
     return macros;
 }
 
+// Та же идея, что scanObjectLikeMacros, но для "#define NAME IDENT" — RHS
+// голый идентификатор (GPIO_2, GPIO_PIN_7 и т.п.), а не число. Пример:
+// docs/examples/mik32-examples/HAL_EEPROM/src/main.c:17-18
+// "#define STATUS_LED_PORT GPIO_2" / "#define STATUS_LED_PIN GPIO_PIN_7" —
+// без этого instance/pins GPIO-блока, использующего такие define, уходят в
+// unresolved, хотя значение фактически однозначно определено в исходнике.
+std::unordered_map<std::string, std::string> scanIdentifierAliasMacros(const std::filesystem::path& file_path)
+{
+    static const std::regex kDefine(
+        R"(^\s*#\s*define\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*$)");
+
+    std::unordered_map<std::string, std::string> aliases;
+    std::ifstream stream(file_path);
+    std::string raw_line;
+    while (std::getline(stream, raw_line))
+    {
+        const std::string sanitized = sanitizeLine(raw_line);
+        std::smatch match;
+        if (std::regex_match(sanitized, match, kDefine))
+        {
+            aliases[match[1].str()] = match[2].str();
+        }
+    }
+    return aliases;
+}
+
 void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
               const std::unordered_map<std::string, long long>& project_macros)
 {
@@ -461,6 +487,11 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
     static const std::regex kInitCall(
         R"(HAL_(\w+)_Init\s*\(([^()]*)\)|HAL_(RTC)_Enable\s*\(([^()]*)\))");
 
+    // GPIO не имеет хендла (см. RawGpioInterruptCall) — вызов не привязан ни
+    // к какому блоку, ищется независимо от остальной логики этой функции.
+    static const std::regex kGpioInterruptLine(
+        R"(HAL_GPIO_InitInterruptLine\s*\(\s*(\w+)\s*,\s*(\w+)\s*\))");
+
     std::unordered_map<std::string, PendingHandle> handles;
 
     // Индекс (в ОБЩЕМ, межфайловом out.blocks) последнего блока, созданного
@@ -483,6 +514,19 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
     // относится к этому хендлу.
     std::unordered_map<std::string, std::vector<RawTrailingCall>> pre_init_calls;
 
+    // Граница функций по тексту, без полноценного парсера: стиль этого
+    // кодового слоя (K&R, открывающая "{" на отдельной строке — см. комментарий
+    // sanitizeLine выше про тот же подход "по тексту, а не AST") позволяет
+    // отследить "сигнатура функции на одной строке, '{' на следующей". Нужно
+    // только для фильтра недостижимого кода в scanDirectoryForHalHandles —
+    // см. RawInitBlock::containing_function_name.
+    static const std::regex kFunctionSignature(
+        R"(^[A-Za-z_][\w:\*&<>,\s]*\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*$)");
+    static const std::regex kControlKeyword(R"(^(if|for|while|switch|else|do)\b)");
+    std::string pending_function_name;
+    std::vector<std::string> function_stack;
+    int brace_depth = 0;
+
     std::string raw_line;
     int line_number = 0;
     while (std::getline(stream, raw_line))
@@ -490,6 +534,89 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
         ++line_number;
         const std::string full_line_text = raw_line;
         const std::string code = sanitizeLine(raw_line);
+
+        // Закомментированные вызовы — ровно то, что sanitizeLine только что
+        // стёр из code, поэтому ищем по raw_line. "//"-комментарий, внутри
+        // которого похожий на вызов функции текст — сигнал для фильтра
+        // недостижимого кода (см. ScannedProject::commented_out_call_names).
+        {
+            const std::size_t comment_at = raw_line.find("//");
+            if (comment_at != std::string::npos)
+            {
+                static const std::regex kCommentedCall(R"(\b([A-Za-z_]\w*)\s*\()");
+                const std::string comment_text = raw_line.substr(comment_at);
+                for (auto it = std::sregex_iterator(comment_text.begin(), comment_text.end(), kCommentedCall);
+                     it != std::sregex_iterator(); ++it)
+                {
+                    out.commented_out_call_names.insert((*it)[1].str());
+                }
+            }
+        }
+
+        // Границы функций обрабатываются ДО остальной логики строки —
+        // строка "{"/"}"/сигнатура сама по себе не несёт присваиваний/
+        // вызовов, которые разбирает остальной код ниже.
+        {
+            std::string trimmed = code;
+            const std::size_t first = trimmed.find_first_not_of(" \t");
+            if (first == std::string::npos)
+            {
+                trimmed.clear();
+            }
+            else
+            {
+                trimmed = trimmed.substr(first, trimmed.find_last_not_of(" \t") - first + 1);
+            }
+
+            if (trimmed == "{" && !pending_function_name.empty() && brace_depth == 0)
+            {
+                function_stack.push_back(pending_function_name);
+            }
+            pending_function_name.clear();
+
+            for (const char c : code)
+            {
+                if (c == '{') { ++brace_depth; }
+                else if (c == '}')
+                {
+                    --brace_depth;
+                    if (brace_depth <= 0 && !function_stack.empty())
+                    {
+                        function_stack.pop_back();
+                        brace_depth = 0;
+                    }
+                }
+            }
+
+            std::smatch sig_match;
+            if (!trimmed.empty() && trimmed.back() == ')' && !std::regex_search(trimmed, kControlKeyword)
+                && std::regex_match(trimmed, sig_match, kFunctionSignature))
+            {
+                pending_function_name = sig_match[1].str();
+            }
+
+            // Вызовы собираются только внутри тел функций (brace_depth > 0 ==
+            // строка идёт ПОСЛЕ открывающей "{", см. выше) — иначе строка
+            // собственной сигнатуры функции ("void i2c_bus_recovery(...)")
+            // ложно засчитала бы функцию как вызванную саму собой.
+            if (brace_depth > 0)
+            {
+                static const std::regex kCallSite(R"(\b([A-Za-z_]\w*)\s*\()");
+                for (auto call_it = std::sregex_iterator(code.begin(), code.end(), kCallSite);
+                     call_it != std::sregex_iterator(); ++call_it)
+                {
+                    out.called_function_names.insert((*call_it)[1].str());
+                }
+            }
+        }
+
+        for (auto irq_it = std::sregex_iterator(code.begin(), code.end(), kGpioInterruptLine);
+             irq_it != std::sregex_iterator(); ++irq_it)
+        {
+            out.gpio_interrupt_calls.push_back(RawGpioInterruptCall{
+                (*irq_it)[1].str(), (*irq_it)[2].str(),
+                SourceLocation{file_path.string(), line_number}, full_line_text});
+        }
 
         std::smatch match;
         if (std::regex_match(code, match, kDeclaration))
@@ -594,6 +721,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
             block.init_function_name = init_function_name;
             block.init_call_args = args;
             block.init_call_location = SourceLocation{file_path.string(), line_number};
+            block.containing_function_name = function_stack.empty() ? std::string() : function_stack.back();
 
             // Переиспользование одной и той же структуры для нескольких
             // Init-вызовов подряд, без переприсваивания полей между ними:
@@ -607,23 +735,45 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
             // подставлял фиктивные pins=[0] + mode="input", то есть
             // восстанавливал конфигурацию, которой в прошивке нет. Копируем
             // присваивания предыдущего блока того же хендла.
+            // Поле-за-полем, не блок целиком: по семантике C структура
+            // сохраняет СТАРОЕ значение любого поля, которое не было
+            // переприсвоено перед этим конкретным Init-вызовом (не только
+            // когда между вызовами вообще ничего не присвоено — HAL_ADC
+            // MspInit переприсваивает Pin перед каждым вызовом, но Mode/Pull
+            // только один раз в начале; старая версия этой проверки требовала
+            // block.assignments.empty() целиком и пропускала именно такой
+            // частичный случай).
             const auto previous_block_it = last_block_index.find(matched_handle_name);
-            const bool inherited_from_previous_init =
-                block.assignments.empty() && previous_block_it != last_block_index.end() &&
-                !out.blocks[previous_block_it->second].assignments.empty();
-
-            if (inherited_from_previous_init)
+            if (previous_block_it != last_block_index.end())
             {
-                block.assignments = out.blocks[previous_block_it->second].assignments;
-                out.unsupported_notes.push_back(
-                    "Вызов " + init_function_name + " для \"" + matched_handle_name +
-                    "\" переиспользует структуру предыдущего вызова без переприсваивания "
-                    "полей (" + file_path.filename().string() + ":" + std::to_string(line_number) +
-                    ") — конфигурация восстановлена по предыдущему блоку, но ОБА блока "
-                    "ссылаются на одни и те же строки исходника: правка такого блока в "
-                    "GUI затронет и парный блок.");
+                const std::vector<RawFieldAssignment>& previous_assignments =
+                    out.blocks[previous_block_it->second].assignments;
+                std::unordered_set<std::string> present_fields;
+                for (const RawFieldAssignment& assignment : block.assignments)
+                {
+                    present_fields.insert(assignment.field_path);
+                }
+                bool inherited_any = false;
+                for (const RawFieldAssignment& previous_assignment : previous_assignments)
+                {
+                    if (present_fields.insert(previous_assignment.field_path).second)
+                    {
+                        block.assignments.push_back(previous_assignment);
+                        inherited_any = true;
+                    }
+                }
+                if (inherited_any)
+                {
+                    out.unsupported_notes.push_back(
+                        "Вызов " + init_function_name + " для \"" + matched_handle_name +
+                        "\" переиспользует структуру предыдущего вызова и не переприсваивает "
+                        "все поля (" + file_path.filename().string() + ":" + std::to_string(line_number) +
+                        ") — недостающие поля восстановлены по предыдущему блоку, но ОБА блока "
+                        "ссылаются на одни и те же строки исходника: правка такого поля в "
+                        "GUI затронет и парный блок.");
+                }
             }
-            else if (block.assignments.empty())
+            if (block.assignments.empty())
             {
                 out.unsupported_notes.push_back(
                     "Вызов " + init_function_name + " для \"" + matched_handle_name +
@@ -656,6 +806,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
             const std::string& function_name = generic_call.function_name;
             const std::vector<std::string> args = splitArgs(generic_call.args_text);
 
+            bool handled = false;
             for (const std::string& arg : args)
             {
                 auto block_it = last_block_index.find(arg);
@@ -664,6 +815,7 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
                     out.blocks[block_it->second].trailing_calls.push_back(RawTrailingCall{
                         function_name, args, SourceLocation{file_path.string(), line_number},
                         full_line_text});
+                    handled = true;
                     break;  // один вызов -> одна запись, даже если хендл встретился дважды в аргументах
                 }
 
@@ -675,7 +827,44 @@ void scanFile(const std::filesystem::path& file_path, ScannedProject& out,
                     pre_init_calls[arg].push_back(RawTrailingCall{
                         function_name, args, SourceLocation{file_path.string(), line_number},
                         full_line_text});
+                    handled = true;
                     break;
+                }
+            }
+
+            // UART_Init(UART_0, baudrate_divisor, control, ...) — низкоуровневая
+            // uart_lib.h API без HAL-хендла (docs/examples/mik32-examples/
+            // HAL_ADC_IRQ/src/main.c:31 и другие примеры с xprintf-логом).
+            // Сканер построен вокруг <Type>_HandleTypeDef + HAL_*_Init и в
+            // принципе не видит эту периферию — раньше она пропадала молча,
+            // без единой note, хотя reverse-import обязан объяснять пропуски.
+            if (!handled && function_name == "UART_Init")
+            {
+                out.unsupported_notes.push_back(
+                    "Обнаружен вызов UART_Init(...) — низкоуровневая библиотека "
+                    "uart_lib.h без HAL-хендла, reverse-import не восстанавливает "
+                    "эту конфигурацию UART: " + file_path.filename().string() + ":" +
+                    std::to_string(line_number));
+            }
+
+            // HAL_EPIC_MaskEdgeSet/MaskLevelSet(HAL_EPIC_<X>_MASK) — см.
+            // RawEpicMaskCall в .h. Один макрос-аргумент — разбирается;
+            // комбинированная маска через "|" — честная note, не угадываем,
+            // какая из периферий имелась в виду.
+            if (!handled && (function_name == "HAL_EPIC_MaskEdgeSet" || function_name == "HAL_EPIC_MaskLevelSet"))
+            {
+                if (args.size() == 1 && args[0].find('|') == std::string::npos)
+                {
+                    out.epic_mask_calls.push_back(RawEpicMaskCall{
+                        function_name, args[0], SourceLocation{file_path.string(), line_number},
+                        full_line_text});
+                }
+                else
+                {
+                    out.unsupported_notes.push_back(
+                        "Вызов " + function_name + "(" + generic_call.args_text + ") — комбинированная "
+                        "маска EPIC из нескольких периферий, reverse-import не разбирает, какая из них "
+                        "включена: " + file_path.filename().string() + ":" + std::to_string(line_number));
                 }
             }
         }
@@ -825,6 +1014,10 @@ ScannedProject scanDirectoryForHalHandles(const std::string& root_dir)
         {
             project_macros[name] = value;
         }
+        for (auto& [name, value] : scanIdentifierAliasMacros(file_path))
+        {
+            result.macro_aliases[name] = value;
+        }
     }
 
     for (const std::filesystem::path& file_path : source_files)
@@ -832,6 +1025,41 @@ ScannedProject scanDirectoryForHalHandles(const std::string& root_dir)
         result.files_scanned.push_back(file_path.string());
         scanFile(file_path, result, project_macros);
     }
+
+    // Отбрасываем блоки из обёрток, у которых ЕДИНСТВЕННАЯ видимая ссылка на
+    // вызов — закомментированная (см. RawInitBlock::containing_function_name,
+    // ScannedProject::commented_out_call_names). Намеренно НЕ требуем "функция
+    // вызвана где-то реально" как общее условие — большинство reverse-import
+    // фикстур и реальных частичных деревьев определяют *_Init()-обёртки без
+    // видимого вызова в просканированном подмножестве файлов, это нормально.
+    // Узкий случай, который и чиним: docs/examples/mik32/controlFirmware/src/
+    // utils.cpp — i2c_bus_recovery() временно переводит I2C-пины 12/13 в
+    // чистый GPIO для бит-бэнгинга шины, единственный вызов закомментирован
+    // ("//i2c_bus_recovery(...)", utils.cpp:24) — без фильтра валидатор
+    // конфликтов пинов видел два блока на одних и тех же пинах, хотя один из
+    // них никогда не выполняется. main()/*_IRQHandler* исключены всегда.
+    std::vector<RawInitBlock> reachable_blocks;
+    reachable_blocks.reserve(result.blocks.size());
+    for (RawInitBlock& block : result.blocks)
+    {
+        const std::string& fn = block.containing_function_name;
+        const bool only_commented_out = !fn.empty() && fn != "main"
+            && fn.find("IRQHandler") == std::string::npos
+            && result.commented_out_call_names.count(fn) > 0
+            && result.called_function_names.count(fn) == 0;
+        if (!only_commented_out)
+        {
+            reachable_blocks.push_back(std::move(block));
+        }
+        else
+        {
+            result.unsupported_notes.push_back(
+                "Блок \"" + block.handle_name + "\" (" + block.init_function_name + ") пропущен: "
+                "находится внутри функции \"" + fn + "\", единственный вызов которой в проекте "
+                "закомментирован (мёртвый код).");
+        }
+    }
+    result.blocks = std::move(reachable_blocks);
 
     return result;
 }

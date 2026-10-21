@@ -59,16 +59,7 @@ ParseResult<PeripheralContribution> buildGpioContribution(
     // напрямую, поэтому global_definitions/extern_declarations остаются пустыми.
 
     std::ostringstream init_c;
-    init_c << "/*\n"
-              " * " << contribution.label << ", блоков конфигурации: " << blocks.size() << ".\n";
-    for (const GpioConfig& block : blocks)
-    {
-        init_c << " *   пины " << buildPinListComment(block.pins)
-               << ": mode=" << block.mode << ", pull=" << block.pull
-               << ", drive_strength=" << block.drive_strength << ".\n";
-    }
-    init_c << " */\n"
-              "void " << contribution.init_function_name << "(void)\n"
+    init_c << "void " << contribution.init_function_name << "(void)\n"
               "{\n"
               "    GPIO_InitTypeDef GPIO_InitStruct = {0};\n"
               "\n"

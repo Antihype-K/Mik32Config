@@ -265,6 +265,42 @@ bool ProjectDocument::save(const std::string& path, std::string& error_out)
     return true;
 }
 
+bool ProjectDocument::saveColocatedConfig(const std::string& output_dir, std::string& error_out) const
+{
+    nlohmann::json colocated = document_;
+    colocated["output_path"] = output_dir;
+
+    const fs::path target = utf8Path(output_dir) / "project.json";
+    fs::path temporary = target;
+    temporary += ".tmp";
+
+    const FileWriteOutcome write_result = writeUtf8PathFile(temporary.u8string(), colocated.dump(2) + "\n");
+    if (!write_result.success)
+    {
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        error_out = "Не удалось записать временный файл: " + temporary.u8string() + write_result.diagnostic;
+        return false;
+    }
+
+    std::error_code rename_error;
+    fs::rename(temporary, target, rename_error);
+    if (rename_error)
+    {
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        error_out = "Не удалось записать project.json: " + rename_error.message();
+        return false;
+    }
+    return true;
+}
+
+std::string ProjectDocument::outputPath() const
+{
+    const nlohmann::json value = projectSetting("output_path");
+    return value.is_string() ? value.get<std::string>() : std::string();
+}
+
 std::vector<int> ProjectDocument::blockIndices(const std::string& type, int instance) const
 {
     std::vector<int> indices;
@@ -332,6 +368,12 @@ void ProjectDocument::setField(int block_index, const std::string& field_name, c
     if (it != unresolved_fields_.end())
     {
         auto& fields = it->second;
+        const bool was_unresolved = std::any_of(fields.begin(), fields.end(),
+            [&field_name](const UnresolvedField& field) { return field.field_name == field_name; });
+        if (was_unresolved)
+        {
+            manually_resolved_fields_[block_index].insert(field_name);
+        }
         fields.erase(std::remove_if(fields.begin(), fields.end(),
             [&field_name](const UnresolvedField& field) { return field.field_name == field_name; }),
             fields.end());
@@ -425,7 +467,26 @@ std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowle
                 block_index = human_number - 1;  // в сообщении нумерация с 1
             }
         }
-        diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error, parsed.error, block_index});
+
+        // Имя поля восстанавливается из текста ошибки тем же приёмом, что и
+        // block_index выше: парсеры (см. parser/wdt/wdt_parser.cpp и
+        // аналогичные makeError) единообразно называют поле в кавычках сразу
+        // после слова "Поле" — "Поле \"reload_ms\" ...". Без этого Diagnostic
+        // указывал бы только на блок целиком, и клик по сообщению не мог бы
+        // подсветить конкретную строку формы (см. PropertiesPanel::fieldLabel).
+        std::string field_name;
+        const std::string field_marker = "Поле \"";
+        const size_t field_at = parsed.error.find(field_marker);
+        if (field_at != std::string::npos)
+        {
+            const size_t name_start = field_at + field_marker.size();
+            const size_t name_end = parsed.error.find('"', name_start);
+            if (name_end != std::string::npos)
+            {
+                field_name = parsed.error.substr(name_start, name_end - name_start);
+            }
+        }
+        diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error, parsed.error, block_index, field_name});
         return diagnostics;  // кросс-модульная проверка на невалидных блоках бессмысленна
     }
 
@@ -449,6 +510,8 @@ std::vector<Diagnostic> ProjectDocument::validate(const ProjectKnowledge& knowle
             }
             message << conflict.conflicting_owners[i];
         }
+        message << ". Этот вывод физически один — назначьте периферии разные выводы "
+                    "или уберите один из конфликтующих блоков.";
         diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error, message.str(), -1});
     }
 
@@ -680,6 +743,7 @@ std::vector<std::pair<int, int>> ProjectDocument::claimedPins(
 void ProjectDocument::setUnresolvedFields(int block_index, std::vector<UnresolvedField> fields)
 {
     confirmed_blocks_.erase(block_index);   // новый импорт блока -> подтверждение не актуально
+    manually_resolved_fields_.erase(block_index);  // тоже не актуально для нового импорта
     if (fields.empty())
     {
         unresolved_fields_.erase(block_index);
@@ -692,6 +756,13 @@ void ProjectDocument::clearUnresolvedFields()
 {
     unresolved_fields_.clear();
     confirmed_blocks_.clear();
+    manually_resolved_fields_.clear();
+}
+
+bool ProjectDocument::wasManuallyResolved(int block_index, const std::string& field_name) const
+{
+    const auto it = manually_resolved_fields_.find(block_index);
+    return it != manually_resolved_fields_.end() && it->second.count(field_name) != 0;
 }
 
 std::vector<std::string> ProjectDocument::unresolvedFieldNames(int block_index) const

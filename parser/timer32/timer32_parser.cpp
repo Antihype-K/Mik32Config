@@ -135,15 +135,18 @@ namespace
                 return std::string("поле \"capture_edge\" обязательно для mode=capture (разрешены rising, falling)");
             }
             capture_edge = channel_node["capture_edge"].get<std::string>();
+        }
 
-            if (channel_node.contains("noise_filter"))
+        // HAL_TIMER32_CHANNEL_NoiseTypeDef Noise — поле общее для всех режимов
+        // канала (mik32_hal_timer32.h:138, не только capture), реальный
+        // вендорный код выставляет его и на PWM-каналах.
+        if (channel_node.contains("noise_filter"))
+        {
+            if (!channel_node["noise_filter"].is_boolean())
             {
-                if (!channel_node["noise_filter"].is_boolean())
-                {
-                    return std::string("поле \"noise_filter\" должно быть булевым");
-                }
-                noise_filter = channel_node["noise_filter"].get<bool>();
+                return std::string("поле \"noise_filter\" должно быть булевым");
             }
+            noise_filter = channel_node["noise_filter"].get<bool>();
         }
 
         out.index = index;

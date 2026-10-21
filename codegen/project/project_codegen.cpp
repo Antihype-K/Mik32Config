@@ -1113,13 +1113,57 @@ CodegenWriteResult writeGeneratedProject(
     std::string previous_main_c;
     std::string previous_init_h;
     std::string previous_init_c;
+    // Путь к вендорскому entry-файлу, из которого смигрировали прикладной
+    // код (см. ветку ниже) — удаляется ПОСЛЕ успешного коммита транзакции,
+    // чтобы в src/ не остались сразу два int main() (main.c + main.cpp) и
+    // PlatformIO не упал на линковке "multiple definition of main".
+    fs::path legacy_entry_point_to_remove;
     if (fs::exists(main_c_path))
     {
         const FileReadOutcome existing = readUtf8PathFile(main_c_path.u8string());
         if (existing.success)
         {
-            main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content, firmware.mik32_init_c);
+            try
+            {
+                main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content, firmware.mik32_init_c);
+            }
+            catch (const std::exception& merge_error)
+            {
+                return CodegenWriteResult{false, std::string("src/main.c: ") + merge_error.what()};
+            }
             previous_main_c = existing.content;
+        }
+    }
+    else
+    {
+        // Импорт вендорного проекта, у которого entry point — не main.c
+        // (мы всегда пишем .c), а C++-файл main.cpp/main.cc/main.cxx:
+        // legacy_main_c_migrator разбирает markerless-файл независимо от
+        // расширения (проверено на реальном docs/examples/mik32/controlFirmware,
+        // main.cpp), поэтому мигрируем его так же, как существующий main.c.
+        static const char* const kLegacyCppEntryCandidates[] = {"main.cpp", "main.cc", "main.cxx"};
+        for (const char* candidate : kLegacyCppEntryCandidates)
+        {
+            const fs::path candidate_path = src_dir / candidate;
+            if (!fs::exists(candidate_path))
+            {
+                continue;
+            }
+            const FileReadOutcome existing = readUtf8PathFile(candidate_path.u8string());
+            if (existing.success)
+            {
+                try
+                {
+                    main_c_to_write = mergeUserCodeSections(firmware.main_c, existing.content, firmware.mik32_init_c);
+                }
+                catch (const std::exception& merge_error)
+                {
+                    return CodegenWriteResult{false, std::string("src/") + candidate + ": " + merge_error.what()};
+                }
+                previous_main_c = existing.content;
+                legacy_entry_point_to_remove = candidate_path;
+            }
+            break;
         }
     }
     const fs::path init_h_path = src_dir / "mik32_init.h";
@@ -1137,7 +1181,14 @@ CodegenWriteResult writeGeneratedProject(
         const FileReadOutcome existing = readUtf8PathFile(init_c_path.u8string());
         if (existing.success)
         {
-            init_c_to_write = mergeUserCodeSections(firmware.mik32_init_c, existing.content);
+            try
+            {
+                init_c_to_write = mergeUserCodeSections(firmware.mik32_init_c, existing.content);
+            }
+            catch (const std::exception& merge_error)
+            {
+                return CodegenWriteResult{false, std::string("src/mik32_init.c: ") + merge_error.what()};
+            }
             previous_init_c = existing.content;
         }
     }
@@ -1170,6 +1221,15 @@ CodegenWriteResult writeGeneratedProject(
     if (!move_result.success)
     {
         return move_result;
+    }
+
+    // Новый main.c уже содержит смигрированное содержимое старого entry-файла
+    // (см. ветку выше) — удаляем ТОЛЬКО после того, как main.c гарантированно
+    // лёг на диск, иначе при сбое транзакции мы бы потеряли код без следа.
+    if (!legacy_entry_point_to_remove.empty())
+    {
+        std::error_code remove_error;
+        fs::remove(legacy_entry_point_to_remove, remove_error);
     }
 
     // OVERNIGHT_FIELD_REFERENCE.md: CHANGELOG_GENERATED.md — после каждой

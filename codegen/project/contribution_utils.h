@@ -68,6 +68,10 @@ constexpr int kInitOrderBusWatchdog = 160;
 // contribution-типов, которые могли бы ссылаться на &hdma, но это не
 // критично: сами standalone-каналы ни от кого не зависят по данным.
 constexpr int kInitOrderDma = 170;
+// SPIFI после DMA — Тир из AUDIT_TZ_PERIPHERY_GAPS.md не покрывает SPIFI
+// отдельно (контроллер внешней памяти добавлен позже аудита), просто
+// занимает следующий свободный зазор, не зависит от остальной периферии.
+constexpr int kInitOrderSpifi = 180;
 
 template <typename ValueT>
 const ValueT* findOrNull(const std::map<std::string, ValueT>& map, const std::string& key)
@@ -88,8 +92,16 @@ const ValueT* findOrNull(const std::map<int, ValueT>& map, int key)
 // которую ждёт HAL_GPIO_Init.
 std::string buildPinMaskExpression(const std::vector<uint8_t>& pins);
 
+// Оборачивает уже готовый текст init-функции (как строит его каждый
+// *_contribution.cpp) парой маркеров "<label>_Init 0" сразу внутри "{" и
+// "<label>_Init 2" сразу перед закрывающей "}" — по аналогии с разметкой
+// STM32CubeMX (MX_<Периферия>_Init, секции 0/1/2), пользовательское решение
+// 2026-10-19 (как и набор секций main.c, см. project_codegen.cpp). Не
+// требует правок внутри каждого *_contribution.cpp — оборачивается уже
+// готовый текст, функция ищет первую "{\n" и последнюю "}\n" в строке.
+std::string wrapInitFunctionWithUserCodeMarkers(const std::string& label, const std::string& function_text);
+
 // "0, 3, 7" — только для текста комментария в сгенерированном коде.
-std::string buildPinListComment(const std::vector<uint8_t>& pins);
 
 // Рекурсивное копирование дерева каталогов с пропуском уже существующих
 // файлов в месте назначения ("не перезаписывать то, что пользователь мог

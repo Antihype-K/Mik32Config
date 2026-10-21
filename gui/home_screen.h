@@ -25,13 +25,18 @@ class HomeScreen : public QWidget
 public:
     explicit HomeScreen(QWidget* parent = nullptr);
 
-    // paths — абсолютные пути к файлам *.json, самый недавний первым.
+    // paths — абсолютные пути к файлам *.json или к каталогам импортированных
+    // C-проектов, самый недавний первым.
     void setRecentProjects(const QStringList& paths);
 
 signals:
     void newProjectRequested();
     void openProjectRequested();
     void recentProjectChosen(const QString& path);
+    void recentProjectRemoveRequested(const QString& path);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     QListWidget* recent_list_ = nullptr;

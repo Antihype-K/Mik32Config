@@ -219,9 +219,9 @@ TEST(ProjectCodegen, FreeRtosGeneratesSchedulerMainWithoutClassicWhileLoop)
     const std::string& main_c = firmware_result.config->main_c;
     EXPECT_TRUE(contains(main_c, "vTaskStartScheduler();"));
     EXPECT_TRUE(contains(main_c, "xTaskCreate(WorkerTask_Task,"));
-    // Классический demo-цикл (USER CODE BEGIN Loop) — только у не-FreeRTOS
+    // Классический demo-цикл (USER CODE BEGIN 3) — только у не-FreeRTOS
     // ветки, см. project_codegen.cpp.
-    EXPECT_FALSE(contains(main_c, "USER CODE BEGIN Loop"));
+    EXPECT_FALSE(contains(main_c, "USER CODE BEGIN 3"));
     EXPECT_FALSE(firmware_result.config->freertos_config_h.empty());
 }
 

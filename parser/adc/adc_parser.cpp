@@ -83,12 +83,17 @@ ParseResult<AdcConfig> parseAdcBlock(const nlohmann::json& adc)
     {
         return makeError("Поле \"ext_clb\" должно быть булевым");
     }
+    if (adc.contains("interrupt_enabled") && !adc["interrupt_enabled"].is_boolean())
+    {
+        return makeError("Поле \"interrupt_enabled\" должно быть булевым");
+    }
 
     AdcConfig config;
     config.type = "adc";
     config.channel = channel;
     config.ext_ref = adc["ext_ref"].get<bool>();
     config.ext_clb = adc["ext_clb"].get<bool>();
+    config.interrupt_enabled = adc.value("interrupt_enabled", false);
 
     return ParseResult<AdcConfig>{true, "", config};
 }

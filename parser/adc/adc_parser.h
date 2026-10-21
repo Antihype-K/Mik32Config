@@ -17,6 +17,7 @@ struct AdcConfig
     int channel; // 0-7, ADC_InitTypeDef.Sel
     bool ext_ref;
     bool ext_clb;
+    bool interrupt_enabled = false; // необязательное, см. schemas/adc.json
 };
 
 ParseResult<AdcConfig> parseAdcConfig(const std::string& file_name_path);

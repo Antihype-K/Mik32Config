@@ -293,6 +293,52 @@ TEST(GpioReverseMapper, MapsRealSinglePinOutputBlock)
     EXPECT_TRUE(hasNoteContaining((*mapped).notes, "drive_strength"));
 }
 
+// Регрессия: docs/examples/mik32-examples/HAL_EEPROM/src/main.c использует
+// "#define STATUS_LED_PORT GPIO_2" / "#define STATUS_LED_PIN GPIO_PIN_7" и
+// затем HAL_GPIO_Init(STATUS_LED_PORT, ...) / .Pin = STATUS_LED_PIN — без
+// macro_aliases оба поля уходили в unresolved, хотя значение однозначно
+// вычисляется. Параллельно это регрессионный тест на dangling-iterator
+// баг (resolveAliases возвращала строку, которая выходила из scope раньше,
+// чем std::smatch дочитывал capture-группу — краш std::stoi на HAL_EEPROM,
+// воспроизводился не всегда, см. docs/implementations/).
+TEST(GpioReverseMapper, ResolvesInstanceAndPinsThroughIdentifierAliasMacros)
+{
+    RawInitBlock block;
+    block.handle_name = "GPIO_InitStruct";
+    block.handle_type = "GPIO_InitTypeDef";
+    block.init_function_name = "HAL_GPIO_Init";
+    block.init_call_args = {"STATUS_LED_PORT", "GPIO_InitStruct"};
+    block.init_call_location = SourceLocation{"main.cpp", 259};
+    block.assignments = {
+        makeAssignment("Pin", "STATUS_LED_PIN", 256, "    GPIO_InitStruct.Pin = STATUS_LED_PIN;"),
+        makeAssignment("Mode", "HAL_GPIO_MODE_GPIO_OUTPUT", 257, "    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_OUTPUT;"),
+        makeAssignment("Pull", "HAL_GPIO_PULL_NONE", 258, "    GPIO_InitStruct.Pull = HAL_GPIO_PULL_NONE;"),
+    };
+    const std::unordered_map<std::string, std::string> aliases = {
+        {"STATUS_LED_PORT", "GPIO_2"},
+        {"STATUS_LED_PIN", "GPIO_PIN_7"},
+    };
+
+    std::optional<reverse_import::MappedBlock> mapped = reverse_import::mapGpioBlock(block, aliases);
+    ASSERT_TRUE(mapped.has_value());
+
+    EXPECT_EQ((*mapped).json_block.at("instance").get<int>(), 2);
+    ASSERT_TRUE((*mapped).json_block.at("pins").is_array());
+    ASSERT_EQ((*mapped).json_block.at("pins").size(), 1u);
+    EXPECT_EQ((*mapped).json_block.at("pins")[0].get<int>(), 7);
+
+    for (const reverse_import::FieldProvenance& provenance : (*mapped).provenance)
+    {
+        if (provenance.json_field == "instance" || provenance.json_field == "pins")
+        {
+            EXPECT_FALSE(provenance.unresolved) << provenance.json_field;
+            // Значение из alias-макроса, не из литерала — не editable, см.
+            // gpio_reverse_mapper.cpp.
+            EXPECT_FALSE(provenance.editable) << provenance.json_field;
+        }
+    }
+}
+
 // Битовое ИЛИ нескольких пинов в одном блоке (GPIO_PIN_0 | GPIO_PIN_1)
 // должно распарситься в массив из нескольких чисел.
 TEST(GpioReverseMapper, ParsesBitwiseOrPinsIntoArray)

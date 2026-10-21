@@ -21,13 +21,13 @@ namespace fs = std::filesystem;
 
 namespace
 {
-    // generated_projects/ гитигнорится (CLAUDE.md) — тот же принцип, что
-    // scratchDirFor в test_parsers.cpp (CMake-ветка), независимая копия по
-    // той же причине (см. rust_project_codegen.cpp — новая логика в новых
-    // файлах, не трогая существующие тесты).
+    // Пишем во временную директорию ОС, а не в generated_projects/ — та
+    // предназначена для реального вывода конфигуратора, а не для мусора от
+    // прогонов ctest (находка из /grill-me: test_rust_* папки там
+    // перезаписывались при каждом полном прогоне тестов).
     fs::path scratchDirFor(const std::string& name)
     {
-        return fs::path("../generated_projects") / ("test_rust_" + name);
+        return fs::temp_directory_path() / ("mik32_test_rust_" + name);
     }
 
     std::string readFileToString(const std::string& path)
@@ -380,6 +380,21 @@ TEST(RustProjectCodegen, WrittenProjectActuallyBuildsWithCargo)
     ASSERT_TRUE(fs::exists(output_dir / "vendor" / "pac"));
     ASSERT_TRUE(fs::exists(output_dir / "vendor" / "rt"));
 
+    // Регрессия (найдено реальной прошивкой на плате 2026-10-20): без фичи
+    // "memory-spifi" vendor/rt/build.rs подставляет memory_default.x
+    // (FLASH_TEXT=0x01000000, тестовая заглушка апстрима) вместо
+    // memory_spifi.x (FLASH_TEXT=0x80000000 — реальная область загрузки
+    // МИК32) — cargo build проходил чисто, но МК не стартовал после
+    // прошивки. См. buildDependencyLines в rust_project_codegen.cpp.
+    {
+        std::ifstream cargo_toml_file((output_dir / "Cargo.toml").string());
+        std::string cargo_toml((std::istreambuf_iterator<char>(cargo_toml_file)),
+                                std::istreambuf_iterator<char>());
+        EXPECT_NE(cargo_toml.find("mik32-rt"), std::string::npos);
+        EXPECT_NE(cargo_toml.find("memory-spifi"), std::string::npos)
+            << "mik32-rt без features=[\"memory-spifi\"] -> МК не стартует на реальной плате, см. комментарий выше";
+    }
+
     const fs::path absolute_output_dir = fs::absolute(output_dir);
     const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
     // popen, а не std::system: нужен реальный вывод cargo для диагностики
@@ -396,8 +411,32 @@ TEST(RustProjectCodegen, WrittenProjectActuallyBuildsWithCargo)
     const int status = pclose(pipe);
 
     EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
-    EXPECT_TRUE(fs::exists(output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware"))
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
         << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
+
+    // Прямая проверка entry point поверх фичи memory-spifi выше: даже если
+    // кто-то переименует фичу и Cargo.toml-строка перестанет совпадать, этот
+    // ассерт всё равно поймает настоящую причину отказа на плате —
+    // неправильный адрес точки входа.
+    if (fs::exists(elf_path))
+    {
+        const std::string readelf_command =
+            "riscv-none-elf-readelf -h \"" + elf_path.string() + "\" 2>&1";
+        FILE* readelf_pipe = popen(readelf_command.c_str(), "r");
+        ASSERT_NE(readelf_pipe, nullptr) << "не удалось запустить riscv-none-elf-readelf";
+        std::string readelf_output;
+        char readelf_buffer[1024];
+        while (fgets(readelf_buffer, sizeof(readelf_buffer), readelf_pipe) != nullptr)
+        {
+            readelf_output += readelf_buffer;
+        }
+        pclose(readelf_pipe);
+        EXPECT_NE(readelf_output.find("0x80000000"), std::string::npos)
+            << "Entry point должен быть 0x80000000 (реальная область загрузки МИК32), "
+               "иначе МК не стартует на плате при чистой линковке. readelf -h:\n"
+            << readelf_output;
+    }
 }
 
 // ТЗ §3.1.7.3: пользовательская правка внутри USER CODE BEGIN/END Loop

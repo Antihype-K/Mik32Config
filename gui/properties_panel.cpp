@@ -309,6 +309,90 @@ QWidget* PropertiesPanel::findFieldWidget(const QString& field_name) const
         : content_->findChild<QWidget*>(field_name, Qt::FindChildrenRecursively);
 }
 
+void PropertiesPanel::setDiagnostics(const std::vector<Diagnostic>& diagnostics)
+{
+    if (diagnostics_ == diagnostics)
+    {
+        return;
+    }
+    diagnostics_ = diagnostics;
+    applyFieldErrorStyles();
+}
+
+void PropertiesPanel::applyFieldErrorStyles()
+{
+    const std::vector<int> cleared_block_indices = (content_ == nullptr || document_ == nullptr || type_.isEmpty())
+        ? std::vector<int>()
+        : document_->blockIndices(type_.toStdString(), instance_);
+    for (const QString& field_name : error_styled_fields_)
+    {
+        QWidget* widget = findFieldWidget(field_name);
+        if (widget == nullptr)
+        {
+            continue;
+        }
+        // Поле больше не ошибка (пользователь исправил его) — если оно
+        // раньше было unresolved, помечаем жёлтым (ручной выбор), иначе
+        // снимаем стиль целиком. Без этой проверки поле молча становилось
+        // бы цветом по умолчанию вместо жёлтого после исправления.
+        const bool resolved_manually = std::any_of(cleared_block_indices.begin(), cleared_block_indices.end(),
+            [this, &field_name](int block_index)
+            { return document_->wasManuallyResolved(block_index, field_name.toStdString()); });
+        if (resolved_manually)
+        {
+            widget->setStyleSheet("color: #b38600; font-weight: bold;");
+            widget->setToolTip(QString::fromUtf8(
+                "Значение указано вручную — реверс-импорт не смог определить его сам."));
+        }
+        else
+        {
+            widget->setStyleSheet(QString());
+            widget->setToolTip(QString());
+        }
+    }
+    error_styled_fields_.clear();
+
+    if (content_ == nullptr || document_ == nullptr || type_.isEmpty())
+    {
+        return;
+    }
+    const std::vector<int> block_indices = document_->blockIndices(type_.toStdString(), instance_);
+    for (const Diagnostic& diagnostic : diagnostics_)
+    {
+        if (diagnostic.severity != DiagnosticSeverity::Error || diagnostic.field_name.empty())
+        {
+            continue;
+        }
+        if (std::find(block_indices.begin(), block_indices.end(), diagnostic.block_index) == block_indices.end())
+        {
+            continue;
+        }
+        const QString field_name = QString::fromStdString(diagnostic.field_name);
+        QWidget* widget = findFieldWidget(field_name);
+        if (widget == nullptr)
+        {
+            continue;
+        }
+        widget->setStyleSheet("color: #d92d20; font-weight: bold;");
+        widget->setToolTip(QString::fromStdString(diagnostic.message));
+        error_styled_fields_.push_back(field_name);
+    }
+}
+
+std::string PropertiesPanel::fieldErrorMessage(int block_index, const std::string& field_name) const
+{
+    for (const Diagnostic& diagnostic : diagnostics_)
+    {
+        if (diagnostic.severity == DiagnosticSeverity::Error
+            && diagnostic.block_index == block_index
+            && diagnostic.field_name == field_name)
+        {
+            return diagnostic.message;
+        }
+    }
+    return std::string();
+}
+
 void PropertiesPanel::refresh()
 {
     clearForm();
@@ -367,6 +451,11 @@ void PropertiesPanel::refresh()
     else if (type_ == "pvd")          buildPvdForm(layout);
     else if (type_ == "bus_watchdog") buildBusWatchdogForm(layout);
     else if (type_ == "dma")          buildDmaForm(layout, instance_);
+
+    // Форма пересобрана с нуля — прежние виджеты уничтожены, но diagnostics_
+    // (MainWindow::refreshEverything) может содержать ошибки для только что
+    // построенных полей (например, при переключении блока в дереве).
+    applyFieldErrorStyles();
 }
 
 void PropertiesPanel::buildDisabledPlaceholder(QVBoxLayout* layout, int instance)
@@ -490,6 +579,15 @@ void PropertiesPanel::buildGpioForm(QVBoxLayout* layout, int instance)
                 ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
                 : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
                       .arg(QString::fromStdString(detail)));
+        }
+        else if (document_->wasManuallyResolved(block_index, field_name))
+        {
+            // Поле раньше было unresolved (reverse-import не смог его
+            // разобрать), пользователь выбрал значение явно сам — жёлтый,
+            // чтобы отличить от полей, которые импорт распознал сам.
+            label->setStyleSheet("color: #b38600; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение указано вручную — реверс-импорт не смог определить его сам."));
         }
         return label;
     };
@@ -664,6 +762,15 @@ void PropertiesPanel::buildUartForm(QVBoxLayout* layout, int instance)
                 ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
                 : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
                       .arg(QString::fromStdString(detail)));
+        }
+        else if (document_->wasManuallyResolved(block_index, field_name))
+        {
+            // Поле раньше было unresolved (reverse-import не смог его
+            // разобрать), пользователь выбрал значение явно сам — жёлтый,
+            // чтобы отличить от полей, которые импорт распознал сам.
+            label->setStyleSheet("color: #b38600; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение указано вручную — реверс-импорт не смог определить его сам."));
         }
         return label;
     };
@@ -1070,6 +1177,15 @@ void PropertiesPanel::buildTimer16Form(QVBoxLayout* layout, int instance)
                 : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
                       .arg(QString::fromStdString(detail)));
         }
+        else if (document_->wasManuallyResolved(block_index, field_name))
+        {
+            // Поле раньше было unresolved (reverse-import не смог его
+            // разобрать), пользователь выбрал значение явно сам — жёлтый,
+            // чтобы отличить от полей, которые импорт распознал сам.
+            label->setStyleSheet("color: #b38600; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение указано вручную — реверс-импорт не смог определить его сам."));
+        }
         return label;
     };
     if (!unresolved_fields.empty())
@@ -1391,6 +1507,15 @@ void PropertiesPanel::buildI2cForm(QVBoxLayout* layout, int instance)
                 : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
                       .arg(QString::fromStdString(detail)));
         }
+        else if (document_->wasManuallyResolved(block_index, field_name))
+        {
+            // Поле раньше было unresolved (reverse-import не смог его
+            // разобрать), пользователь выбрал значение явно сам — жёлтый,
+            // чтобы отличить от полей, которые импорт распознал сам.
+            label->setStyleSheet("color: #b38600; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение указано вручную — реверс-импорт не смог определить его сам."));
+        }
         return label;
     };
     if (!unresolved_fields.empty())
@@ -1665,6 +1790,15 @@ void PropertiesPanel::buildSpiForm(QVBoxLayout* layout, int instance)
                 : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
                       .arg(QString::fromStdString(detail)));
         }
+        else if (document_->wasManuallyResolved(block_index, field_name))
+        {
+            // Поле раньше было unresolved (reverse-import не смог его
+            // разобрать), пользователь выбрал значение явно сам — жёлтый,
+            // чтобы отличить от полей, которые импорт распознал сам.
+            label->setStyleSheet("color: #b38600; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение указано вручную — реверс-импорт не смог определить его сам."));
+        }
         return label;
     };
     if (!unresolved_fields.empty())
@@ -1879,6 +2013,15 @@ void PropertiesPanel::buildTimer32Form(QVBoxLayout* layout, int instance)
                 ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
                 : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
                       .arg(QString::fromStdString(detail)));
+        }
+        else if (document_->wasManuallyResolved(block_index, field_name))
+        {
+            // Поле раньше было unresolved (reverse-import не смог его
+            // разобрать), пользователь выбрал значение явно сам — жёлтый,
+            // чтобы отличить от полей, которые импорт распознал сам.
+            label->setStyleSheet("color: #b38600; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение указано вручную — реверс-импорт не смог определить его сам."));
         }
         return label;
     };
@@ -2385,7 +2528,12 @@ void PropertiesPanel::buildTimer32ChannelRow(QVBoxLayout* channels_layout, int b
                     emit documentChanged();
                 }
             }));
+    }
 
+    // Noise — поле TIMER32_CHANNEL_HandleTypeDef общее для всех режимов канала
+    // (mik32_hal_timer32.h: HAL_TIMER32_CHANNEL_NoiseTypeDef Noise), не только
+    // capture; реальный вендорный код задаёт его и на PWM-каналах.
+    {
         QCheckBox* noise = new QCheckBox(QString::fromUtf8("Фильтр помех"));
         noise->setChecked(channel.contains("noise_filter") && channel["noise_filter"].is_boolean()
             && channel["noise_filter"].get<bool>());
@@ -2778,7 +2926,12 @@ void PropertiesPanel::buildWdtForm(QVBoxLayout* layout)
     reload_ms->setSuffix(QString::fromUtf8(" мс"));
     connect(reload_ms, &QSpinBox::valueChanged, this, [this, block_index](int value)
     { document_->setField(block_index, "reload_ms", value); emit documentChanged(); });
-    form->addRow(QString::fromUtf8("Время до сброса:"), reload_ms);
+    // objectName = "reload_ms" — то же имя, что в schemas/wdt.json и в тексте
+    // ошибки парсера ("Поле \"reload_ms\"..."), чтобы ProjectDocument::validate()
+    // связала диагностику именно с этой строкой формы (см. applyFieldErrorStyles).
+    QLabel* reload_ms_label = new QLabel(QString::fromUtf8("Время до сброса:"));
+    reload_ms_label->setObjectName("reload_ms");
+    form->addRow(reload_ms_label, reload_ms);
 
     layout->addWidget(box);
 
@@ -2881,6 +3034,15 @@ void PropertiesPanel::buildAdcForm(QVBoxLayout* layout)
                 ? QString::fromUtf8("Значение не удалось определить при импорте — укажите явно.")
                 : QString::fromUtf8("Не удалось разобрать: \"%1\" — укажите значение явно.")
                       .arg(QString::fromStdString(detail)));
+        }
+        else if (document_->wasManuallyResolved(block_index, field_name))
+        {
+            // Поле раньше было unresolved (reverse-import не смог его
+            // разобрать), пользователь выбрал значение явно сам — жёлтый,
+            // чтобы отличить от полей, которые импорт распознал сам.
+            label->setStyleSheet("color: #b38600; font-weight: bold;");
+            label->setToolTip(QString::fromUtf8(
+                "Значение указано вручную — реверс-импорт не смог определить его сам."));
         }
         return label;
     };

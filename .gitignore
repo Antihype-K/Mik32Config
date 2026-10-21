@@ -1,6 +1,8 @@
 *.zip
 build/
 build-win64/
+build_test/
+Testing/
 *.o
 generated_projects/
 # Cargo build output внутри вендоренного Rust-снэпшота (templates/

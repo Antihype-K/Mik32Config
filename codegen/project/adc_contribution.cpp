@@ -49,8 +49,15 @@ ParseResult<PeripheralContribution> buildAdcContribution(const AdcConfig& config
     }
     init_c << " * Переключение на другие каналы в рантайме (ADC_SEL_CHANNEL/\n"
               " * HAL_ADC_SINGLE_AND_SET_CH) остаётся за пользователем — этот кодоген\n"
-              " * конфигурирует только начальный канал (см. docs/implementations/adc.md).\n"
-              " */\n"
+              " * конфигурирует только начальный канал (см. docs/implementations/adc.md).\n";
+    if (config.interrupt_enabled)
+    {
+        init_c << " * EPIC-маскирование (HAL_EPIC_MaskEdgeSet(HAL_EPIC_ADC_MASK)) и\n"
+                  " * HAL_IRQ_EnableInterrupts(), как и подключение ADC_IRQHandler_Template()\n"
+                  " * (см. ниже) к своему raw_trap_handler, остаются на стороне пользователя —\n"
+                  " * тот же паттерн, что у GPIO/SPI/TSENS/Timer32.\n";
+    }
+    init_c << " */\n"
               "void " << contribution.init_function_name << "(void)\n"
               "{\n"
               "    hadc.Instance = ANALOG_REG;\n"
@@ -62,6 +69,27 @@ ParseResult<PeripheralContribution> buildAdcContribution(const AdcConfig& config
               "    HAL_ADC_Init(&hadc);\n"
               "}\n";
     contribution.init_function_text = init_c.str();
+
+    if (config.interrupt_enabled)
+    {
+        std::ostringstream irq_template;
+        irq_template << "/*\n"
+                        " * Шаблон обработчика прерывания ADC. Вызовите из своего raw_trap_handler\n"
+                        " * внутри if (EPIC_CHECK_ADC()) { ... }. В отличие от RTC, ADC не имеет\n"
+                        " * отдельного статусного флага периферии для сброса (mik32_hal_adc.c:\n"
+                        " * HAL_ADC_GetValue просто читает ADC_VALUE) — сброс линии EPIC одним\n"
+                        " * общим HAL_EPIC_Clear(...) в raw_trap_handler достаточен.\n"
+                        " */\n"
+                        "void ADC_IRQHandler_Template(void)\n"
+                        "{\n"
+                        "    uint16_t value = HAL_ADC_GetValue(&hadc);\n"
+                        "\n"
+                        "    /* USER TODO: обработать value. */\n"
+                        "    (void)value;\n"
+                        "}\n";
+        contribution.helper_functions_text = irq_template.str();
+        contribution.irq_handler_function_name = "ADC_IRQHandler_Template";
+    }
 
     return ParseResult<PeripheralContribution>{true, "", contribution};
 }

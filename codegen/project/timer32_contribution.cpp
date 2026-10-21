@@ -340,10 +340,14 @@ ParseResult<PeripheralContribution> buildTimer32Contribution(
                 return ParseResult<PeripheralContribution>{
                     false, "Timer32ChannelConfig.capture_edge отсутствует в knowledge_base/timer32.json", std::nullopt};
             }
-            init_c << "    " << channel_handle << ".CaptureEdge = " << *edge_enum << ";\n"
-                      "    " << channel_handle << ".Noise = "
-                   << (channel.noise_filter ? "TIMER32_CHANNEL_FILTER_ON" : "TIMER32_CHANNEL_FILTER_OFF") << ";\n";
+            init_c << "    " << channel_handle << ".CaptureEdge = " << *edge_enum << ";\n";
         }
+
+        // Noise — поле TIMER32_CHANNEL_HandleTypeDef общее для всех режимов
+        // (mik32_hal_timer32.h:138), не только capture; реальный вендорный код
+        // (controlFirmware/main.cpp) выставляет его и на PWM-каналах.
+        init_c << "    " << channel_handle << ".Noise = "
+               << (channel.noise_filter ? "TIMER32_CHANNEL_FILTER_ON" : "TIMER32_CHANNEL_FILTER_OFF") << ";\n";
 
         init_c << "\n"
                   "    HAL_Timer32_Channel_Init(&" << channel_handle << ");\n";

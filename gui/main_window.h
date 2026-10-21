@@ -117,6 +117,7 @@ private slots:
     void onHomeNewProjectRequested();
     void onHomeOpenProjectRequested();
     void onHomeRecentProjectChosen(const QString& path);
+    void onHomeRecentProjectRemoveRequested(const QString& path);
     void onNewProjectCreateRequested(const NewProjectParams& params);
 
 private:
@@ -156,10 +157,16 @@ private:
     // после применения документ переимпортируется заново с диска.
     void applyReverseImportChanges();
 
+    // Общая часть onImportProject/openPath: каталог в "недавних" может быть
+    // импортированным C-проектом, а не project.json — его открытие означает
+    // повторный reverse-import с диска (project.json туда никогда не пишется).
+    bool importFromDirectory(const QString& dir);
+
     // Человекочитаемое имя блока для сообщений и подсказок: пользовательское
     // имя, если задано, иначе штатное "USART_0".
     QString blockTitle(const QString& type, int instance) const;
     static QString defaultTitle(const QString& type, int instance);
+    void showProjectGeneratedDialog(const QString& output_dir, const QString& main_file_name);
 
     ProjectKnowledge knowledge_;
     PackageKnowledge package_;

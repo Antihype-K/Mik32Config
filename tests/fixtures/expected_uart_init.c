@@ -15,6 +15,9 @@ USART_HandleTypeDef husart_0;
  */
 void UART_0_Init(void)
 {
+    /* USER CODE BEGIN UART_0_Init 0 */
+    /* USER CODE END UART_0_Init 0 */
+
     husart_0.Instance = UART_0;
     husart_0.transmitting = Enable;
     husart_0.receiving = Enable;
@@ -55,6 +58,9 @@ void UART_0_Init(void)
     husart_0.baudrate = 38400;
 
     HAL_USART_Init(&husart_0);
+
+    /* USER CODE BEGIN UART_0_Init 2 */
+    /* USER CODE END UART_0_Init 2 */
 }
 
 /*

@@ -13,7 +13,8 @@
           "index": 0,
           "mode": "pwm",
           "ocr": 250,
-          "pwm_invert": false
+          "pwm_invert": false,
+          "noise_filter": true
         }
       ]
     }

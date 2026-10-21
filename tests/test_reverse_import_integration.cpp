@@ -541,6 +541,67 @@ void GPIO_Demo_Init()
     ASSERT_EQ(imported.document["peripherals"].size(), 2u);
 }
 
+TEST_F(ReverseImportIntegrationTest, AttachesGpioInterruptLineToMatchingPinBlock)
+{
+    // Given: docs/examples/mik32-examples/HAL_Blink_IRQ — вызов
+    // HAL_GPIO_InitInterruptLine не принимает хендл вообще, поэтому обычный
+    // RawInitBlock/trailing_calls механизм его не видит (см.
+    // attachGpioInterrupts в reverse_import.cpp).
+    writeFile("src/main.c", R"(
+#include "mik32_hal.h"
+
+GPIO_InitTypeDef GPIO_InitStruct;
+
+void GPIO_Init()
+{
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
+    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_INPUT;
+    GPIO_InitStruct.Pull = HAL_GPIO_PULL_NONE;
+    HAL_GPIO_Init(GPIO_2, &GPIO_InitStruct);
+
+    HAL_GPIO_InitInterruptLine(GPIO_MUX_PORT2_6_LINE_2, GPIO_INT_MODE_RISING);
+}
+)");
+
+    const ImportedProject imported = importProjectFromDirectory(root_.string());
+
+    ASSERT_EQ(imported.document["peripherals"].size(), 1u);
+    const auto& block = imported.document["peripherals"][0];
+    ASSERT_TRUE(block.contains("interrupts"));
+    ASSERT_EQ(block["interrupts"].size(), 1u);
+    EXPECT_EQ(block["interrupts"][0]["pin"], 6);
+    EXPECT_EQ(block["interrupts"][0]["line"], 2);
+    EXPECT_EQ(block["interrupts"][0]["trigger"], "rising");
+}
+
+TEST_F(ReverseImportIntegrationTest, GpioInterruptLineForUnknownPinIsReportedNotSilentlyDropped)
+{
+    writeFile("src/main.c", R"(
+#include "mik32_hal.h"
+
+GPIO_InitTypeDef GPIO_InitStruct;
+
+void GPIO_Init()
+{
+    GPIO_InitStruct.Pin = GPIO_PIN_5;
+    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_INPUT;
+    GPIO_InitStruct.Pull = HAL_GPIO_PULL_NONE;
+    HAL_GPIO_Init(GPIO_2, &GPIO_InitStruct);
+
+    HAL_GPIO_InitInterruptLine(GPIO_MUX_PORT2_6_LINE_2, GPIO_INT_MODE_RISING);
+}
+)");
+
+    const ImportedProject imported = importProjectFromDirectory(root_.string());
+
+    ASSERT_EQ(imported.document["peripherals"].size(), 1u);
+    EXPECT_FALSE(imported.document["peripherals"][0].contains("interrupts"));
+
+    const bool has_note = std::any_of(imported.notes.begin(), imported.notes.end(),
+        [](const std::string& note) { return note.find("не найденный ни в одном распознанном блоке GPIO") != std::string::npos; });
+    EXPECT_TRUE(has_note);
+}
+
 TEST_F(ReverseImportIntegrationTest, ChangingUnmappedFieldIsReportedAsUnpatchableNotSilentlyDropped)
 {
     writeFile("src/devices.c", kDevicesC);
@@ -575,6 +636,53 @@ TEST_F(ReverseImportIntegrationTest, ChangingUnmappedFieldIsReportedAsUnpatchabl
         }
     }
     EXPECT_TRUE(found);
+}
+
+// Реальный случай с docs/examples/mik32/controlFirmware/src/utils.cpp:
+// функция-обёртка временно переводит I2C-пины в чистый GPIO для бит-бэнгинга
+// шины и возвращает их обратно, но единственный вызов этой обёртки
+// закомментирован — её GPIO-блок не должен создавать конфликт с реальным I2C.
+TEST_F(ReverseImportIntegrationTest, InitBlockInsideFunctionWithOnlyCommentedOutCallIsSkipped)
+{
+    writeFile("src/main.c", R"(
+#include "mik32_hal.h"
+
+I2C_HandleTypeDef hi2c1;
+GPIO_InitTypeDef GPIO_InitStruct;
+
+void tca_select(uint8_t channel)
+{
+    //i2c_bus_recovery(hi2c1, 32000000, 100000);
+}
+
+void i2c_bus_recovery(I2C_HandleTypeDef &i2c, uint32_t clock_frequency, uint32_t i2c_frequency)
+{
+    GPIO_InitStruct.Pin = GPIO_PIN_12;
+    GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_OUTPUT;
+    GPIO_InitStruct.Pull = HAL_GPIO_PULL_UP;
+    HAL_GPIO_Init(GPIO_1, &GPIO_InitStruct);
+}
+
+void I2C1_Init()
+{
+    hi2c1.Instance = I2C_1;
+    hi2c1.Init.Mode = HAL_I2C_MODE_MASTER;
+    HAL_I2C_Init(&hi2c1);
+}
+)");
+
+    const ImportedProject imported = importProjectFromDirectory(root_.string());
+
+    std::set<std::string> types;
+    for (const auto& block : imported.document["peripherals"])
+    {
+        types.insert(block.value("type", std::string()));
+    }
+    EXPECT_EQ(types, (std::set<std::string>{"i2c"}));
+
+    const bool has_note = std::any_of(imported.notes.begin(), imported.notes.end(),
+        [](const std::string& note) { return note.find("i2c_bus_recovery") != std::string::npos; });
+    EXPECT_TRUE(has_note);
 }
 
 } // namespace

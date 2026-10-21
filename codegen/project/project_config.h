@@ -42,6 +42,7 @@
 #include "pvd_parser.h"
 #include "bus_watchdog_parser.h"
 #include "dma_parser.h"
+#include "spifi_parser.h"
 
 // Выбор способа упаковки сгенерированной прошивки — второй, независимый от
 // PlatformIO путь (codegen/project/cmake_project_codegen.h). PlatformIO
@@ -169,6 +170,10 @@ struct ProjectConfig
     // соглашение, что у Timer32/SPI/DAC. Делят глобальный пул из 4 каналов
     // с встроенным полем "dma" у UART (project_config.cpp, used_dma_channels).
     std::vector<DmaConfig> dma_blocks;
+
+    // SPIFI — тоже единственный глобальный блок (нет instance,
+    // schemas/spifi.json), покрывает только Memory Mode.
+    std::optional<SpifiConfig> spifi_block;
 
     // --- Поля упаковки проекта (codegen/project/cmake_project_codegen.h) ---
     // Все пять — необязательные поля верхнего уровня JSON-документа, со
