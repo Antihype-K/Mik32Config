@@ -82,6 +82,33 @@ std::optional<std::string> parseClockSource(const std::string& text)
 
 } // namespace
 
+std::optional<std::string> serializeTsensFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (field_name == "clock_source")
+    {
+        if (!new_value.is_string()) return std::nullopt;
+        const std::string v = new_value.get<std::string>();
+        if (v == "sys_clk") return "HAL_TSENS_SYS_CLK";
+        if (v == "hclk") return "HAL_TSENS_HCLK";
+        if (v == "osc32m") return "HAL_TSENS_OSC32M";
+        if (v == "hsi32m") return "HAL_TSENS_HSI32M";
+        if (v == "osc32k") return "HAL_TSENS_OSC32K";
+        if (v == "lsi32k") return "HAL_TSENS_LSI32K";
+        return std::nullopt;
+    }
+    if (field_name == "frequency_hz")
+    {
+        if (!new_value.is_number_integer()) return std::nullopt;
+        const long long value = new_value.get<long long>();
+        if (value < 1 || value > 100000) return std::nullopt;
+        return std::to_string(value);
+    }
+    return std::nullopt;
+}
+
 std::optional<MappedBlock> mapTsensBlock(const RawInitBlock& block)
 {
     if (block.handle_type != "TSENS_HandleTypeDef")

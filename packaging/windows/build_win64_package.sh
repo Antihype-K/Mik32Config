@@ -54,6 +54,8 @@ mkdir -p "$PKG_ROOT/examples"
 cp "$REPO_ROOT/tests/fixtures/gpio_codegen_output.json" "$PKG_ROOT/examples/" 2>/dev/null || true
 cp "$REPO_ROOT/tests/fixtures/uart_codegen_output.json" "$PKG_ROOT/examples/" 2>/dev/null || true
 
+cp "$REPO_ROOT/packaging/windows/tutorial.docx" "$PKG_ROOT/"
+
 echo "Portable-каталог: $PKG_ROOT"
 
 # --- zip ---------------------------------------------------------------

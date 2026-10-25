@@ -233,3 +233,15 @@ TEST(DmaReverseMapper, UnparseableRequestLiteralIsUnresolvedNotDefaulted)
     ASSERT_NE(request_provenance, nullptr);
     EXPECT_TRUE(request_provenance->unresolved);
 }
+
+TEST(DmaReverseMapper, SerializeFieldValueRoundTrip)
+{
+    using reverse_import::serializeDmaFieldValue;
+    EXPECT_EQ(serializeDmaFieldValue("instance", 2, ""), "DMA_CHANNEL_2");
+    EXPECT_EQ(serializeDmaFieldValue("priority", "high", ""), "DMA_CHANNEL_PRIORITY_HIGH");
+    EXPECT_EQ(serializeDmaFieldValue("element_size", "word", ""), "DMA_CHANNEL_SIZE_WORD");
+    EXPECT_FALSE(serializeDmaFieldValue("instance", 7, "").has_value());
+    // direction/request/buffer_size_bytes/irq_enable — не однострочные поля,
+    // остаются unpatchable (см. dma_reverse_mapper.h).
+    EXPECT_FALSE(serializeDmaFieldValue("direction", "memory_to_memory", "").has_value());
+}

@@ -117,3 +117,22 @@ TEST(CrcReverseMapper, RejectsNonCrcHandleType)
     block.handle_type = "I2C_HandleTypeDef";
     EXPECT_FALSE(mapCrcBlock(block).has_value());
 }
+
+TEST(CrcReverseMapper, SerializeFieldRoundTrip)
+{
+    using reverse_import::serializeCrcFieldValue;
+    EXPECT_EQ(serializeCrcFieldValue("poly", 79764919, ""), "79764919");
+    EXPECT_EQ(serializeCrcFieldValue("init", 4294967295LL, ""), "4294967295");
+    EXPECT_EQ(serializeCrcFieldValue("input_reverse", true, ""), "CRC_REFIN_TRUE");
+    EXPECT_EQ(serializeCrcFieldValue("output_reverse", false, ""), "CRC_REFOUT_FALSE");
+    EXPECT_EQ(serializeCrcFieldValue("output_inversion", true, ""), "CRC_OUTPUTINVERSION_ON");
+}
+
+TEST(CrcReverseMapper, SerializeFieldRejectsOutOfRangeOrWrongType)
+{
+    using reverse_import::serializeCrcFieldValue;
+    EXPECT_FALSE(serializeCrcFieldValue("poly", -1, "").has_value());
+    EXPECT_FALSE(serializeCrcFieldValue("poly", 4294967296LL, "").has_value());
+    EXPECT_FALSE(serializeCrcFieldValue("input_reverse", "true", "").has_value());
+    EXPECT_FALSE(serializeCrcFieldValue("preset", "crc32", "").has_value());
+}

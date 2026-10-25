@@ -162,3 +162,13 @@ TEST(CryptoReverseMapper, UnparseableLiteralIsUnresolvedNotDefaulted)
     ASSERT_NE(algorithm_provenance, nullptr);
     EXPECT_FALSE(algorithm_provenance->unresolved);
 }
+
+TEST(CryptoReverseMapper, SerializeFieldValueRoundTrip)
+{
+    using reverse_import::serializeCryptoFieldValue;
+    EXPECT_EQ(serializeCryptoFieldValue("algorithm", "magma", ""), "CRYPTO_ALG_MAGMA");
+    EXPECT_EQ(serializeCryptoFieldValue("cipher_mode", "ctr", ""), "CRYPTO_CIPHER_MODE_CTR");
+    EXPECT_EQ(serializeCryptoFieldValue("swap_mode", "bit", ""), "CRYPTO_SWAP_MODE_BIT");
+    EXPECT_EQ(serializeCryptoFieldValue("order_mode", "msw", ""), "CRYPTO_ORDER_MODE_MSW");
+    EXPECT_FALSE(serializeCryptoFieldValue("algorithm", "des", "").has_value());
+}

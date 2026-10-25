@@ -16,7 +16,9 @@
 #define MIK32_CONFIGURATOR_CRYPTO_REVERSE_MAPPER_H
 
 #include <optional>
+#include <string>
 
+#include "json.hpp"
 #include "mapped_block.h"
 #include "reverse_import_scanner.h"
 
@@ -25,6 +27,13 @@ namespace reverse_import
 
 // block.handle_type должен быть "Crypto_HandleTypeDef", иначе nullopt.
 std::optional<MappedBlock> mapCryptoBlock(const RawInitBlock& block);
+
+// Обратная сериализация для точечной правки — ключ/IV сюда никогда не
+// попадают (см. комментарий выше про "_comment_no_key_no_iv").
+std::optional<std::string> serializeCryptoFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text);
 
 } // namespace reverse_import
 

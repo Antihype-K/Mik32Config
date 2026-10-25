@@ -70,6 +70,30 @@
       "values": ["none", "111111x", "11111xx", "1111xxx", "111xxxx", "11xxxxx", "1xxxxxx", "1111111"],
       "default": "none",
       "_comment": "Только для mode=slave И dual_address_enabled=true. mik32_hal_i2c.h, HAL_I2C_OwnAddress2MaskTypeDef (I2C_OWNADDRESS2_MASK_DISABLE..1111111) — число 'x' в имени = число младших бит OA2, маскируемых при сравнении. 'none' = I2C_OWNADDRESS2_MASK_DISABLE (точное сравнение, без маски)."
+    },
+    "dma": {
+      "type": "array",
+      "_comment": "mik32_hal_i2c.h: HAL_I2C_Master_Transmit_DMA/Receive_DMA и Slave_Transmit_DMA/Receive_DMA (mik32_hal_i2c.c:983-1113) существуют в реально установленном HAL (framework-mik32v2-sdk) и требуют только, чтобы hi2c.hdmatx/hdmarx указывали на заранее настроенные DMA_ChannelHandleTypeDef — сами функции пересылку запускают (HAL_DMA_Start внутри), адрес/длину буфера передаёт вызывающий пользовательский код в рантайме, поэтому в отличие от UART-DMA (которая сама объявляет статический буфер) здесь схема не содержит buffer_size_bytes/element_size/increment. Поля ChannelInit (Priority=VERY_HIGH, Size=BYTE, ReadAck=WriteAck=DISABLE) подтверждены двумя реальными вендорными примерами: docs/examples/mik32-examples/HAL_DMA_I2C_Master/src/main.c (DMA_CH0_Init/DMA_CH1_Init) и HAL_DMA_I2C_Slave/src/main.c — идентичные значения в обоих. Не более 2 элементов (по одному на направление tx/rx) — глобальный пул на 4 канала ПДП на ВЕСЬ конфиг (ТЗ §3.1.6 п.2), как и у UART, реализовано в parser/i2c/i2c_parser.cpp и codegen/project/project_config.cpp.",
+      "max_length": 2,
+      "item_required_fields": ["channel", "direction"],
+      "item_fields": {
+        "channel": {
+          "type": "integer",
+          "min": 0,
+          "max": 3,
+          "_comment": "mik32_hal_dma.h, HAL_DMA_ChannelIndexTypeDef — 4 канала DMA на весь МК (dma_config.h, DMA_CHANNEL_COUNT)."
+        },
+        "direction": {
+          "type": "enum",
+          "values": ["tx", "rx"],
+          "_comment": "tx -> DMA читает из памяти и пишет в TXDR (ReadMode=MEMORY/WriteMode=PERIPHERY), rx -> наоборот (ReadMode=PERIPHERY/WriteMode=MEMORY) — см. вендорные примеры выше, DMA_CH0_Init/DMA_CH1_Init."
+        }
+      }
+    },
+    "interrupt_mode": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "mik32_hal_i2c.h: HAL_I2C_Master_Transmit_IT/Receive_IT и Slave_Transmit_IT/Receive_IT (mik32_hal_i2c.c:1139+) сами настраивают маску прерываний через HAL_I2C_InterruptEnable внутри себя — не требуют от кодогена ничего, кроме готового обработчика, который будет реально вызван ядром. true включает генерацию шаблона I2C_<instance>_IRQHandler_Template(void) (вызывает HAL_I2C_IRQHandler) — по образцу codegen/project/spi_contribution.cpp. Линия EPIC подтверждена датащитом/заголовками: shared/periphery/epic.h строки 19-20 (EPIC_LINE_I2C_0_S=6, EPIC_LINE_I2C_1_S=7), mik32_hal_irq.h (HAL_EPIC_I2C_0_MASK/HAL_EPIC_I2C_1_MASK, EPIC_CHECK_I2C_0/1) — включение линии в EPIC и HAL_IRQ_EnableInterrupts() остаются на стороне пользователя, как и у SPI/GPIO IRQ."
     }
   }
 }

@@ -114,6 +114,31 @@ std::optional<bool> parseExtClb(const std::string& text)
 
 } // namespace
 
+std::optional<std::string> serializeAdcFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (field_name == "channel")
+    {
+        if (!new_value.is_number_integer()) return std::nullopt;
+        const int value = new_value.get<int>();
+        if (value < 0 || value > 7) return std::nullopt;
+        return "ADC_CHANNEL" + std::to_string(value);
+    }
+    if (field_name == "ext_ref")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "ADC_EXTREF_ON" : "ADC_EXTREF_OFF";
+    }
+    if (field_name == "ext_clb")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "ADC_EXTCLB_ADCREF" : "ADC_EXTCLB_CLBREF";
+    }
+    return std::nullopt;
+}
+
 std::optional<MappedBlock> mapAdcBlock(const RawInitBlock& block)
 {
     if (block.handle_type != "ADC_HandleTypeDef")

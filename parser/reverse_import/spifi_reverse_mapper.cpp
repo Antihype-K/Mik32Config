@@ -200,4 +200,45 @@ std::optional<MappedBlock> mapSpifiBlock(const RawInitBlock& block)
     return result;
 }
 
+std::optional<std::string> serializeSpifiFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (field_name == "cache_enabled")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "SPIFI_CACHE_ENABLE" : "SPIFI_CACHE_DISABLE";
+    }
+    if (field_name == "cache_limit" || field_name == "cmd_interim_length" || field_name == "cmd_op_code")
+    {
+        if (!new_value.is_number_integer()) return std::nullopt;
+        return std::to_string(new_value.get<long long>());
+    }
+    if (field_name == "cmd_field_form")
+    {
+        if (!new_value.is_string()) return std::nullopt;
+        const std::string v = new_value.get<std::string>();
+        if (v == "all_serial") return "SPIFI_FIELDFORM_ALL_SERIAL";
+        if (v == "data_parallel") return "SPIFI_FIELDFORM_DATA_PARALLEL";
+        if (v == "opcode_serial") return "SPIFI_FIELDFORM_OPCODE_SERIAL";
+        if (v == "all_parallel") return "SPIFI_FIELDFORM_ALL_PARALLEL";
+        return std::nullopt;
+    }
+    if (field_name == "cmd_frame_form")
+    {
+        if (!new_value.is_string()) return std::nullopt;
+        const std::string v = new_value.get<std::string>();
+        if (v == "opcode") return "SPIFI_FRAMEFORM_OPCODE";
+        if (v == "opcode_1addr") return "SPIFI_FRAMEFORM_OPCODE_1ADDR";
+        if (v == "opcode_2addr") return "SPIFI_FRAMEFORM_OPCODE_2ADDR";
+        if (v == "opcode_3addr") return "SPIFI_FRAMEFORM_OPCODE_3ADDR";
+        if (v == "opcode_4addr") return "SPIFI_FRAMEFORM_OPCODE_4ADDR";
+        if (v == "addr_3") return "SPIFI_FRAMEFORM_3ADDR";
+        if (v == "addr_4") return "SPIFI_FRAMEFORM_4ADDR";
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 } // namespace reverse_import

@@ -58,6 +58,9 @@ namespace
         candidates << application_dir
                    << application_dir + "/.."
                    << application_dir + "/../..";
+        // 4. .deb-установка: бинарник в /usr/bin, ресурсы упакованы в
+        // /usr/share/mik32-configurator (см. install(DIRECTORY ...) в CMakeLists.txt).
+        candidates << application_dir + "/../share/mik32-configurator";
 
         for (const QString& candidate : candidates)
         {

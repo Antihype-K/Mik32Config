@@ -508,6 +508,15 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
             break;
         }
     }
+    // schemas/i2c.json "dma" — тот же общий hdma/DMA_Init(), см. комментарий выше.
+    for (const I2cConfig& block : config.i2c_blocks)
+    {
+        if (!block.dma.empty())
+        {
+            any_dma_usage = true;
+            break;
+        }
+    }
 
     // --- GPIO: блоки группируются по instance -------------------------------
     // Обоснование группировки — codegen/project/gpio_contribution.h: несколько
@@ -929,7 +938,8 @@ ParseResult<GeneratedProjectFirmware> generateProjectFirmware(
     }
     for (const PeripheralContribution& contribution : contributions)
     {
-        main_c << "    " << contribution.init_function_name << "();\n";
+        main_c << wrapInitCallWithUserCodeMarkers(
+            contribution.label, "    " + contribution.init_function_name + "();", "    ");
     }
     main_c << "\n"
               "    /* USER CODE BEGIN Init */\n"

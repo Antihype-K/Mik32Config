@@ -98,7 +98,8 @@ std::optional<MappedBlock> scanBusWatchdogBlockFromFileContent(
                 provenance.location = SourceLocation{file_path, found->second};
                 provenance.original_raw_value_text = match[1].str();
                 provenance.original_full_line_text = found->first;
-                provenance.editable = false;
+                // editable=true: serializeBusWatchdogFieldValue умеет записать это поле обратно.
+                provenance.editable = true;
                 result.provenance.push_back(provenance);
             }
             else
@@ -130,6 +131,31 @@ std::optional<MappedBlock> scanBusWatchdogBlockFromFileContent(
     }
 
     return result;
+}
+
+std::optional<std::string> serializeBusWatchdogFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text)
+{
+    (void)original_raw_value_text;
+
+    if (field_name == "timeout")
+    {
+        if (!new_value.is_number_integer())
+        {
+            return std::nullopt;
+        }
+        return std::to_string(new_value.get<long long>());
+    }
+
+    // eeprom_enabled/spifi_enabled/dom3_enabled: значение кодируется
+    // ПРИСУТСТВИЕМ/ОТСУТСТВИЕМ отдельной строки "bus_watchdog_enable |= (1 << ...);",
+    // а не литералом в одном месте — mapWdtBlock/scanBusWatchdogBlockFromFileContent
+    // даже не заводит для них FieldProvenance (нет location для вставки/удаления
+    // строки), поэтому они сюда и не попадут через обычный путь, но на случай
+    // прямого вызова — не угадываем, как вставить/удалить строку.
+    return std::nullopt;
 }
 
 } // namespace reverse_import

@@ -101,6 +101,13 @@ std::string buildPinMaskExpression(const std::vector<uint8_t>& pins);
 // готовый текст, функция ищет первую "{\n" и последнюю "}\n" в строке.
 std::string wrapInitFunctionWithUserCodeMarkers(const std::string& label, const std::string& function_text);
 
+// Оборачивает одну строку вызова "<Label>_Init();" в main.c парой маркеров
+// "<label>_Call" — тот же принцип, что wrapInitFunctionWithUserCodeMarkers,
+// но для однострочного вызова, а не тела функции. indent — отступ, с
+// которым уже должна начинаться строка call_line в main.c.
+std::string wrapInitCallWithUserCodeMarkers(const std::string& label, const std::string& call_line,
+    const std::string& indent);
+
 // "0, 3, 7" — только для текста комментария в сгенерированном коде.
 
 // Рекурсивное копирование дерева каталогов с пропуском уже существующих

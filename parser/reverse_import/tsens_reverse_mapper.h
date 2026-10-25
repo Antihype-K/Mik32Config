@@ -14,7 +14,9 @@
 #define MIK32_CONFIGURATOR_TSENS_REVERSE_MAPPER_H
 
 #include <optional>
+#include <string>
 
+#include "json.hpp"
 #include "mapped_block.h"
 #include "reverse_import_scanner.h"
 
@@ -23,6 +25,14 @@ namespace reverse_import
 
 // block.handle_type должен быть "TSENS_HandleTypeDef", иначе nullopt.
 std::optional<MappedBlock> mapTsensBlock(const RawInitBlock& block);
+
+// Пороги/прерывания приходят из trailing_calls и не получают provenance в
+// mapTsensBlock (см. комментарий выше) — поэтому точечная правка для них
+// недостижима, serializer покрывает только clock_source/frequency_hz.
+std::optional<std::string> serializeTsensFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text);
 
 } // namespace reverse_import
 

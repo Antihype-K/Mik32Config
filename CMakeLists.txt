@@ -64,6 +64,7 @@ set(CORE_SOURCES
         # Межмодульная кодогенерация: вклады периферии + единственный сборщик
         codegen/project/project_config.cpp
         codegen/project/contribution_utils.cpp
+        codegen/project/pdf_report_generator.cpp
         codegen/project/gpio_contribution.cpp
         codegen/project/uart_contribution.cpp
         codegen/project/timer16_contribution.cpp
@@ -126,6 +127,7 @@ set(CORE_SOURCES
         parser/reverse_import/reverse_patch_writer.cpp
         parser/reverse_import/reverse_import.cpp
         parser/reverse_import/reverse_import_apply.cpp
+        parser/reverse_import/reverse_block_insert.cpp
 )
 
 add_library(mik32-core STATIC ${CORE_SOURCES})
@@ -260,6 +262,8 @@ if(BUILD_GUI)
                 gui/freertos_settings_widget.h
                 gui/code_preview_screen.cpp
                 gui/code_preview_screen.h
+                gui/pdf_report_writer.cpp
+                gui/pdf_report_writer.h
         )
 
         target_include_directories(MIK32-Configurator-GUI
@@ -296,11 +300,13 @@ if(BUILD_TESTING)
 
     add_executable(MIK32-Parser-Tests
             tests/test_parsers.cpp
+            tests/test_pdf_report_generator.cpp
             tests/test_cross_module_severity_standalone.cpp
             tests/test_reverse_import_uart_i2c.cpp
             tests/test_reverse_import_timer32_gpio.cpp
             tests/test_reverse_patch_writer.cpp
             tests/test_reverse_import_integration.cpp
+            tests/test_reverse_block_insert.cpp
             tests/test_reverse_import_timer16.cpp
             tests/test_reverse_import_spi.cpp
             tests/test_reverse_import_timer32_channel.cpp
@@ -344,9 +350,15 @@ endif()
 # CPack/DEB не имеет смысла — получился бы .deb с PE-бинарником внутри.
 if(TARGET MIK32-Configurator-GUI AND NOT CMAKE_CROSSCOMPILING)
     install(TARGETS MIK32-Configurator-GUI RUNTIME DESTINATION bin)
+    # Без этого .deb ставил только бинарник: knowledge_base/schemas/templates
+    # нужны GUI в рантайме (findResourceRoot() в gui_main.cpp их ищет).
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/knowledge_base/ DESTINATION share/mik32-configurator/knowledge_base)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/schemas/ DESTINATION share/mik32-configurator/schemas)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/templates/ DESTINATION share/mik32-configurator/templates)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/tutorial.docx DESTINATION share/mik32-configurator)
 
     set(CPACK_PACKAGE_NAME "mik32-configurator")
-    set(CPACK_PACKAGE_VERSION "1.0.0")
+    set(CPACK_PACKAGE_VERSION "1.1.0")
     set(CPACK_PACKAGE_CONTACT "noreply@example.com")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "GUI-конфигуратор и генератор init-кода для МК МИК32")
     set(CPACK_GENERATOR "DEB")

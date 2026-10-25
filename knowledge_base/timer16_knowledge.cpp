@@ -72,6 +72,17 @@ ParseResult<Timer16Knowledge> loadTimer16Knowledge(const std::string& file_path)
             knowledge.instance_default_trigger_source[std::stoi(it.key())] = it.value().get<std::string>();
         }
 
+        for (auto it = root.at("trigger_source_hal_enum").begin();
+             it != root.at("trigger_source_hal_enum").end(); ++it)
+        {
+            std::map<std::string, std::string> per_instance;
+            for (auto inner = it.value().begin(); inner != it.value().end(); ++inner)
+            {
+                per_instance[inner.key()] = inner.value().get<std::string>();
+            }
+            knowledge.trigger_source_hal_enum[std::stoi(it.key())] = per_instance;
+        }
+
         for (auto it = root.at("mode_waveform_enable").begin();
              it != root.at("mode_waveform_enable").end(); ++it)
         {

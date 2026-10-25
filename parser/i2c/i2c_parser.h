@@ -7,8 +7,23 @@
 #ifndef MIK32_CONFIGURATOR_I2C_PARSER_H
 #define MIK32_CONFIGURATOR_I2C_PARSER_H
 #include <string>
+#include <vector>
 #include "parse_result.h"
 #include "json.hpp"
+
+// DMA-канал для I2C, по образцу UartDmaConfig (parser/USART/usart_parser.h),
+// но меньше полей: mik32_hal_i2c.c, HAL_I2C_Master/Slave_Transmit/Receive_DMA
+// (строки 983-1113) всегда пересылают TXDR/RXDR байтами и сами вызывают
+// HAL_DMA_Start с адресом и длиной, переданными ВЫЗЫВАЮЩИМ кодом в рантайме —
+// buffer_type/buffer_size_bytes/element_size/increment у UART-DMA (которая
+// сама объявляет статический буфер и Start-функцию) здесь не нужны, кодоген
+// лишь один раз конфигурирует ChannelInit (см. i2c_contribution.cpp) и
+// подключает hdmatx/hdmarx к хендлу I2C.
+struct I2cDmaConfig
+{
+    int channel;            // 0-3, см. schemas/i2c.json
+    std::string direction;  // "tx" | "rx"
+};
 
 struct I2cConfig
 {
@@ -33,6 +48,17 @@ struct I2cConfig
     bool dual_address_enabled;
     int own_address_2;             // валиден только если dual_address_enabled
     std::string own_address_2_mask; // "none".."1111111", валиден только если dual_address_enabled
+
+    // Необязательное поле — не более 2 элементов (по одному на tx/rx),
+    // пустой вектор = прежнее поведение (только блокирующие Transmit/Receive,
+    // как и раньше). См. schemas/i2c.json, "dma".
+    std::vector<I2cDmaConfig> dma;
+
+    // Включает генерацию шаблона обработчика прерывания (HAL_I2C_IRQHandler)
+    // для последующего вызова пользователем HAL_I2C_Master/Slave_*_IT —
+    // сами _IT-функции (mik32_hal_i2c.c:1139+) не требуют от кодогена
+    // никакой доп. настройки хендла, в отличие от DMA. См. schemas/i2c.json.
+    bool interrupt_mode = false;
 };
 
 ParseResult<I2cConfig> parseI2cConfig(const std::string& file_name_path);

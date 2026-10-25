@@ -108,3 +108,23 @@ TEST(WdtReverseMapper, RejectsNonWdtHandleType)
     block.handle_type = "I2C_HandleTypeDef";
     EXPECT_FALSE(mapWdtBlock(block).has_value());
 }
+
+TEST(WdtReverseMapper, SerializesClockSourceAndReloadMs)
+{
+    using reverse_import::serializeWdtFieldValue;
+
+    EXPECT_EQ(serializeWdtFieldValue("clock_source", "osc32m", "HAL_WDT_OSC32K"), "HAL_WDT_OSC32M");
+    EXPECT_EQ(serializeWdtFieldValue("reload_ms", 2500, "1000"), "2500");
+}
+
+TEST(WdtReverseMapper, SerializeRejectsUnrecognizedFieldOrType)
+{
+    using reverse_import::serializeWdtFieldValue;
+
+    // Нет такого enum-значения clock_source — угадывать не из чего.
+    EXPECT_FALSE(serializeWdtFieldValue("clock_source", "warp_drive", "HAL_WDT_OSC32K").has_value());
+    // reload_ms должен быть целым числом.
+    EXPECT_FALSE(serializeWdtFieldValue("reload_ms", "1000", "1000").has_value());
+    // Неизвестное поле.
+    EXPECT_FALSE(serializeWdtFieldValue("instance", 0, "0").has_value());
+}

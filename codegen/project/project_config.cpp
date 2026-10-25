@@ -527,6 +527,16 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
                     + std::to_string(block_result.config->instance)
                     + " уже настроен другим блоком i2c (один физический I2C нельзя настроить дважды)");
             }
+            // schemas/i2c.json "dma" — тот же глобальный пул ПДП (4 канала на
+            // весь конфиг), что у UART (см. ветку type == "uart" выше).
+            for (const I2cDmaConfig& dma : block_result.config->dma)
+            {
+                if (!used_dma_channels.insert(dma.channel).second)
+                {
+                    return makeError(blockPrefix(block_index, type) + "DMA channel " + std::to_string(dma.channel)
+                        + " уже занят другим блоком (у контроллера DMA всего 4 канала на весь конфиг)");
+                }
+            }
             project.i2c_blocks.push_back(*block_result.config);
         }
         else if (type == "timer32")

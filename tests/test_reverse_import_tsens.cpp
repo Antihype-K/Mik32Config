@@ -119,3 +119,18 @@ TEST(TsensReverseMapper, RejectsNonTsensHandleType)
     block.handle_type = "I2C_HandleTypeDef";
     EXPECT_FALSE(mapTsensBlock(block).has_value());
 }
+
+TEST(TsensReverseMapper, SerializeFieldRoundTrip)
+{
+    using reverse_import::serializeTsensFieldValue;
+    EXPECT_EQ(serializeTsensFieldValue("clock_source", "hsi32m", ""), "HAL_TSENS_HSI32M");
+    EXPECT_EQ(serializeTsensFieldValue("frequency_hz", 40000, ""), "40000");
+}
+
+TEST(TsensReverseMapper, SerializeFieldRejectsOutOfRangeOrWrongType)
+{
+    using reverse_import::serializeTsensFieldValue;
+    EXPECT_FALSE(serializeTsensFieldValue("clock_source", "pll", "").has_value());
+    EXPECT_FALSE(serializeTsensFieldValue("frequency_hz", 100001, "").has_value());
+    EXPECT_FALSE(serializeTsensFieldValue("frequency_hz", 0, "").has_value());
+}

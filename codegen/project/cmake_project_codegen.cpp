@@ -9,6 +9,19 @@
 #include "timer32_contribution.h"
 #include "i2c_contribution.h"
 #include "spi_contribution.h"
+#include "rtc_contribution.h"
+#include "crc_contribution.h"
+#include "eeprom_contribution.h"
+#include "wdt_contribution.h"
+#include "dac_contribution.h"
+#include "adc_contribution.h"
+#include "crypto_contribution.h"
+#include "otp_contribution.h"
+#include "tsens_contribution.h"
+#include "pvd_contribution.h"
+#include "bus_watchdog_contribution.h"
+#include "dma_contribution.h"
+#include "spifi_contribution.h"
 #include "user_code_markers.h"
 #include <algorithm>
 #include <atomic>
@@ -84,6 +97,19 @@ namespace
         std::vector<PeripheralContribution> i2c;
         std::vector<PeripheralContribution> timer16;
         std::vector<PeripheralContribution> timer32;
+        std::vector<PeripheralContribution> rtc;
+        std::vector<PeripheralContribution> crc;
+        std::vector<PeripheralContribution> eeprom;
+        std::vector<PeripheralContribution> wdt;
+        std::vector<PeripheralContribution> dac;
+        std::vector<PeripheralContribution> adc;
+        std::vector<PeripheralContribution> crypto;
+        std::vector<PeripheralContribution> otp;
+        std::vector<PeripheralContribution> tsens;
+        std::vector<PeripheralContribution> pvd;
+        std::vector<PeripheralContribution> bus_watchdog;
+        std::vector<PeripheralContribution> dma;
+        std::vector<PeripheralContribution> spifi;
         bool any_uart_dma = false;
     };
 
@@ -188,6 +214,87 @@ namespace
                 return makeContributionsError(r.error);
             }
             result.timer32.push_back(*r.config);
+        }
+
+        // Тир 2/3 — optional, по одному глобальному блоку на проект, та же
+        // логика выбора, что и в project_codegen.cpp (обоснование там же).
+        if (config.rtc_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildRtcContribution(*config.rtc_block, knowledge.rtc);
+            if (!r.success) return makeContributionsError(r.error);
+            result.rtc.push_back(*r.config);
+        }
+        if (config.crc_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildCrcContribution(*config.crc_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.crc.push_back(*r.config);
+        }
+        if (config.eeprom_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildEepromContribution(*config.eeprom_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.eeprom.push_back(*r.config);
+        }
+        if (config.wdt_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildWdtContribution(*config.wdt_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.wdt.push_back(*r.config);
+        }
+        for (const DacConfig& block : config.dac_blocks)
+        {
+            ParseResult<PeripheralContribution> r = buildDacContribution(block, knowledge.dac);
+            if (!r.success) return makeContributionsError(r.error);
+            result.dac.push_back(*r.config);
+        }
+        if (config.adc_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildAdcContribution(*config.adc_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.adc.push_back(*r.config);
+        }
+        if (config.crypto_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildCryptoContribution(*config.crypto_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.crypto.push_back(*r.config);
+        }
+        if (config.otp_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildOtpContribution(*config.otp_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.otp.push_back(*r.config);
+        }
+        if (config.tsens_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildTsensContribution(*config.tsens_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.tsens.push_back(*r.config);
+        }
+        if (config.pvd_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildPvdContribution(*config.pvd_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.pvd.push_back(*r.config);
+        }
+        if (config.bus_watchdog_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildBusWatchdogContribution(*config.bus_watchdog_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.bus_watchdog.push_back(*r.config);
+        }
+        for (const DmaConfig& block : config.dma_blocks)
+        {
+            ParseResult<PeripheralContribution> r = buildDmaContribution(block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.dma.push_back(*r.config);
+        }
+        if (config.spifi_block.has_value())
+        {
+            ParseResult<PeripheralContribution> r = buildSpifiContribution(*config.spifi_block);
+            if (!r.success) return makeContributionsError(r.error);
+            result.spifi.push_back(*r.config);
         }
 
         return ParseResult<ContributionsByType>{true, "", result};
@@ -641,6 +748,35 @@ ParseResult<GeneratedProjectFirmwareCmake> generateProjectFirmwareCmake(
         result.init_files.push_back(pair.header);
         result.init_files.push_back(pair.source);
     }
+
+    // Тир 2/3 — каждый тип в свою пару <base_name>.h/.c, по одному блоку
+    // максимум (optional) либо несколько (dac/dma vector), та же схема, что
+    // gpio/i2c/spi выше — ни один из этих модулей не требует extra_*.
+    auto renderSimpleGroupIfPresent = [&](const std::string& base_name, const std::string& guard_macro,
+                                           const std::vector<PeripheralContribution>& contributions)
+    {
+        if (contributions.empty())
+        {
+            return;
+        }
+        RenderedPair pair = renderGroupPair(base_name, guard_macro, contributions, "", {}, "", "");
+        header_includes_for_main.push_back(pair.header.relative_path);
+        result.init_files.push_back(pair.header);
+        result.init_files.push_back(pair.source);
+    };
+    renderSimpleGroupIfPresent("mik32_rtc_init", "MIK32_RTC_INIT_H", g.rtc);
+    renderSimpleGroupIfPresent("mik32_crc_init", "MIK32_CRC_INIT_H", g.crc);
+    renderSimpleGroupIfPresent("mik32_eeprom_init", "MIK32_EEPROM_INIT_H", g.eeprom);
+    renderSimpleGroupIfPresent("mik32_wdt_init", "MIK32_WDT_INIT_H", g.wdt);
+    renderSimpleGroupIfPresent("mik32_dac_init", "MIK32_DAC_INIT_H", g.dac);
+    renderSimpleGroupIfPresent("mik32_adc_init", "MIK32_ADC_INIT_H", g.adc);
+    renderSimpleGroupIfPresent("mik32_crypto_init", "MIK32_CRYPTO_INIT_H", g.crypto);
+    renderSimpleGroupIfPresent("mik32_otp_init", "MIK32_OTP_INIT_H", g.otp);
+    renderSimpleGroupIfPresent("mik32_tsens_init", "MIK32_TSENS_INIT_H", g.tsens);
+    renderSimpleGroupIfPresent("mik32_pvd_init", "MIK32_PVD_INIT_H", g.pvd);
+    renderSimpleGroupIfPresent("mik32_bus_watchdog_init", "MIK32_BUS_WATCHDOG_INIT_H", g.bus_watchdog);
+    renderSimpleGroupIfPresent("mik32_dma_init", "MIK32_DMA_INIT_H", g.dma);
+    renderSimpleGroupIfPresent("mik32_spifi_init", "MIK32_SPIFI_INIT_H", g.spifi);
 
     // "Общий остаток" — DMA_Init/hdma, не привязан ни к одному типу
     // периферии (SystemClock_Config сюда не входит: он живёт в main.c и

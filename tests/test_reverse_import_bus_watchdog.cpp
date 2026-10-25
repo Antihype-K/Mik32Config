@@ -100,3 +100,20 @@ TEST(BusWatchdogReverseMapper, NoEnableWritebackReturnsNullopt)
     const std::string content = "void SomeOtherFunction(void) { int x = 1; }\n";
     EXPECT_FALSE(scanBusWatchdogBlockFromFileContent(content, "f.c").has_value());
 }
+
+TEST(BusWatchdogReverseMapper, SerializesTimeout)
+{
+    using reverse_import::serializeBusWatchdogFieldValue;
+
+    EXPECT_EQ(serializeBusWatchdogFieldValue("timeout", 9, "7"), "9");
+}
+
+TEST(BusWatchdogReverseMapper, SerializeRejectsEnabledFlagsAndNonIntegerTimeout)
+{
+    using reverse_import::serializeBusWatchdogFieldValue;
+
+    // eeprom_enabled/spifi_enabled/dom3_enabled кодируются вставкой/удалением
+    // целой строки, не литералом — сериализатор их сознательно не поддерживает.
+    EXPECT_FALSE(serializeBusWatchdogFieldValue("eeprom_enabled", true, "").has_value());
+    EXPECT_FALSE(serializeBusWatchdogFieldValue("timeout", "9", "7").has_value());
+}

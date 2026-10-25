@@ -102,3 +102,22 @@ TEST(PvdReverseMapper, NoConfigWritebackReturnsNullopt)
     const std::string content = "void SomeOtherFunction(void) { int x = 1; }\n";
     EXPECT_FALSE(scanPvdBlockFromFileContent(content, "f.c").has_value());
 }
+
+TEST(PvdReverseMapper, SerializesThresholdsAndFilter)
+{
+    using reverse_import::serializePvdFieldValue;
+
+    EXPECT_EQ(serializePvdFieldValue("digital_filter_value", 42, "0"), "42");
+    EXPECT_EQ(serializePvdFieldValue("under_threshold", 5, "3"), "5");
+    EXPECT_EQ(serializePvdFieldValue("over_threshold", 9, "3"), "9");
+}
+
+TEST(PvdReverseMapper, SerializeRejectsCalibrationFlagAndNonIntegerValue)
+{
+    using reverse_import::serializePvdFieldValue;
+
+    // enable_reference_calibration — отдельная строка в исходнике (вставка/
+    // удаление), не литерал, не поддерживается сериализатором.
+    EXPECT_FALSE(serializePvdFieldValue("enable_reference_calibration", true, "").has_value());
+    EXPECT_FALSE(serializePvdFieldValue("under_threshold", "5", "3").has_value());
+}

@@ -255,6 +255,75 @@ TEST_F(ReverseImportIntegrationTest, EndToEndEditBaudRateAndApplyPatchesExactlyO
     EXPECT_TRUE(found_new_baud_rate);
 }
 
+// Регрессия на баг-репорт пользователя: "Точечно применить правки" в GUI
+// после изменения GPIO mode показывало "Применено строк: 0" — то есть ни
+// одна правка не находила себе провенанс/не писалась на диск, хотя поле
+// реально отличалось от значения на момент импорта. Этот тест прогоняет
+// РОВНО тот же сценарий (поменять "mode" у GPIO-блока) через тот же
+// applyImportedChanges, что и gui/main_window.cpp::applyReverseImportChanges
+// — если он когда-нибудь перестанет находить правку, тест упадёт раньше,
+// чем это снова увидит пользователь на реальном проекте.
+TEST_F(ReverseImportIntegrationTest, EndToEndEditGpioModeAppliesNonZeroLines)
+{
+    writeFile("src/main.c", kMainC);
+    const std::string original_main_c = readFile("src/main.c");
+
+    const ImportedProject imported = importProjectFromDirectory(root_.string());
+    nlohmann::json edited_peripherals = imported.document["peripherals"];
+
+    int gpio_index = -1;
+    for (std::size_t i = 0; i < edited_peripherals.size(); ++i)
+    {
+        if (edited_peripherals[i]["type"] == "gpio")
+        {
+            gpio_index = static_cast<int>(i);
+        }
+    }
+    ASSERT_NE(gpio_index, -1);
+    ASSERT_EQ(edited_peripherals[gpio_index]["mode"], "output");
+
+    // Ровно сценарий из репорта: пользователь меняет режим вывода в GUI.
+    edited_peripherals[gpio_index]["mode"] = "input";
+
+    const ApplyReport report = applyImportedChanges(
+        imported.document["peripherals"], edited_peripherals, imported.block_provenance);
+
+    EXPECT_TRUE(report.unpatchable.empty());
+    ASSERT_FALSE(report.patch_results.empty());
+    int success_count = 0;
+    for (const PatchResult& result : report.patch_results)
+    {
+        EXPECT_TRUE(result.success) << result.error;
+        if (result.success) ++success_count;
+    }
+    // Это и есть число, которое GUI подставляет в "Применено строк: %1" —
+    // здесь оно обязано быть > 0, в баг-репорте было 0.
+    EXPECT_GT(success_count, 0);
+
+    const std::string patched_main_c = readFile("src/main.c");
+    EXPECT_NE(patched_main_c, original_main_c);
+    EXPECT_NE(patched_main_c.find("GPIO_InitStruct.Mode = HAL_GPIO_MODE_GPIO_INPUT;"), std::string::npos);
+}
+
+// Обратная сторона того же сценария — поведение, которое ожидаемо и НЕ
+// является багом: если документ ПОСЛЕ правок байт-в-байт совпадает с
+// документом на момент импорта (пользователь ничего не изменил, либо
+// переключил поле туда-обратно), "Применено строк: 0" — корректный ответ,
+// а не потеря правки.
+TEST_F(ReverseImportIntegrationTest, ApplyingUnchangedDocumentAppliesZeroLines)
+{
+    writeFile("src/main.c", kMainC);
+
+    const ImportedProject imported = importProjectFromDirectory(root_.string());
+    const nlohmann::json unchanged_peripherals = imported.document["peripherals"];
+
+    const ApplyReport report = applyImportedChanges(
+        imported.document["peripherals"], unchanged_peripherals, imported.block_provenance);
+
+    EXPECT_TRUE(report.unpatchable.empty());
+    EXPECT_TRUE(report.patch_results.empty());
+}
+
 TEST_F(ReverseImportIntegrationTest, IgnoresBundledSdkDirectoryToAvoidFalsePositivesFromVendorSource)
 {
     // Given: ровно то, что реально кладёт собственный CMake-тулчейн этого
@@ -683,6 +752,79 @@ void I2C1_Init()
     const bool has_note = std::any_of(imported.notes.begin(), imported.notes.end(),
         [](const std::string& note) { return note.find("i2c_bus_recovery") != std::string::npos; });
     EXPECT_TRUE(has_note);
+}
+
+// Регрессия: RTC-поля верхнего уровня ("time"/"date"/"alarm") — вложенные
+// объекты (schemas/rtc.json), не скаляры, в отличие от всех остальных
+// периферий. До фикса диспетчер в reverse_import_apply.cpp сравнивал их как
+// одно неделимое значение -> provenance не находился ни для одного
+// конкретного подполя -> "Применено строк: 0" для ЛЮБОЙ правки RTC, даже
+// успешно распознанной при импорте. Этот тест меняет одно подполе (time.hours)
+// и ожидает реальную правку на диске, а не unpatchable.
+TEST_F(ReverseImportIntegrationTest, EndToEndEditRtcTimeHoursAppliesNonZeroLines)
+{
+    writeFile("src/main.c", R"(
+#include "mik32_hal.h"
+
+RTC_HandleTypeDef hrtc;
+
+void RTC_Init()
+{
+    hrtc.Instance = RTC;
+
+    RTC_TimeTypeDef sTime;
+    sTime.Dow = RTC_WEEKDAY_MONDAY;
+    sTime.Hours = 10;
+    sTime.Minutes = 30;
+    sTime.Seconds = 0;
+    HAL_RTC_SetTime(&hrtc, &sTime);
+
+    RTC_DateTypeDef sDate;
+    sDate.Century = 20;
+    sDate.Day = 22;
+    sDate.Month = RTC_MONTH_OCTOBER;
+    sDate.Year = 26;
+    HAL_RTC_SetDate(&hrtc, &sDate);
+
+    HAL_RTC_Enable(&hrtc);
+}
+)");
+    const std::string original_main_c = readFile("src/main.c");
+
+    const ImportedProject imported = importProjectFromDirectory(root_.string());
+    nlohmann::json edited_peripherals = imported.document["peripherals"];
+
+    int rtc_index = -1;
+    for (std::size_t i = 0; i < edited_peripherals.size(); ++i)
+    {
+        if (edited_peripherals[i]["type"] == "rtc")
+        {
+            rtc_index = static_cast<int>(i);
+        }
+    }
+    ASSERT_NE(rtc_index, -1);
+    ASSERT_EQ(edited_peripherals[rtc_index]["time"]["hours"], 10);
+
+    // Сценарий из бага: пользователь правит ТОЛЬКО одно подполе вложенного
+    // объекта "time".
+    edited_peripherals[rtc_index]["time"]["hours"] = 14;
+
+    const ApplyReport report = applyImportedChanges(
+        imported.document["peripherals"], edited_peripherals, imported.block_provenance);
+
+    EXPECT_TRUE(report.unpatchable.empty());
+    ASSERT_FALSE(report.patch_results.empty());
+    int success_count = 0;
+    for (const PatchResult& result : report.patch_results)
+    {
+        EXPECT_TRUE(result.success) << result.error;
+        if (result.success) ++success_count;
+    }
+    EXPECT_GT(success_count, 0);
+
+    const std::string patched_main_c = readFile("src/main.c");
+    EXPECT_NE(patched_main_c, original_main_c);
+    EXPECT_NE(patched_main_c.find("sTime.Hours = 14;"), std::string::npos);
 }
 
 } // namespace

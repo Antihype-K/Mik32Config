@@ -186,3 +186,40 @@ TEST(RtcReverseMapper, RejectsNonRtcHandleType)
     block.handle_type = "I2C_HandleTypeDef";
     EXPECT_FALSE(mapRtcBlock(block).has_value());
 }
+
+TEST(RtcReverseMapper, SerializesIntFieldsPreservingMacroOrLiteralStyle)
+{
+    using reverse_import::serializeRtcFieldValue;
+
+    // dow: оригинал был макросом RTC_WEEKDAY_* -> пишем макрос того же семейства.
+    EXPECT_EQ(serializeRtcFieldValue("dow", 3, "RTC_WEEKDAY_MONDAY"), "RTC_WEEKDAY_WEDNESDAY");
+    // dow: оригинал был голым литералом -> остаётся литералом.
+    EXPECT_EQ(serializeRtcFieldValue("dow", 3, "1"), "3");
+    // month: аналогично через RTC_MONTH_*.
+    EXPECT_EQ(serializeRtcFieldValue("month", 12, "RTC_MONTH_JANUARY"), "RTC_MONTH_DECEMBER");
+    // hours/minutes/seconds/century/day/year: всегда голый литерал.
+    EXPECT_EQ(serializeRtcFieldValue("hours", 23, "0"), "23");
+    EXPECT_EQ(serializeRtcFieldValue("year", 26, "25"), "26");
+}
+
+TEST(RtcReverseMapper, SerializesInterruptEnabledAsAlarmIrqMacro)
+{
+    using reverse_import::serializeRtcFieldValue;
+
+    EXPECT_EQ(serializeRtcFieldValue("interrupt_enabled", true, "RTC_ALARM_IRQ_DISABLE"),
+              "RTC_ALARM_IRQ_ENABLE");
+    EXPECT_EQ(serializeRtcFieldValue("interrupt_enabled", false, "RTC_ALARM_IRQ_ENABLE"),
+              "RTC_ALARM_IRQ_DISABLE");
+}
+
+TEST(RtcReverseMapper, SerializeRejectsOutOfRangeWeekdayAndWrongType)
+{
+    using reverse_import::serializeRtcFieldValue;
+
+    // dow=0 вне диапазона 1..7 (weekday-макросов нет для 0) — не угадываем.
+    EXPECT_FALSE(serializeRtcFieldValue("dow", 0, "RTC_WEEKDAY_MONDAY").has_value());
+    EXPECT_FALSE(serializeRtcFieldValue("hours", "23", "0").has_value());
+    EXPECT_FALSE(serializeRtcFieldValue("interrupt_enabled", 1, "RTC_ALARM_IRQ_ENABLE").has_value());
+    // compare_fields (массив из нескольких ORed-макросов) не поддерживается вовсе.
+    EXPECT_FALSE(serializeRtcFieldValue("compare_fields", nlohmann::json::array(), "").has_value());
+}

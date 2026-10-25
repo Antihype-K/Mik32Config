@@ -280,6 +280,11 @@ void HAL_DMA_Start(DMA_ChannelHandleTypeDef *hdma_channel, void* SRC, void* DST,
         | (hdma_channel->ChannelInit.WriteRequest << DMA_CH_CFG_WRITE_REQUEST_S) 
         | (hdma_channel->ChannelInit.WriteAck << DMA_CH_CFG_WRITE_ACK_EN_S);
 
+    /* Эррата MIK32V2 п.12.1.1: если канал ещё включён с прошлого раза,
+     * прямая запись нового CFG с ENABLE=1 его просто остановит, а не
+     * перезапустит — нужно сначала явно выключить (docs/implementations/i2c.md). */
+    hdma_channel->dma->Instance->CHANNELS[ChannelIndex].CFG &= ~DMA_CH_CFG_ENABLE_M;
+
     hdma_channel->dma->Instance->CHANNELS[ChannelIndex].CFG = CFGWriteBuffer[ChannelIndex];
 }
 

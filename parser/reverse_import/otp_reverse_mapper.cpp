@@ -107,4 +107,17 @@ std::optional<MappedBlock> mapOtpBlock(const RawInitBlock& block)
     return result;
 }
 
+std::optional<std::string> serializeOtpFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (field_name != "read_mode") return std::nullopt;
+    if (!new_value.is_string()) return std::nullopt;
+    const std::string v = new_value.get<std::string>();
+    if (v == "two_stages") return "OPT_READ_2STAGES";
+    if (v == "three_stages") return "OPT_READ_3STAGES";
+    return std::nullopt;
+}
+
 } // namespace reverse_import

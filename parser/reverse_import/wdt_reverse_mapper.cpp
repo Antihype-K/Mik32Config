@@ -98,7 +98,8 @@ std::optional<MappedBlock> mapWdtBlock(const RawInitBlock& block)
             if (value.has_value())
             {
                 result.json_block["clock_source"] = *value;
-                result.provenance.push_back(makeProvenance("clock_source", *assignment, false));
+                // editable=true: serializeWdtFieldValue умеет записать это поле обратно.
+                result.provenance.push_back(makeProvenance("clock_source", *assignment, true));
             }
             else
             {
@@ -133,7 +134,8 @@ std::optional<MappedBlock> mapWdtBlock(const RawInitBlock& block)
             if (value.has_value())
             {
                 result.json_block["reload_ms"] = static_cast<std::uint32_t>(*value);
-                result.provenance.push_back(makeProvenance("reload_ms", *assignment, false));
+                // editable=true: serializeWdtFieldValue умеет записать это поле обратно.
+                result.provenance.push_back(makeProvenance("reload_ms", *assignment, true));
             }
             else
             {
@@ -152,6 +154,39 @@ std::optional<MappedBlock> mapWdtBlock(const RawInitBlock& block)
     }
 
     return result;
+}
+
+std::optional<std::string> serializeWdtFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text)
+{
+    (void)original_raw_value_text;
+
+    if (field_name == "clock_source")
+    {
+        if (!new_value.is_string())
+        {
+            return std::nullopt;
+        }
+        const std::string value = new_value.get<std::string>();
+        if (value == "osc32m") return std::string("HAL_WDT_OSC32M");
+        if (value == "hsi32m") return std::string("HAL_WDT_HSI32M");
+        if (value == "osc32k") return std::string("HAL_WDT_OSC32K");
+        if (value == "lsi32k") return std::string("HAL_WDT_LSI32K");
+        return std::nullopt;
+    }
+
+    if (field_name == "reload_ms")
+    {
+        if (!new_value.is_number_integer())
+        {
+            return std::nullopt;
+        }
+        return std::to_string(new_value.get<long long>());
+    }
+
+    return std::nullopt;
 }
 
 } // namespace reverse_import

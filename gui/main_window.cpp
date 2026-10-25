@@ -8,6 +8,7 @@
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <filesystem>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -42,9 +43,12 @@
 #include "properties_panel.h"
 #include "diagnostics_panel.h"
 #include "project_config.h"
+#include "pdf_report_generator.h"
+#include "pdf_report_writer.h"
 #include "cmake_project_codegen.h"
 #include "rust_project_codegen.h"
 #include "reverse_import_apply.h"
+#include "reverse_block_insert.h"
 #include "home_screen.h"
 #include "new_project_screen.h"
 #include "project_manager_screen.h"
@@ -315,11 +319,28 @@ void MainWindow::showProjectGeneratedDialog(const QString& output_dir, const QSt
                     .arg(output_dir, main_file_name));
     QAbstractButton* open_button = box.addButton(
         QString::fromUtf8("Открыть каталог"), QMessageBox::AcceptRole);
+    QAbstractButton* pdf_button = box.addButton(
+        QString::fromUtf8("Сформировать PDF-отчёт…"), QMessageBox::ActionRole);
     box.addButton(QMessageBox::Ok);
     box.exec();
     if (box.clickedButton() == open_button)
     {
         QDesktopServices::openUrl(QUrl::fromLocalFile(output_dir));
+    }
+    else if (box.clickedButton() == pdf_button)
+    {
+        const QString pdf_path = QFileDialog::getSaveFileName(
+            this, QString::fromUtf8("Сохранить PDF-отчёт"),
+            output_dir + "/config_report.pdf", QString::fromUtf8("PDF (*.pdf)"));
+        if (!pdf_path.isEmpty())
+        {
+            const std::string report_text = buildConfigReportText(document_.document());
+            if (!writeConfigReportPdf(QString::fromStdString(report_text), pdf_path))
+            {
+                QMessageBox::critical(this, QString::fromUtf8("Не удалось сохранить отчёт"),
+                                      QString::fromUtf8("Не удалось записать PDF-файл."));
+            }
+        }
     }
 }
 
@@ -652,9 +673,34 @@ void MainWindow::applyReverseImportChanges()
         }
     }
 
+    // Блоки, добавленные в GUI после импорта (field_name == "(блок)", индекс
+    // за пределами снимка на момент импорта) — не "испорченное поле", а
+    // полностью новый код. applyImportedChanges их намеренно не трогает
+    // (только существующие строки), поэтому пробуем вставить их отдельно
+    // через reverse_block_insert.h, а не просто показываем "нужна полная
+    // кодогенерация" (см. parser/reverse_import/reverse_block_insert.h).
+    const std::size_t original_peripherals_count = imported_project_.document["peripherals"].size();
+    int inserted_count = 0;
     QString unpatchable_text;
     for (const reverse_import::UnpatchableChange& change : report.unpatchable)
     {
+        if (change.field_name == "(блок)"
+            && static_cast<std::size_t>(change.block_index) >= original_peripherals_count)
+        {
+            const reverse_import::BlockInsertResult insert_result = reverse_import::insertNewPeripheralBlock(
+                reverse_import_root_.toStdString(), imported_project_.files_scanned,
+                document_.document(), change.block_index, knowledge_);
+            if (insert_result.success)
+            {
+                ++inserted_count;
+                continue;
+            }
+            unpatchable_text += QString::fromUtf8("Блок #%1 (новый): не удалось вставить — %2\n")
+                .arg(change.block_index)
+                .arg(QString::fromStdString(insert_result.error));
+            continue;
+        }
+
         unpatchable_text += QString::fromUtf8("Блок #%1, поле \"%2\": %3\n")
             .arg(change.block_index)
             .arg(QString::fromStdString(change.field_name))
@@ -674,6 +720,10 @@ void MainWindow::applyReverseImportChanges()
     refreshEverything();
 
     QString summary = QString::fromUtf8("Применено строк: %1.").arg(success_count);
+    if (inserted_count > 0)
+    {
+        summary += QString::fromUtf8(" Вставлено новых блоков: %1.").arg(inserted_count);
+    }
     if (!failures.isEmpty())
     {
         summary += QString::fromUtf8("\n\nНе удалось записать (изменилось на диске с момента "
@@ -824,7 +874,49 @@ void MainWindow::onGenerate()
                     return;
                 }
             }
-            applyReverseImportChanges();
+            {
+                QMessageBox targetChoice(this);
+                targetChoice.setWindowTitle(QString::fromUtf8("Куда применить правки"));
+                targetChoice.setText(QString::fromUtf8(
+                    "Применить изменения в исходной папке проекта или в копии?"));
+                QPushButton* inPlaceButton = targetChoice.addButton(
+                    QString::fromUtf8("Перезаписать на месте"), QMessageBox::AcceptRole);
+                QPushButton* copyButton = targetChoice.addButton(
+                    QString::fromUtf8("Выбрать папку…"), QMessageBox::ActionRole);
+                targetChoice.addButton(QMessageBox::Cancel);
+                targetChoice.setDefaultButton(inPlaceButton);
+                targetChoice.exec();
+
+                if (targetChoice.clickedButton() == inPlaceButton)
+                {
+                    applyReverseImportChanges();
+                }
+                else if (targetChoice.clickedButton() == copyButton)
+                {
+                    const QString dest_parent = QFileDialog::getExistingDirectory(
+                        this, QString::fromUtf8("Выберите папку для копии проекта"));
+                    if (!dest_parent.isEmpty())
+                    {
+                        const QString dest_dir = dest_parent + "/"
+                            + QDir(reverse_import_root_).dirName();
+                        std::error_code copy_error;
+                        std::filesystem::remove_all(dest_dir.toStdString(), copy_error);
+                        std::filesystem::copy(
+                            reverse_import_root_.toStdString(), dest_dir.toStdString(),
+                            std::filesystem::copy_options::recursive, copy_error);
+                        if (copy_error)
+                        {
+                            QMessageBox::critical(this, QString::fromUtf8("Не удалось скопировать проект"),
+                                QString::fromStdString(copy_error.message()));
+                        }
+                        else
+                        {
+                            reverse_import_root_ = dest_dir;
+                            applyReverseImportChanges();
+                        }
+                    }
+                }
+            }
             return;
         }
         else

@@ -229,4 +229,30 @@ std::optional<MappedBlock> mapEepromBlock(const RawInitBlock& block)
     return result;
 }
 
+std::optional<std::string> serializeEepromFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (field_name == "mode")
+    {
+        if (!new_value.is_string()) return std::nullopt;
+        const std::string v = new_value.get<std::string>();
+        if (v == "two_stage") return "HAL_EEPROM_MODE_TWO_STAGE";
+        if (v == "three_stage") return "HAL_EEPROM_MODE_THREE_STAGE";
+        return std::nullopt;
+    }
+    if (field_name == "ecc_enabled")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "HAL_EEPROM_ECC_ENABLE" : "HAL_EEPROM_ECC_DISABLE";
+    }
+    if (field_name == "single_error_interrupt_enabled")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "HAL_EEPROM_SERR_ENABLE" : "HAL_EEPROM_SERR_DISABLE";
+    }
+    return std::nullopt;
+}
+
 } // namespace reverse_import

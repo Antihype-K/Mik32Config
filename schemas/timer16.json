@@ -54,7 +54,12 @@
       "type": "enum",
       "values": ["software", "rising", "falling", "both"],
       "default": "software",
-      "_comment": "mik32_hal_timer16.h, HAL_Timer16_Trigger_ActiveEdgeTypeDef (Trigger.ActiveEdge). Trigger.Source остаётся дефолтным безопасным значением на instance (knowledge_base/timer16.json, instance_default_trigger_source) — этот аудит добавляет только выбор фронта, не выбор источника триггера (8 вариантов GPIO/термосенсор/АЦП/RTC/будильник — отдельная, более крупная задача)."
+      "_comment": "mik32_hal_timer16.h, HAL_Timer16_Trigger_ActiveEdgeTypeDef (Trigger.ActiveEdge). Если trigger_edge=software (дефолт) и поле \"trigger_source\" ниже не задано, Trigger.Source остаётся дефолтным безопасным значением на instance (knowledge_base/timer16.json, instance_default_trigger_source) — аппаратный триггер при software-фронте функционально не действует независимо от Source."
+    },
+    "trigger_source": {
+      "type": "enum",
+      "values": ["gpio_a", "gpio_b", "gpio_c", "gpio_d", "temperature", "adc", "rtc", "alarm"],
+      "_comment": "НЕОБЯЗАТЕЛЬНОЕ поле, добавлено 2026-10-22. Установленный HAL (~/.platformio/packages/framework-mik32v2-sdk/hal/peripherals/Include/mik32_hal_timer16.h), HAL_Timer16_TriggerTypeDef — 8 кодов 0b000-0b111 (Trigger.Source). Первые 4 (gpio_a..gpio_d) — РАЗНЫЙ физический GPIO-пин на разных instance (Timer16_0: GPIO0_7/0_4/0_15/0_14; Timer16_1: GPIO1_9/1_8/1_7/1_6; Timer16_2: GPIO2_3/2_2/2_1/2_0, см. knowledge_base/timer16.json trigger_source_hal_enum) — названы абстрактно по позиции кода, не по номеру пина, чтобы один enum работал для всех трёх instance. Последние 4 (temperature/adc/rtc/alarm) — общие периферийные источники (термосенсор/АЦП/окончание преобразования/прерывание RTC/будильник), одинаковы для всех instance. Если поле не задано — поведение как до этой сессии: Trigger.Source = дефолтное безопасное значение instance (instance_default_trigger_source), без функционального эффекта при trigger_edge=software. HAL не документирует и не даёт выбрать КОНКРЕТНЫЙ канал АЦП или конкретное прерывание RTC внутри вариантов adc/rtc — регистр CR.TRGSEL принимает только эти 8 голых кодов, глубже HAL не идёт, поэтому и кодоген не угадывает такую детализацию."
     },
     "external_clock_filter": {
       "type": "enum",
@@ -72,6 +77,16 @@
       "type": "boolean",
       "default": false,
       "_comment": "mik32_hal_timer16.h, HAL_Timer16_WaveformPolarityTypeDef (Waveform.Polarity: NONINVERTED/INVERTED). Принимается, но игнорируется кодогеном при mode=\"external_event_count\" — там Waveform.Enable=DISABLE, полярность ни на что не влияет (knowledge_base/timer16.json, mode_waveform_enable)."
+    },
+    "overflow_interrupt": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "docs/open_tasks.md: ARRM — флаг совпадения счётчика с ARR (установленный HAL, mik32_hal_timer16.h/.c: TIMER16_FLAG_ARRM/TIMER16_IER_ARRMIE_M, HAL_Timer16_*_IT включают его в IER). Доступно для всех режимов, кроме encoder (HAL_Timer16_Encoder_Start_IT существует, но не задействован этим кодогеном — см. docs/implementations/timer16_irq.md)."
+    },
+    "compare_interrupt": {
+      "type": "boolean",
+      "default": false,
+      "_comment": "CMPM — флаг совпадения счётчика с CMP (TIMER16_FLAG_CMPM/TIMER16_IER_CMPMIE_M). Имеет смысл только при mode=period/one_shot (единственные режимы, использующие cmp) — парсер отклоняет compare_interrupt=true при других режимах."
     }
   }
 }

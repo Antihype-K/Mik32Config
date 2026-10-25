@@ -435,4 +435,39 @@ std::optional<MappedBlock> mapDmaChannelBlock(const RawInitBlock& block)
     return result;
 }
 
+std::optional<std::string> serializeDmaFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (field_name == "instance")
+    {
+        if (!new_value.is_number_integer()) return std::nullopt;
+        const int instance = new_value.get<int>();
+        if (instance < 0 || instance > 3) return std::nullopt;
+        return "DMA_CHANNEL_" + std::to_string(instance);
+    }
+    if (field_name == "priority")
+    {
+        if (!new_value.is_string()) return std::nullopt;
+        const std::string v = new_value.get<std::string>();
+        if (v == "low") return "DMA_CHANNEL_PRIORITY_LOW";
+        if (v == "medium") return "DMA_CHANNEL_PRIORITY_MEDIUM";
+        if (v == "high") return "DMA_CHANNEL_PRIORITY_HIGH";
+        if (v == "very_high") return "DMA_CHANNEL_PRIORITY_VERY_HIGH";
+        return std::nullopt;
+    }
+    if (field_name == "element_size")
+    {
+        if (!new_value.is_string()) return std::nullopt;
+        const std::string v = new_value.get<std::string>();
+        if (v == "byte") return "DMA_CHANNEL_SIZE_BYTE";
+        if (v == "halfword") return "DMA_CHANNEL_SIZE_HALFWORD";
+        if (v == "word") return "DMA_CHANNEL_SIZE_WORD";
+        return std::nullopt;
+    }
+    // direction/request/buffer_size_bytes/irq_enable — см. комментарий в .h.
+    return std::nullopt;
+}
+
 } // namespace reverse_import

@@ -10,6 +10,19 @@
 #include "timer16_reverse_mapper.h"
 #include "gpio_reverse_mapper.h"
 #include "spi_reverse_mapper.h"
+#include "rtc_reverse_mapper.h"
+#include "wdt_reverse_mapper.h"
+#include "bus_watchdog_reverse_mapper.h"
+#include "pvd_reverse_mapper.h"
+#include "eeprom_reverse_mapper.h"
+#include "otp_reverse_mapper.h"
+#include "dma_reverse_mapper.h"
+#include "crypto_reverse_mapper.h"
+#include "spifi_reverse_mapper.h"
+#include "adc_reverse_mapper.h"
+#include "dac_reverse_mapper.h"
+#include "tsens_reverse_mapper.h"
+#include "crc_reverse_mapper.h"
 
 namespace reverse_import
 {
@@ -50,6 +63,54 @@ std::optional<std::string> serializeFieldValue(
     if (peripheral_type == "spi")
     {
         return serializeSpiFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "adc")
+    {
+        return serializeAdcFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "dac")
+    {
+        return serializeDacFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "tsens")
+    {
+        return serializeTsensFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "crc")
+    {
+        return serializeCrcFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "eeprom")
+    {
+        return serializeEepromFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "otp")
+    {
+        return serializeOtpFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "dma")
+    {
+        return serializeDmaFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "crypto")
+    {
+        return serializeCryptoFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "spifi")
+    {
+        return serializeSpifiFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "wdt")
+    {
+        return serializeWdtFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "bus_watchdog")
+    {
+        return serializeBusWatchdogFieldValue(field_name, new_value, original_raw_value_text);
+    }
+    if (peripheral_type == "pvd")
+    {
+        return serializePvdFieldValue(field_name, new_value, original_raw_value_text);
     }
     return std::nullopt;
 }
@@ -200,6 +261,60 @@ void processChannelsChange(
     }
 }
 
+// RTC-поля верхнего уровня ("time"/"date"/необязательный "alarm") — вложенные
+// объекты, а не скаляры (schemas/rtc.json), в отличие от всех остальных
+// периферий в этом диспетчере. Провенанс заведён на составные пути
+// "time.dow", "alarm.time.hours", "alarm.date.year", "alarm.interrupt_enabled"
+// (см. rtc_reverse_mapper.cpp) — диффуем рекурсивно по подполям, а не как одно
+// неделимое значение, иначе правка одного подполя считалась бы изменением
+// всего объекта "time"/"alarm" и не находила бы provenance ни для одного
+// конкретного поля (та же идея, что у processChannelsChange для Timer32).
+// "compare_fields" (массив внутри alarm) у rtc_reverse_mapper.cpp провенанса
+// не получает вовсе — дойдёт до processFieldChange как обычное поле без
+// provenance и корректно уйдёт в unpatchable "не встретилось в исходнике".
+void processRtcObjectChange(
+    int block_index,
+    const std::string& path_prefix,
+    const nlohmann::json& original_object,
+    const nlohmann::json& current_object,
+    const std::vector<FieldProvenance>* provenance,
+    std::vector<LineEditRequest>& requests,
+    ApplyReport& report)
+{
+    const Serializer rtc_serializer =
+        [](const std::string& compound_field, const nlohmann::json& value, const std::string& original_text)
+    {
+        const std::size_t dot = compound_field.rfind('.');
+        const std::string plain_field = (dot == std::string::npos) ? compound_field : compound_field.substr(dot + 1);
+        return serializeRtcFieldValue(plain_field, value, original_text);
+    };
+
+    for (const std::string& key : allKeys(original_object, current_object))
+    {
+        const nlohmann::json original_value = original_object.contains(key)
+            ? original_object.at(key) : nlohmann::json();
+        const nlohmann::json current_value = current_object.contains(key)
+            ? current_object.at(key) : nlohmann::json();
+
+        if (original_value == current_value)
+        {
+            continue;
+        }
+
+        const std::string path = path_prefix + "." + key;
+
+        if (original_value.is_object() && current_value.is_object())
+        {
+            processRtcObjectChange(block_index, path, original_value, current_value, provenance,
+                                    requests, report);
+            continue;
+        }
+
+        processFieldChange(block_index, path, path, current_value, provenance, rtc_serializer,
+                            requests, report);
+    }
+}
+
 } // namespace
 
 ApplyReport applyImportedChanges(
@@ -256,6 +371,14 @@ ApplyReport applyImportedChanges(
             {
                 processChannelsChange(block_index, original_value, current_value, provenance,
                                        requests, report);
+                continue;
+            }
+
+            if (peripheral_type == "rtc" &&
+                (field_name == "time" || field_name == "date" || field_name == "alarm"))
+            {
+                processRtcObjectChange(block_index, field_name, original_value, current_value,
+                                        provenance, requests, report);
                 continue;
             }
 

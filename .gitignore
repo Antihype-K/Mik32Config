@@ -11,6 +11,7 @@ generated_projects/
 # как и build/ выше для CMake (см. docs/implementations/rust_codegen.md).
 templates/**/target/
 packaging/windows/out/
+packaging/linux/out/
 docs/
 CLAUDE.md
 MENTOR_MODE.md
@@ -21,3 +22,4 @@ skills-lock.json
 .idea/
 userflow.drawio
 MAKET_DESIGN_TZ.md
+/learning/

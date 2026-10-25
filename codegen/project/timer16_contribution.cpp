@@ -3,9 +3,60 @@
 #include <iomanip>
 #include <map>
 #include <sstream>
+#include <vector>
 
 namespace
 {
+    std::string irqTemplateFunctionName(int instance)
+    {
+        return "TIMER16_" + std::to_string(instance) + "_IRQHandler_Template";
+    }
+
+    // Шаблон не подключён к вектору прерываний RISC-V (raw_trap_handler,
+    // HAL_EPIC_MaskLevelSet) — тот же осознанный выбор, что у Timer32
+    // (codegen/project/timer32_contribution.cpp): подключение — забота
+    // пользователя, см. docs/implementations/timer16_irq.md.
+    std::string buildTimer16IrqTemplate(const std::string& handle_name, const Timer16Config& config)
+    {
+        std::ostringstream irq;
+        irq << "/*\n"
+               " * Errata п. 8.2 (mik32v2errataV1_0_1_1 v1.0.1): флаг CMPM может выставиться\n"
+               " * повторно, если счётчик не успел измениться за такт после сброса флага.\n"
+               " * Обход: отсутствует (буквально по тексту errata) — сброс флага ниже всё\n"
+               " * равно обязателен (иначе гарантированный бесконечный повторный вход).\n"
+               " *\n"
+               " * Шаблон НЕ подключён к вектору прерываний RISC-V (raw_trap_handler,\n"
+               " * HAL_EPIC_MaskLevelSet, HAL_IRQ_EnableInterrupts) — это забота пользователя,\n"
+               " * см. docs/implementations/timer16_irq.md. Вызвать эту функцию нужно из\n"
+               " * своего raw_trap_handler после проверки EPIC_CHECK_TIMER16_"
+            << config.instance << "().\n"
+               " */\n"
+               "void " << irqTemplateFunctionName(config.instance) << "(void)\n"
+               "{\n"
+               "    const uint32_t flags = " << handle_name << ".Instance->ISR;\n"
+               "\n";
+        if (config.overflow_interrupt)
+        {
+            irq << "    if (flags & TIMER16_FLAG_ARRM)\n"
+                   "    {\n"
+                   "        __HAL_TIMER16_CLEAR_FLAG(&" << handle_name << ", TIMER16_FLAG_ARRM);\n"
+                   "\n"
+                   "        /* USER TODO: обработать переполнение (ARRM) здесь. */\n"
+                   "    }\n";
+        }
+        if (config.compare_interrupt)
+        {
+            irq << "    if (flags & TIMER16_FLAG_CMPM)\n"
+                   "    {\n"
+                   "        __HAL_TIMER16_CLEAR_FLAG(&" << handle_name << ", TIMER16_FLAG_CMPM);\n"
+                   "\n"
+                   "        /* USER TODO: обработать сравнение (CMPM) здесь. */\n"
+                   "    }\n";
+        }
+        irq << "}\n";
+        return irq.str();
+    }
+
     // mik32_hal_timer16.h, HAL_Timer16_SourceTypeDef (минус EXTERNAL_INPUT1 —
     // см. schemas/timer16.json). known_frequency=true только для вариантов,
     // совпадающих с sys_clk=32МГц при дефолтной конфигурации тактирования
@@ -47,15 +98,33 @@ ParseResult<PeripheralContribution> buildTimer16Contribution(
 {
     const std::string* timer_handle = findOrNull(knowledge.instance_handle, config.instance);
     const std::string* prescaler_enum = findOrNull(knowledge.prescaler_hal_enum, std::to_string(config.prescaler));
-    const std::string* trigger_source_enum = findOrNull(knowledge.instance_default_trigger_source, config.instance);
     const Timer16Knowledge::FixedPin* pwm_pin = findOrNull(knowledge.instance_fixed_pwm_pin, config.instance);
     const bool* waveform_enable = findOrNull(knowledge.mode_waveform_enable, config.mode);
+
+    // schemas/timer16.json "trigger_source" (2026-10-22): если поле не
+    // задано пользователем (config.trigger_source пустая строка) — прежнее
+    // поведение, берём безопасный дефолт instance_default_trigger_source.
+    // Если задано — ищем явный выбор в trigger_source_hal_enum[instance].
+    const std::string* trigger_source_enum = nullptr;
+    if (config.trigger_source.empty())
+    {
+        trigger_source_enum = findOrNull(knowledge.instance_default_trigger_source, config.instance);
+    }
+    else
+    {
+        const std::map<std::string, std::string>* per_instance =
+            findOrNull(knowledge.trigger_source_hal_enum, config.instance);
+        if (per_instance)
+        {
+            trigger_source_enum = findOrNull(*per_instance, config.trigger_source);
+        }
+    }
 
     if (!timer_handle || !prescaler_enum || !trigger_source_enum || !pwm_pin || !waveform_enable)
     {
         return ParseResult<PeripheralContribution>{
             false,
-            "Timer16Config ссылается на instance/prescaler/mode, отсутствующий в knowledge_base/timer16.json",
+            "Timer16Config ссылается на instance/prescaler/mode/trigger_source, отсутствующий в knowledge_base/timer16.json",
             std::nullopt};
     }
 
@@ -216,17 +285,26 @@ ParseResult<PeripheralContribution> buildTimer16Contribution(
               "    HAL_Timer16_Init(&" << handle_name << ");\n"
               "\n";
 
+    // docs/open_tasks.md "Timer16 — прерывания не реализованы": overflow_interrupt/
+    // compare_interrupt выбирают ARRM/CMPM. mode=encoder не поддерживает их в
+    // этом кодогене (schemas/timer16.json: compare_interrupt вообще запрещён
+    // парсером вне period/one_shot; overflow_interrupt при encoder оставлен без
+    // IRQ-коллбэка — отдельная семантика положения энкодера, не "переполнение").
+    const bool uses_interrupts = !is_encoder && (config.overflow_interrupt || config.compare_interrupt);
+
     // ТЗ §3.1.4 п.5 / расхождение с реальным HAL зафиксировано в
     // docs/implementations/timer16.md: HAL_Timer16_StartPWM/StartOneShot сами
     // всегда пишут CMP раньше ARR, порядок записи регистров не контролируется
     // вызывающим кодом ни в каком случае.
     if (config.mode == "period")
     {
-        init_c << "    HAL_Timer16_StartPWM(&" << handle_name << ", " << config.arr << ", " << config.cmp << ");\n";
+        init_c << "    HAL_Timer16_Start" << (uses_interrupts ? "PWM_IT" : "PWM")
+               << "(&" << handle_name << ", " << config.arr << ", " << config.cmp << ");\n";
     }
     else if (config.mode == "one_shot")
     {
-        init_c << "    HAL_Timer16_StartOneShot(&" << handle_name << ", " << config.arr << ", " << config.cmp << ");\n";
+        init_c << "    HAL_Timer16_Start" << (uses_interrupts ? "OneShot_IT" : "OneShot")
+               << "(&" << handle_name << ", " << config.arr << ", " << config.cmp << ");\n";
     }
     else if (is_encoder)
     {
@@ -238,10 +316,37 @@ ParseResult<PeripheralContribution> buildTimer16Contribution(
     }
     else
     {
-        init_c << "    HAL_Timer16_Counter_Start(&" << handle_name << ", " << config.arr << ");\n";
+        init_c << "    HAL_Timer16_Counter" << (uses_interrupts ? "_Start_IT" : "_Start")
+               << "(&" << handle_name << ", " << config.arr << ");\n";
     }
+
+    if (uses_interrupts)
+    {
+        // HAL_Timer16_*_IT включают ARROK/CMPOK вместе с ARRM/CMPM
+        // (mik32_hal_timer16.c) — те не запрошены пользователем (только
+        // "успешная запись регистра", не интересующее этот кодоген событие),
+        // поэтому маска переписывается явно сразу после Start_IT тем же
+        // приёмом, что HAL_Timer32_Start_IT делает внутри себя
+        // (codegen/project/timer32_contribution.cpp).
+        std::vector<std::string> masks;
+        if (config.overflow_interrupt) masks.push_back("TIMER16_IER_ARRMIE_M");
+        if (config.compare_interrupt) masks.push_back("TIMER16_IER_CMPMIE_M");
+        std::ostringstream mask;
+        for (size_t i = 0; i < masks.size(); ++i)
+        {
+            if (i > 0) mask << " | ";
+            mask << masks[i];
+        }
+        init_c << "    HAL_Timer16_SetInterruptMask(&" << handle_name << ", " << mask.str() << ");\n";
+    }
+
     init_c << "}\n";
     contribution.init_function_text = init_c.str();
+
+    if (uses_interrupts)
+    {
+        contribution.helper_functions_text = buildTimer16IrqTemplate(handle_name, config);
+    }
 
     return ParseResult<PeripheralContribution>{true, "", contribution};
 }

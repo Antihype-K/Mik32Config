@@ -156,3 +156,12 @@ TEST(EepromReverseMapper, UnparseableLiteralIsUnresolvedNotDefaulted)
     ASSERT_NE(mode_provenance, nullptr);
     EXPECT_FALSE(mode_provenance->unresolved);
 }
+
+TEST(EepromReverseMapper, SerializeFieldValueRoundTrip)
+{
+    using reverse_import::serializeEepromFieldValue;
+    EXPECT_EQ(serializeEepromFieldValue("mode", "three_stage", ""), "HAL_EEPROM_MODE_THREE_STAGE");
+    EXPECT_EQ(serializeEepromFieldValue("ecc_enabled", false, ""), "HAL_EEPROM_ECC_DISABLE");
+    EXPECT_EQ(serializeEepromFieldValue("single_error_interrupt_enabled", true, ""), "HAL_EEPROM_SERR_ENABLE");
+    EXPECT_FALSE(serializeEepromFieldValue("mode", "four_stage", "").has_value());
+}

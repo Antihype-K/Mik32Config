@@ -134,7 +134,8 @@ void mapRtcIntField(
     if (value.has_value())
     {
         target_object[json_key] = *value;
-        mapped.provenance.push_back(makeProvenance(json_field, *assignment, false));
+        // editable=true: serializeRtcFieldValue умеет записать это поле обратно.
+        mapped.provenance.push_back(makeProvenance(json_field, *assignment, true));
     }
     else
     {
@@ -292,13 +293,83 @@ std::optional<MappedBlock> mapRtcBlock(const RawInitBlock& block)
         {
             const bool enabled = trimText(interrupts->raw_value_text) == "RTC_ALARM_IRQ_ENABLE";
             alarm_object["interrupt_enabled"] = enabled;
-            result.provenance.push_back(makeProvenance("alarm.interrupt_enabled", *interrupts, false));
+            // editable=true: serializeRtcFieldValue умеет записать это поле обратно.
+            result.provenance.push_back(makeProvenance("alarm.interrupt_enabled", *interrupts, true));
         }
 
         result.json_block["alarm"] = alarm_object;
     }
 
     return result;
+}
+
+std::optional<std::string> serializeRtcFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text)
+{
+    // field_name приходит как ПОСЛЕДНИЙ сегмент составного json_field
+    // ("time.dow" -> "dow", "alarm.time.hours" -> "hours") — диспетчер в
+    // reverse_import_apply.cpp обрезает префикс перед вызовом, см.
+    // processRtcChange.
+
+    if (field_name == "interrupt_enabled")
+    {
+        if (!new_value.is_boolean())
+        {
+            return std::nullopt;
+        }
+        return new_value.get<bool>() ? std::string("RTC_ALARM_IRQ_ENABLE")
+                                      : std::string("RTC_ALARM_IRQ_DISABLE");
+    }
+
+    if (!new_value.is_number_integer())
+    {
+        return std::nullopt;
+    }
+    const int value = new_value.get<int>();
+
+    // dow/month: сохраняем тот же стиль, что был в исходнике — если там был
+    // макрос RTC_WEEKDAY_*/RTC_MONTH_*, пишем макрос того же семейства,
+    // иначе голый десятичный литерал (оба стиля встречаются в вендорных
+    // примерах в одном файле, см. parseRtcIntField выше).
+    if (field_name == "dow")
+    {
+        if (trimText(original_raw_value_text).rfind("RTC_WEEKDAY_", 0) == 0)
+        {
+            static const std::array<const char*, 7> kWeekdays = {
+                "RTC_WEEKDAY_MONDAY", "RTC_WEEKDAY_TUESDAY", "RTC_WEEKDAY_WEDNESDAY",
+                "RTC_WEEKDAY_THURSDAY", "RTC_WEEKDAY_FRIDAY", "RTC_WEEKDAY_SATURDAY",
+                "RTC_WEEKDAY_SUNDAY"};
+            if (value < 1 || value > 7) return std::nullopt;
+            return std::string(kWeekdays[value - 1]);
+        }
+        return std::to_string(value);
+    }
+    if (field_name == "month")
+    {
+        if (trimText(original_raw_value_text).rfind("RTC_MONTH_", 0) == 0)
+        {
+            static const std::array<const char*, 12> kMonths = {
+                "RTC_MONTH_JANUARY", "RTC_MONTH_FEBRUARY", "RTC_MONTH_MARCH", "RTC_MONTH_APRIL",
+                "RTC_MONTH_MAY", "RTC_MONTH_JUNE", "RTC_MONTH_JULY", "RTC_MONTH_AUGUST",
+                "RTC_MONTH_SEPTEMBER", "RTC_MONTH_OCTOBER", "RTC_MONTH_NOVEMBER", "RTC_MONTH_DECEMBER"};
+            if (value < 1 || value > 12) return std::nullopt;
+            return std::string(kMonths[value - 1]);
+        }
+        return std::to_string(value);
+    }
+
+    // hours/minutes/seconds/century/day/year: в обоих вендорных примерах
+    // всегда голые десятичные литералы (нет enum-формы для этих полей в
+    // mik32_hal_rtc.h), поэтому один общий путь.
+    if (field_name == "hours" || field_name == "minutes" || field_name == "seconds" ||
+        field_name == "century" || field_name == "day" || field_name == "year")
+    {
+        return std::to_string(value);
+    }
+
+    return std::nullopt;
 }
 
 } // namespace reverse_import

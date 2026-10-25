@@ -34,6 +34,15 @@ namespace reverse_import
 std::optional<MappedBlock> scanPvdBlockFromFileContent(
     const std::string& file_content, const std::string& file_path);
 
+// Обратная сериализация для точечной правки. Поддерживает
+// digital_filter_value/under_threshold/over_threshold (literal-provenance
+// с location) — enable_reference_calibration кодируется вставкой/удалением
+// целой строки и не поддерживается (см. .cpp).
+std::optional<std::string> serializePvdFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text);
+
 } // namespace reverse_import
 
 #endif //MIK32_CONFIGURATOR_PVD_REVERSE_MAPPER_H

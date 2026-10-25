@@ -140,3 +140,21 @@ TEST(AdcReverseMapper, UnparseableLiteralIsUnresolvedNotDefaulted)
     ASSERT_NE(channel_provenance, nullptr);
     EXPECT_FALSE(channel_provenance->unresolved);
 }
+
+TEST(AdcReverseMapper, SerializeFieldRoundTrip)
+{
+    using reverse_import::serializeAdcFieldValue;
+    EXPECT_EQ(serializeAdcFieldValue("channel", 5, ""), "ADC_CHANNEL5");
+    EXPECT_EQ(serializeAdcFieldValue("ext_ref", true, ""), "ADC_EXTREF_ON");
+    EXPECT_EQ(serializeAdcFieldValue("ext_ref", false, ""), "ADC_EXTREF_OFF");
+    EXPECT_EQ(serializeAdcFieldValue("ext_clb", true, ""), "ADC_EXTCLB_ADCREF");
+    EXPECT_EQ(serializeAdcFieldValue("ext_clb", false, ""), "ADC_EXTCLB_CLBREF");
+}
+
+TEST(AdcReverseMapper, SerializeFieldRejectsOutOfRangeOrWrongType)
+{
+    using reverse_import::serializeAdcFieldValue;
+    EXPECT_FALSE(serializeAdcFieldValue("channel", 8, "").has_value());
+    EXPECT_FALSE(serializeAdcFieldValue("channel", "0", "").has_value());
+    EXPECT_FALSE(serializeAdcFieldValue("unknown_field", 1, "").has_value());
+}

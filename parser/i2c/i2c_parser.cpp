@@ -24,6 +24,10 @@ namespace
     const std::set<std::string> kValidOwnAddress2Masks = {
         "none", "111111x", "11111xx", "1111xxx", "111xxxx", "11xxxxx", "1xxxxxx", "1111111"};
 
+    constexpr int kMinDmaChannel = 0;
+    constexpr int kMaxDmaChannel = 3;
+    const std::set<std::string> kValidDmaDirection = {"tx", "rx"};
+
     ParseResult<I2cConfig> makeError(const std::string& message)
     {
         return ParseResult<I2cConfig>{false, message, std::nullopt};
@@ -245,6 +249,77 @@ ParseResult<I2cConfig> parseI2cBlock(const nlohmann::json& i2c)
                 config.own_address_2_mask = i2c["own_address_2_mask"].get<std::string>();
             }
         }
+    }
+
+    // dma — необязательное поле, см. schemas/i2c.json и обоснование в
+    // parser/i2c/i2c_parser.h у I2cDmaConfig. По образцу parser/USART/
+    // usart_parser.cpp, но без buffer_type/buffer_size_bytes/element_size/
+    // increment (не нужны этому HAL — см. комментарий у I2cDmaConfig).
+    if (i2c.contains("dma"))
+    {
+        if (!i2c["dma"].is_array())
+        {
+            return makeError("Поле \"dma\" должно быть массивом");
+        }
+        if (i2c["dma"].size() > 2)
+        {
+            return makeError("Поле \"dma\" содержит больше 2 элементов (не более одного на каждое направление tx/rx)");
+        }
+
+        std::set<std::string> seen_directions;
+        std::set<int> seen_channels;
+        for (size_t i = 0; i < i2c["dma"].size(); ++i)
+        {
+            const nlohmann::json& dma_node = i2c["dma"][i];
+            const std::string prefix = "dma[" + std::to_string(i) + "]: ";
+
+            for (const char* field : {"channel", "direction"})
+            {
+                if (!dma_node.contains(field))
+                {
+                    return makeError(prefix + "отсутствует обязательное поле \"" + field + "\"");
+                }
+            }
+
+            if (!dma_node["channel"].is_number_integer())
+            {
+                return makeError(prefix + "поле \"channel\" должно быть целым числом");
+            }
+            const int channel = dma_node["channel"].get<int>();
+            if (channel < kMinDmaChannel || channel > kMaxDmaChannel)
+            {
+                return makeError(prefix + "поле \"channel\" вне диапазона 0-3 (у контроллера DMA 4 канала)");
+            }
+            if (!seen_channels.insert(channel).second)
+            {
+                return makeError(prefix + "channel " + std::to_string(channel) + " уже занят другим элементом массива \"dma\" этого же блока");
+            }
+
+            if (!dma_node["direction"].is_string() || !kValidDmaDirection.count(dma_node["direction"].get<std::string>()))
+            {
+                return makeError(prefix + "поле \"direction\" содержит недопустимое значение (разрешены tx, rx)");
+            }
+            const std::string dma_direction = dma_node["direction"].get<std::string>();
+            if (!seen_directions.insert(dma_direction).second)
+            {
+                return makeError(prefix + "направление \"" + dma_direction + "\" уже задано другим элементом массива \"dma\" этого же блока");
+            }
+
+            I2cDmaConfig dma_config;
+            dma_config.channel = channel;
+            dma_config.direction = dma_direction;
+            config.dma.push_back(dma_config);
+        }
+    }
+
+    // interrupt_mode — необязательное поле, см. schemas/i2c.json.
+    if (i2c.contains("interrupt_mode"))
+    {
+        if (!i2c["interrupt_mode"].is_boolean())
+        {
+            return makeError("Поле \"interrupt_mode\" должно быть булевым");
+        }
+        config.interrupt_mode = i2c["interrupt_mode"].get<bool>();
     }
 
     return ParseResult<I2cConfig>{true, "", config};

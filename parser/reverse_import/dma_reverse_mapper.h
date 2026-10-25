@@ -28,7 +28,9 @@
 #define MIK32_CONFIGURATOR_DMA_REVERSE_MAPPER_H
 
 #include <optional>
+#include <string>
 
+#include "json.hpp"
 #include "mapped_block.h"
 #include "reverse_import_scanner.h"
 
@@ -37,6 +39,19 @@ namespace reverse_import
 
 // block.handle_type должен быть "DMA_ChannelHandleTypeDef", иначе nullopt.
 std::optional<MappedBlock> mapDmaChannelBlock(const RawInitBlock& block);
+
+// Обратная сериализация для точечной правки — покрывает только instance/
+// priority/element_size (прямые однострочные присваивания). direction/
+// request списаны с ДВУХ полей (ReadMode+WriteMode) одновременно,
+// buffer_size_bytes читается из аргумента вызова HAL_DMA_Start (не поле),
+// irq_enable — из отдельного вызова HAL_DMA_LocalIRQEnable — однострочный
+// сериализатор поля не может безопасно перезаписать эти формы без риска
+// рассинхронизировать пары строк, поэтому они остаются unpatchable
+// (см. feedback_reverse_import_unresolved_fields_policy — не угадываем).
+std::optional<std::string> serializeDmaFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text);
 
 } // namespace reverse_import
 

@@ -293,4 +293,42 @@ std::optional<MappedBlock> mapCryptoBlock(const RawInitBlock& block)
     return result;
 }
 
+std::optional<std::string> serializeCryptoFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (!new_value.is_string()) return std::nullopt;
+    const std::string v = new_value.get<std::string>();
+    if (field_name == "algorithm")
+    {
+        if (v == "kuznechik") return "CRYPTO_ALG_KUZNECHIK";
+        if (v == "magma") return "CRYPTO_ALG_MAGMA";
+        if (v == "aes") return "CRYPTO_ALG_AES";
+        return std::nullopt;
+    }
+    if (field_name == "cipher_mode")
+    {
+        if (v == "ecb") return "CRYPTO_CIPHER_MODE_ECB";
+        if (v == "cbc") return "CRYPTO_CIPHER_MODE_CBC";
+        if (v == "ctr") return "CRYPTO_CIPHER_MODE_CTR";
+        return std::nullopt;
+    }
+    if (field_name == "swap_mode")
+    {
+        if (v == "none") return "CRYPTO_SWAP_MODE_NONE";
+        if (v == "halfword") return "CRYPTO_SWAP_MODE_HALFWORD";
+        if (v == "byte") return "CRYPTO_SWAP_MODE_BYTE";
+        if (v == "bit") return "CRYPTO_SWAP_MODE_BIT";
+        return std::nullopt;
+    }
+    if (field_name == "order_mode")
+    {
+        if (v == "lsw") return "CRYPTO_ORDER_MODE_LSW";
+        if (v == "msw") return "CRYPTO_ORDER_MODE_MSW";
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 } // namespace reverse_import

@@ -36,9 +36,23 @@ struct Timer16Config
     // до этой сессии.
     std::string clock_source = "internal_system"; // mik32_hal_timer16.h, HAL_Timer16_SourceTypeDef (минус EXTERNAL_INPUT1 — см. выше)
     std::string trigger_edge = "software";         // Trigger.ActiveEdge — HAL_Timer16_Trigger_ActiveEdgeTypeDef
+
+    // НЕОБЯЗАТЕЛЬНОЕ поле (добавлено 2026-10-22, schemas/timer16.json
+    // "trigger_source"). Пустая строка — поле не задано пользователем,
+    // кодоген берёт instance_default_trigger_source из knowledge_base
+    // (прежнее поведение). Непустое — один из 8 логических имён
+    // ("gpio_a".."gpio_d","temperature","adc","rtc","alarm"), кодоген
+    // смотрит trigger_source_hal_enum[instance][trigger_source].
+    std::string trigger_source = "";
     std::string external_clock_filter = "none";    // Filter.ExternalClock — HAL_Timer16_FilterTypeDef
     std::string trigger_filter = "none";            // Filter.Trigger — HAL_Timer16_FilterTypeDef
     bool waveform_inverted = false;                 // Waveform.Polarity, только при Waveform.Enable=ENABLE (period/one_shot)
+
+    // docs/open_tasks.md "Timer16 — прерывания не реализованы". ARRM/CMPM —
+    // HAL_Timer16_*_IT включают их через SetInterruptMask (см.
+    // codegen/project/timer16_contribution.cpp).
+    bool overflow_interrupt = false; // TIMER16_FLAG_ARRM/TIMER16_IER_ARRMIE_M
+    bool compare_interrupt = false;  // TIMER16_FLAG_CMPM/TIMER16_IER_CMPMIE_M, только при mode=period/one_shot
 };
 
 ParseResult<Timer16Config> parseTimer16Config(const std::string& file_name_path);

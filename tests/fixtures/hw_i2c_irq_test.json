@@ -1,0 +1,25 @@
+{
+  "mcu": "MIK32",
+  "version": "2.0",
+  "peripherals": [
+    {
+      "type": "uart",
+      "instance": 0,
+      "baud_rate": 38400,
+      "data_bits": 8,
+      "stop_bits": 1,
+      "parity": "none",
+      "direction": "duplex",
+      "flow_control": false
+    },
+    {
+      "type": "i2c",
+      "instance": 0,
+      "mode": "master",
+      "clock_speed": 100000,
+      "digital_filter": 0,
+      "analog_filter": false,
+      "interrupt_mode": true
+    }
+  ]
+}

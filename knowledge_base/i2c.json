@@ -39,6 +39,6 @@
   "not_covered_by_this_codegen": {
     "errata_4_1": "Errata MIK32V2 v1.0.1, §4.1 «Флаг TXIS»: флаг TXIS формируется в конце передачи байта, а не в начале — при работе slave без растягивания (NOSTRETCH=1) это может привести к недозагрузке TXDR. Актуально только для mode=slave (мы всегда хардкодим NoStretchMode=DISABLE по умолчанию, т.е. растягивание активно и errata не проявляется), но комментарий включается в генерируемый код безусловно в slave-режиме (решение пользователя) как предупреждение на будущее — при добавлении пользовательского выбора NoStretchMode.",
     "slave_full_config": "GeneralCall, SBCMode, DualAddressMode, OwnAddress2/OwnAddress2Mask — реальные поля HAL_I2C_SlaveInit, не запрошены ни ТЗ (молчит), ни этой сессией — хардкод DISABLE.",
-    "dma_and_it": "HAL_I2C_*_DMA/_IT варианты (mik32_hal_i2c.h) — вне скоупа, кодоген использует только блокирующие Master_Transmit/Receive и Slave_Transmit/Receive."
+    "dma_and_it": "ЗАКРЫТО 2026-10-21 (см. docs/implementations/i2c.md, раздел DMA/IT): schemas/i2c.json поля \"dma\"/\"interrupt_mode\", codegen/project/i2c_contribution.cpp генерирует hdmatx/hdmarx + ChannelInit для DMA и шаблон IRQHandler для IT. Сами HAL_I2C_*_IT функции не требуют доп. полей кодогена, кроме обработчика."
   }
 }

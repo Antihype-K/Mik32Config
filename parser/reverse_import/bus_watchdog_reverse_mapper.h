@@ -26,6 +26,15 @@ namespace reverse_import
 std::optional<MappedBlock> scanBusWatchdogBlockFromFileContent(
     const std::string& file_content, const std::string& file_path);
 
+// Обратная сериализация для точечной правки. Поддерживает только "timeout"
+// (единственное поле с literal-provenance с location) — enabled-флаги
+// кодируются вставкой/удалением целой строки, не литералом, и не
+// поддерживаются (см. .cpp).
+std::optional<std::string> serializeBusWatchdogFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text);
+
 } // namespace reverse_import
 
 #endif //MIK32_CONFIGURATOR_BUS_WATCHDOG_REVERSE_MAPPER_H

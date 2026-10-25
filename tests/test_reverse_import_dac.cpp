@@ -165,3 +165,21 @@ TEST(DacReverseMapper, UnparseableLiteralIsUnresolvedNotDefaulted)
     ASSERT_NE(instance_provenance, nullptr);
     EXPECT_FALSE(instance_provenance->unresolved);
 }
+
+TEST(DacReverseMapper, SerializeFieldRoundTrip)
+{
+    using reverse_import::serializeDacFieldValue;
+    EXPECT_EQ(serializeDacFieldValue("instance", 1, ""), "HAL_DAC1");
+    EXPECT_EQ(serializeDacFieldValue("instance", 0, ""), "HAL_DAC0");
+    EXPECT_EQ(serializeDacFieldValue("div", 31, ""), "31");
+    EXPECT_EQ(serializeDacFieldValue("ext_ref", true, ""), "DAC_EXTREF_ON");
+    EXPECT_EQ(serializeDacFieldValue("ext_clb", true, ""), "DAC_EXTCLB_DACREF");
+}
+
+TEST(DacReverseMapper, SerializeFieldRejectsOutOfRangeOrWrongType)
+{
+    using reverse_import::serializeDacFieldValue;
+    EXPECT_FALSE(serializeDacFieldValue("instance", 2, "").has_value());
+    EXPECT_FALSE(serializeDacFieldValue("div", 256, "").has_value());
+    EXPECT_FALSE(serializeDacFieldValue("ext_ref", "on", "").has_value());
+}

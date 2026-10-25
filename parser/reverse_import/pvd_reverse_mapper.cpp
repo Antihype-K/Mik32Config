@@ -100,7 +100,8 @@ std::optional<MappedBlock> scanPvdBlockFromFileContent(
                 provenance.location = SourceLocation{file_path, found->second};
                 provenance.original_raw_value_text = raw_value;
                 provenance.original_full_line_text = found->first;
-                provenance.editable = false;
+                // editable=true: serializePvdFieldValue умеет записать это поле обратно.
+                provenance.editable = true;
                 result.provenance.push_back(provenance);
             }
             else
@@ -155,7 +156,8 @@ std::optional<MappedBlock> scanPvdBlockFromFileContent(
             provenance.location = SourceLocation{file_path, found->second};
             provenance.original_raw_value_text = raw_value;
             provenance.original_full_line_text = found->first;
-            provenance.editable = false;
+            // editable=true: serializePvdFieldValue умеет записать это поле обратно.
+            provenance.editable = true;
             result.provenance.push_back(provenance);
         }
         else
@@ -182,6 +184,34 @@ std::optional<MappedBlock> scanPvdBlockFromFileContent(
     }
 
     return result;
+}
+
+std::optional<std::string> serializePvdFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text)
+{
+    (void)original_raw_value_text;
+
+    if (field_name == "digital_filter_value" || field_name == "under_threshold" ||
+        field_name == "over_threshold")
+    {
+        if (!new_value.is_number_integer())
+        {
+            return std::nullopt;
+        }
+        // Провенанс хранит ТОЛЬКО захваченный регистром литерал (без "(uint32_t)"
+        // и без "<< PVD_CONFIG_..._S", см. regex в scanPvdBlockFromFileContent) —
+        // reverse_patch_writer подставляет этот текст в то же место строки, где
+        // был старый литерал, так что здесь нужен только сам литерал.
+        return std::to_string(new_value.get<long long>());
+    }
+
+    // enable_reference_calibration: как eeprom_enabled у Bus Watchdog —
+    // значение кодируется присутствием/отсутствием строки "pvd_config |=
+    // PVD_CONFIG_EN_VREFCLB_M;", а не литералом; нет FieldProvenance с
+    // location для вставки/удаления строки.
+    return std::nullopt;
 }
 
 } // namespace reverse_import

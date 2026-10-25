@@ -2,6 +2,8 @@
 #include "contribution_utils.h"
 #include <map>
 #include <sstream>
+#include <vector>
+#include <utility>
 
 namespace
 {
@@ -32,6 +34,26 @@ namespace
             case 15: return "I2C_DIGITALFILTER_15CLOCKCYCLES";
             default: return "I2C_DIGITALFILTER_OFF";
         }
+    }
+
+    // mik32_hal_dma.h, HAL_DMA_ChannelRequestTypeDef: DMA_CHANNEL_I2C_0_REQUEST=5,
+    // DMA_CHANNEL_I2C_1_REQUEST=6 — линия запроса ПДП конкретного блока I2C,
+    // используется и для Read-, и для Write-стороны канала (оба примера ниже
+    // ставят одно и то же значение в ReadRequest/WriteRequest).
+    std::string dmaRequestEnum(int instance)
+    {
+        return "DMA_CHANNEL_I2C_" + std::to_string(instance) + "_REQUEST";
+    }
+
+    // mik32_hal_dma.h, HAL_DMA_ChannelIndexTypeDef.
+    std::string dmaChannelEnum(int channel)
+    {
+        return "DMA_CHANNEL_" + std::to_string(channel);
+    }
+
+    std::string irqHandlerFunctionName(int instance)
+    {
+        return "I2C_" + std::to_string(instance) + "_IRQHandler_Template";
     }
 
     struct I2cTimingr
@@ -99,15 +121,49 @@ ParseResult<PeripheralContribution> buildI2cContribution(
     const std::string handle_name = "hi2c_" + std::to_string(config.instance);
     const std::string suffix = std::to_string(config.instance);
 
+    const I2cDmaConfig* dma_tx = nullptr;
+    const I2cDmaConfig* dma_rx = nullptr;
+    for (const I2cDmaConfig& dma : config.dma)
+    {
+        if (dma.direction == "tx") dma_tx = &dma;
+        else if (dma.direction == "rx") dma_rx = &dma;
+    }
+
     PeripheralContribution contribution;
     contribution.label = "I2C_" + suffix;
     contribution.init_order = kInitOrderI2c;
     contribution.init_function_name = "I2C_" + suffix + "_Init";
     contribution.init_c_includes = {"mik32_hal_i2c.h", "mik32_hal_pcc.h"};
+    if (dma_tx || dma_rx)
+    {
+        contribution.init_c_includes.push_back("mik32_hal_dma.h");
+    }
+    if (config.interrupt_mode)
+    {
+        contribution.init_c_includes.push_back("mik32_hal_irq.h");
+    }
     contribution.global_definitions = "I2C_HandleTypeDef " + handle_name + ";\n";
     contribution.public_prototypes = {
         "void " + contribution.init_function_name + "(void);",
         "void I2C_" + suffix + "_Reset(void);"};
+
+    // ТЗ §3.1.3.3 / §3.1.6 п.2 (тот же глобальный пул ПДП, что у UART) —
+    // DMA_ChannelHandleTypeDef объявляются ДО функции Init, т.к. Init
+    // ссылается на их адреса (hi2c.hdmatx/hdmarx), а C транслирует файл
+    // сверху вниз (project_codegen.cpp уже объявляет общий "hdma" раньше
+    // per-contribution глобалов). Поля ChannelInit — буквально по двум
+    // реальным вендорным примерам docs/examples/mik32-examples/
+    // HAL_DMA_I2C_Master и HAL_DMA_I2C_Slave (DMA_CH0_Init/DMA_CH1_Init),
+    // значения в обоих идентичны: Priority=VERY_HIGH, Size=BYTE (TXDR/RXDR
+    // 8-битные регистры), ReadAck=WriteAck=DISABLE.
+    std::ostringstream dma_globals;
+    for (const auto& [dma, is_tx] : std::vector<std::pair<const I2cDmaConfig*, bool>>{{dma_tx, true}, {dma_rx, false}})
+    {
+        if (!dma) continue;
+        const std::string channel_handle = "hdma_" + handle_name + "_" + (is_tx ? "tx" : "rx");
+        dma_globals << "DMA_ChannelHandleTypeDef " << channel_handle << ";\n";
+    }
+    contribution.global_definitions += dma_globals.str();
 
     std::ostringstream init_c;
     if (!is_master && config.no_stretch_mode)
@@ -190,10 +246,60 @@ ParseResult<PeripheralContribution> buildI2cContribution(
               "    " << handle_name << ".Clock.SCLDEL = " << timing.scldel << ";\n"
               "    " << handle_name << ".Clock.SDADEL = " << timing.sdadel << ";\n"
               "    " << handle_name << ".Clock.SCLH = " << timing.sclh << ";\n"
-              "    " << handle_name << ".Clock.SCLL = " << timing.scll << ";\n"
-              "\n"
-              "    HAL_I2C_Init(&" << handle_name << ");\n"
-              "}\n";
+              "    " << handle_name << ".Clock.SCLL = " << timing.scll << ";\n";
+
+    // hi2c.hdmatx/hdmarx должны быть заполнены ДО HAL_I2C_Init — сами
+    // _DMA-функции (mik32_hal_i2c.c:983+) их не трогают, используют как
+    // готовую ссылку в рантайме. По образцу I2C0_Init из обоих вендорных
+    // примеров (HAL_DMA_I2C_Master/Slave, main.c): "Каналы DMA" идут сразу
+    // после Clock.*, перед вызовом HAL_I2C_Init.
+    if (dma_tx || dma_rx)
+    {
+        init_c << "\n"
+                  "    /* Каналы DMA (ТЗ §3.1.6 п.2) */\n";
+        if (dma_tx)
+        {
+            init_c << "    " << handle_name << ".hdmatx = &hdma_" << handle_name << "_tx;\n";
+        }
+        if (dma_rx)
+        {
+            init_c << "    " << handle_name << ".hdmarx = &hdma_" << handle_name << "_rx;\n";
+        }
+    }
+
+    init_c << "\n"
+              "    HAL_I2C_Init(&" << handle_name << ");\n";
+
+    // Настройка ChannelInit самих каналов — ПОСЛЕ HAL_I2C_Init, по тому же
+    // порядку, что в вендорных DMA_CH0_Init/DMA_CH1_Init (там это отдельные
+    // функции, вызываемые из общего DMA_Init() после настройки DMA_CONFIG;
+    // здесь порядок внутри одной функции не важен для корректности — HAL
+    // не читает ChannelInit внутри HAL_I2C_Init, — но сохраняется для
+    // единообразия с остальными полями .dma у этого же хендла).
+    for (const auto& [dma, is_tx] : std::vector<std::pair<const I2cDmaConfig*, bool>>{{dma_tx, true}, {dma_rx, false}})
+    {
+        if (!dma) continue;
+        const std::string channel_handle = "hdma_" + handle_name + "_" + (is_tx ? "tx" : "rx");
+        const std::string request = dmaRequestEnum(config.instance);
+        init_c << "\n"
+                  "    " << channel_handle << ".dma = &hdma;\n"
+                  "    " << channel_handle << ".ChannelInit.Channel = " << dmaChannelEnum(dma->channel) << ";\n"
+                  "    " << channel_handle << ".ChannelInit.Priority = DMA_CHANNEL_PRIORITY_VERY_HIGH;\n"
+                  "    " << channel_handle << ".ChannelInit.ReadMode = " << (is_tx ? "DMA_CHANNEL_MODE_MEMORY" : "DMA_CHANNEL_MODE_PERIPHERY") << ";\n"
+                  "    " << channel_handle << ".ChannelInit.ReadInc = " << (is_tx ? "DMA_CHANNEL_INC_ENABLE" : "DMA_CHANNEL_INC_DISABLE") << ";\n"
+                  "    " << channel_handle << ".ChannelInit.ReadSize = DMA_CHANNEL_SIZE_BYTE;\n"
+                  "    " << channel_handle << ".ChannelInit.ReadBurstSize = 0;\n"
+                  "    " << channel_handle << ".ChannelInit.ReadRequest = " << request << ";\n"
+                  "    " << channel_handle << ".ChannelInit.ReadAck = DMA_CHANNEL_ACK_DISABLE;\n"
+                  "    " << channel_handle << ".ChannelInit.WriteMode = " << (is_tx ? "DMA_CHANNEL_MODE_PERIPHERY" : "DMA_CHANNEL_MODE_MEMORY") << ";\n"
+                  "    " << channel_handle << ".ChannelInit.WriteInc = " << (is_tx ? "DMA_CHANNEL_INC_DISABLE" : "DMA_CHANNEL_INC_ENABLE") << ";\n"
+                  "    " << channel_handle << ".ChannelInit.WriteSize = DMA_CHANNEL_SIZE_BYTE;\n"
+                  "    " << channel_handle << ".ChannelInit.WriteBurstSize = 0;\n"
+                  "    " << channel_handle << ".ChannelInit.WriteRequest = " << request << ";\n"
+                  "    " << channel_handle << ".ChannelInit.WriteAck = DMA_CHANNEL_ACK_DISABLE;\n";
+    }
+
+    init_c << "}\n";
     contribution.init_function_text = init_c.str();
 
     // Авторесет — тонкая обёртка над реальным HAL_I2C_Reset
@@ -208,6 +314,36 @@ ParseResult<PeripheralContribution> buildI2cContribution(
                "{\n"
                "    HAL_I2C_Reset(&" << handle_name << ");\n"
                "}\n";
+
+    // interrupt_mode: шаблон обработчика — по тому же паттерну, что и
+    // codegen/project/spi_contribution.cpp (irqHandlerFunctionName). Линия
+    // EPIC I2C подтверждена shared/periphery/epic.h (EPIC_LINE_I2C_0_S=6,
+    // EPIC_LINE_I2C_1_S=7) и mik32_hal_irq.h (HAL_EPIC_I2C_x_MASK,
+    // EPIC_CHECK_I2C_x) — в отличие от SPI, сами HAL_I2C_*_IT функции
+    // настраивают маску I2C_CR1 прерываний внутри себя (mik32_hal_i2c.c:
+    // 1139+, HAL_I2C_InterruptEnable), поэтому init-функции здесь ничего
+    // дополнительно включать не нужно — только обработчик.
+    if (config.interrupt_mode)
+    {
+        helpers << "\n"
+                   "/*\n"
+                   " * Шаблон обработчика прерывания " << *i2c_handle << ". Вызовите его из своего\n"
+                   " * raw_trap_handler внутри if (EPIC_CHECK_I2C_" << suffix << "()) { ... }, после\n"
+                   " * включения линии в EPIC (HAL_EPIC_MaskLevelSet(HAL_EPIC_I2C_" << suffix << "_MASK))\n"
+                   " * и HAL_IRQ_EnableInterrupts() — см. mik32_hal_irq.h, shared/periphery/epic.h.\n"
+                   " * Сами HAL_I2C_Master/Slave_*_IT функции настраивают маску прерываний\n"
+                   " * I2C самостоятельно (mik32_hal_i2c.c, HAL_I2C_InterruptEnable).\n"
+                   " * HW-подтверждённый баг HAL (2026-10-21, см. docs/implementations/i2c.md):\n"
+                   " * HAL_I2C_Master_Receive_IT НЕ включает NACKIE — NACK на фазе чтения\n"
+                   " * вешает ожидание state==END навечно. Добавьте вручную сразу после вызова:\n"
+                   " * HAL_I2C_InterruptEnable(&" << handle_name << ", I2C_CR1_NACKIE_M);\n"
+                   " */\n"
+                   "void " << irqHandlerFunctionName(config.instance) << "(void)\n"
+                   "{\n"
+                   "    HAL_I2C_IRQHandler(&" << handle_name << ");\n"
+                   "}\n";
+        contribution.irq_handler_function_name = irqHandlerFunctionName(config.instance);
+    }
     contribution.helper_functions_text = helpers.str();
 
     return ParseResult<PeripheralContribution>{true, "", contribution};

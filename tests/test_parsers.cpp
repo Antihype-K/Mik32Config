@@ -336,6 +336,23 @@ TEST(Timer16Parse, ParsesWaveformInverted)
     EXPECT_TRUE(result.config->waveform_inverted);
 }
 
+// docs/open_tasks.md "Timer16 — прерывания не реализованы".
+TEST(Timer16Parse, ParsesOverflowAndCompareInterrupt)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_overflow_and_compare_interrupt.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->overflow_interrupt);
+    EXPECT_TRUE(result.config->compare_interrupt);
+}
+
+TEST(Timer16Parse, RejectsCompareInterruptOutsidePeriodOrOneShot)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_compare_interrupt_wrong_mode.json");
+
+    EXPECT_FALSE(result.success);
+}
+
 // clock_source принимается и для external_event_count — парсер его не
 // отклоняет (значение проверяется позже кодогеном, который его игнорирует,
 // см. ProjectCodegen.Timer16IgnoresClockSourceForExternalEventCount).
@@ -359,6 +376,31 @@ TEST(Timer16Parse, RejectsUnknownClockSource)
 TEST(Timer16Parse, RejectsUnknownTriggerEdge)
 {
     ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_invalid_trigger_edge.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+// trigger_source — добавлено 2026-10-22, выбор источника Trigger.Source
+// (schemas/timer16.json, knowledge_base/timer16.json trigger_source_hal_enum).
+TEST(Timer16Parse, DefaultsTriggerSourceToEmptyMeaningInstanceDefault)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->trigger_source, "");
+}
+
+TEST(Timer16Parse, ParsesExplicitTriggerSource)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_trigger_source_explicit.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_EQ(result.config->trigger_source, "alarm");
+}
+
+TEST(Timer16Parse, RejectsUnknownTriggerSource)
+{
+    ParseResult<Timer16Config> result = parseTimer16Config("fixtures/timer16_invalid_trigger_source.json");
 
     EXPECT_FALSE(result.success);
 }
@@ -391,6 +433,46 @@ TEST(ProjectCodegen, Timer16IgnoresClockSourceForExternalEventCount)
     EXPECT_FALSE(contains(contribution_result.config->init_function_text, "TIMER16_SOURCE_INTERNAL_AHB"));
 }
 
+// docs/open_tasks.md "Timer16 — прерывания не реализованы": overflow_interrupt/
+// compare_interrupt переключают Start на _IT-вариант, пишут явную маску IER
+// (ARRM|CMPM без ARROK/CMPOK) и генерируют IRQ-шаблон со сбросом обоих флагов.
+TEST(ProjectCodegen, Timer16OverflowAndCompareInterruptUseStartItAndMask)
+{
+    ParseResult<Timer16Config> config_result =
+        parseTimer16Config("fixtures/timer16_overflow_and_compare_interrupt.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<Timer16Knowledge> knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<PeripheralContribution> contribution_result =
+        buildTimer16Contribution(*config_result.config, *knowledge_result.config);
+    ASSERT_TRUE(contribution_result.success) << contribution_result.error;
+
+    EXPECT_TRUE(contains(contribution_result.config->init_function_text, "HAL_Timer16_StartPWM_IT("));
+    EXPECT_TRUE(contains(contribution_result.config->init_function_text,
+        "HAL_Timer16_SetInterruptMask(&htimer16_1, TIMER16_IER_ARRMIE_M | TIMER16_IER_CMPMIE_M);"));
+    EXPECT_TRUE(contains(contribution_result.config->helper_functions_text, "TIMER16_1_IRQHandler_Template"));
+    EXPECT_TRUE(contains(contribution_result.config->helper_functions_text, "TIMER16_FLAG_ARRM"));
+    EXPECT_TRUE(contains(contribution_result.config->helper_functions_text, "TIMER16_FLAG_CMPM"));
+}
+
+TEST(ProjectCodegen, Timer16WithoutInterruptsUsesPlainStartAndNoHelper)
+{
+    ParseResult<Timer16Config> config_result = parseTimer16Config("fixtures/timer16_valid.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<Timer16Knowledge> knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<PeripheralContribution> contribution_result =
+        buildTimer16Contribution(*config_result.config, *knowledge_result.config);
+    ASSERT_TRUE(contribution_result.success) << contribution_result.error;
+
+    EXPECT_FALSE(contains(contribution_result.config->init_function_text, "_IT("));
+    EXPECT_TRUE(contribution_result.config->helper_functions_text.empty());
+}
+
 // Waveform.Polarity игнорируется (но принят парсером) при
 // external_event_count — Waveform.Enable там DISABLE (mode_waveform_enable).
 TEST(ProjectCodegen, Timer16PeriodModeAppliesWaveformInverted)
@@ -407,6 +489,43 @@ TEST(ProjectCodegen, Timer16PeriodModeAppliesWaveformInverted)
 
     EXPECT_TRUE(contains(contribution_result.config->init_function_text,
         ".Waveform.Polarity = TIMER16_WAVEFORM_POLARITY_INVERTED;"));
+}
+
+// trigger_source=alarm на instance=1 -> trigger_source_hal_enum["1"]["alarm"]
+// = TIMER16_TRIGGER_AlARM (общий для всех instance код 0b111) — не дефолт
+// instance_default_trigger_source (который был бы TIMER16_TRIGGER_TIM1_GPIO1_9).
+TEST(ProjectCodegen, Timer16AppliesExplicitTriggerSource)
+{
+    ParseResult<Timer16Config> config_result = parseTimer16Config("fixtures/timer16_trigger_source_explicit.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<Timer16Knowledge> knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<PeripheralContribution> contribution_result =
+        buildTimer16Contribution(*config_result.config, *knowledge_result.config);
+    ASSERT_TRUE(contribution_result.success) << contribution_result.error;
+
+    EXPECT_TRUE(contains(contribution_result.config->init_function_text,
+        ".Trigger.Source = TIMER16_TRIGGER_AlARM;"));
+    EXPECT_FALSE(contains(contribution_result.config->init_function_text, "TIMER16_TRIGGER_TIM1_GPIO1_9"));
+}
+
+// Без явного trigger_source — поведение без изменений (дефолт instance).
+TEST(ProjectCodegen, Timer16WithoutTriggerSourceKeepsInstanceDefault)
+{
+    ParseResult<Timer16Config> config_result = parseTimer16Config("fixtures/timer16_waveform_inverted.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<Timer16Knowledge> knowledge_result = loadTimer16Knowledge("../knowledge_base/timer16.json");
+    ASSERT_TRUE(knowledge_result.success) << knowledge_result.error;
+
+    ParseResult<PeripheralContribution> contribution_result =
+        buildTimer16Contribution(*config_result.config, *knowledge_result.config);
+    ASSERT_TRUE(contribution_result.success) << contribution_result.error;
+
+    EXPECT_TRUE(contains(contribution_result.config->init_function_text,
+        ".Trigger.Source = TIMER16_TRIGGER_TIM1_GPIO1_9;"));
 }
 
 // AUDIT_TZ_PERIPHERY_GAPS.md, Timer16 (2026-10-14) — режим энкодера.
@@ -931,6 +1050,41 @@ TEST(ProjectCodegen, MergesAllPeripheralsIntoSingleInitHeaderAndMain)
         ++pcc_count;
     }
     EXPECT_EQ(pcc_count, 1u);
+}
+
+// Каждый вызов "<Label>_Init();" в main.c обёрнут СВОЕЙ парой USER CODE
+// маркеров ("<label>_Call") — иначе правка, вписанная рядом с вызовом одной
+// периферии, при перегенерации либо терялась бы (общий блок "USER CODE
+// BEGIN 2" не привязан к конкретному вызову), либо относилась бы сразу ко
+// всем вызовам.
+TEST(ProjectCodegen, EachPeripheralInitCallHasItsOwnUserCodeMarkers)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_all_peripherals.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& main_c = firmware_result.config->main_c;
+    EXPECT_TRUE(contains(main_c, "/* USER CODE BEGIN GPIO_2_Call */"));
+    EXPECT_TRUE(contains(main_c, "/* USER CODE END GPIO_2_Call */"));
+    EXPECT_TRUE(contains(main_c, "/* USER CODE BEGIN I2C_0_Call */"));
+    EXPECT_TRUE(contains(main_c, "/* USER CODE END I2C_0_Call */"));
+
+    // Ручной код, вписанный пользователем ВНУТРИ маркера на конкретную
+    // периферию (I2C_0), должен пережить перегенерацию, а GPIO_2 остаться
+    // нетронутым — проверяем, что это не общий блок на все вызовы сразу.
+    const std::string hand_edited = mergeUserCodeSections(main_c,
+        "/* USER CODE BEGIN I2C_0_Call */\n"
+        "    I2C_0_Init();\n"
+        "    // ручная диагностика после I2C\n"
+        "/* USER CODE END I2C_0_Call */\n");
+    EXPECT_TRUE(contains(hand_edited, "// ручная диагностика после I2C"));
+
+    const std::string regenerated = mergeUserCodeSections(main_c, hand_edited);
+    EXPECT_TRUE(contains(regenerated, "// ручная диагностика после I2C"));
+    EXPECT_TRUE(contains(regenerated, "/* USER CODE BEGIN GPIO_2_Call */"));
 }
 
 // Несколько gpio-блоков с одним instance сливаются в одну функцию с
@@ -2632,6 +2786,131 @@ TEST(I2cParse, RejectsOwnAddress2OutOfRange)
     ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_own_address_2_out_of_range.json");
 
     EXPECT_FALSE(result.success);
+}
+
+// --- DMA/IT (2026-10-21, см. docs/implementations/i2c.md) -----------------
+// HAL_I2C_Master/Slave_*_DMA существуют в реально установленном SDK
+// (mik32_hal_i2c.c:983-1113), требуют только hi2c.hdmatx/hdmarx.
+
+TEST(I2cParse, ParsesValidDma)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_master_dma_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    ASSERT_EQ(result.config->dma.size(), 2u);
+    EXPECT_EQ(result.config->dma[0].channel, 0);
+    EXPECT_EQ(result.config->dma[0].direction, "tx");
+    EXPECT_EQ(result.config->dma[1].channel, 1);
+    EXPECT_EQ(result.config->dma[1].direction, "rx");
+}
+
+TEST(I2cParse, RejectsDmaChannelOutOfRange)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_dma_channel_out_of_range.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(I2cParse, RejectsDuplicateDmaDirection)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_dma_duplicate_direction.json");
+
+    EXPECT_FALSE(result.success);
+}
+
+TEST(I2cParse, ParsesInterruptMode)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_master_interrupt_mode.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_TRUE(result.config->interrupt_mode);
+}
+
+TEST(I2cParse, InterruptModeDefaultsToFalse)
+{
+    ParseResult<I2cConfig> result = parseI2cConfig("fixtures/i2c_master_valid.json");
+
+    ASSERT_TRUE(result.success) << result.error;
+    EXPECT_FALSE(result.config->interrupt_mode);
+}
+
+// ТЗ §3.1.6 п.2: канал DMA — глобальный пул на ВЕСЬ конфиг, общий между
+// UART и I2C (и любой другой периферией, использующей ПДП).
+TEST(ProjectConfigParse, RejectsGlobalDmaChannelPoolExhaustionAcrossUartAndI2c)
+{
+    ParseResult<ProjectConfig> result = parseProjectConfig("fixtures/i2c_uart_dma_channel_conflict_global.json");
+
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(contains(result.error, "DMA channel 2")) << result.error;
+}
+
+TEST(ProjectCodegen, I2cDmaWiresHdmatxHdmarxAndChannelInit)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/i2c_master_dma_valid.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "DMA_InitTypeDef hdma;"));
+    EXPECT_TRUE(contains(init_c, "void DMA_Init(void)"));
+    EXPECT_TRUE(contains(init_c, "DMA_ChannelHandleTypeDef hdma_hi2c_0_tx;"));
+    EXPECT_TRUE(contains(init_c, "DMA_ChannelHandleTypeDef hdma_hi2c_0_rx;"));
+
+    EXPECT_TRUE(contains(init_c, "hi2c_0.hdmatx = &hdma_hi2c_0_tx;"));
+    EXPECT_TRUE(contains(init_c, "hi2c_0.hdmarx = &hdma_hi2c_0_rx;"));
+
+    // Порядок: hdmatx/hdmarx заполняются ДО HAL_I2C_Init (vendor I2C0_Init).
+    const size_t hdmatx_at = init_c.find("hi2c_0.hdmatx =");
+    const size_t init_call_at = init_c.find("HAL_I2C_Init(&hi2c_0);");
+    ASSERT_NE(hdmatx_at, std::string::npos);
+    ASSERT_NE(init_call_at, std::string::npos);
+    EXPECT_LT(hdmatx_at, init_call_at);
+
+    // ChannelInit — буквально по вендорным DMA_CH0_Init/DMA_CH1_Init.
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_tx.ChannelInit.Channel = DMA_CHANNEL_0;"));
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_tx.ChannelInit.ReadMode = DMA_CHANNEL_MODE_MEMORY;"));
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_tx.ChannelInit.WriteMode = DMA_CHANNEL_MODE_PERIPHERY;"));
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_tx.ChannelInit.ReadRequest = DMA_CHANNEL_I2C_0_REQUEST;"));
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_tx.ChannelInit.ReadAck = DMA_CHANNEL_ACK_DISABLE;"));
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_rx.ChannelInit.Channel = DMA_CHANNEL_1;"));
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_rx.ChannelInit.ReadMode = DMA_CHANNEL_MODE_PERIPHERY;"));
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_rx.ChannelInit.WriteMode = DMA_CHANNEL_MODE_MEMORY;"));
+    EXPECT_TRUE(contains(init_c, "hdma_hi2c_0_rx.ChannelInit.WriteRequest = DMA_CHANNEL_I2C_0_REQUEST;"));
+}
+
+TEST(ProjectCodegen, I2cInterruptModeEmitsIrqHandlerTemplate)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/i2c_master_interrupt_mode.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_TRUE(contains(init_c, "void I2C_1_IRQHandler_Template(void)"));
+    EXPECT_TRUE(contains(init_c, "HAL_I2C_IRQHandler(&hi2c_1);"));
+    EXPECT_TRUE(contains(init_c, "EPIC_CHECK_I2C_1()"));
+}
+
+// Без dma[] у I2C — поведение не должно меняться (регрессия на старые
+// фикстуры/поведение): никаких hdma_hi2c_*/IRQHandler в выводе.
+TEST(ProjectCodegen, I2cWithoutDmaOrInterruptModeKeepsOldOutput)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/i2c_master_valid.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmware> firmware_result =
+        generateProjectFirmware(*config_result.config, loadProjectKnowledgeForTests());
+    ASSERT_TRUE(firmware_result.success) << firmware_result.error;
+
+    const std::string& init_c = firmware_result.config->mik32_init_c;
+    EXPECT_FALSE(contains(init_c, "hdma_hi2c_0"));
+    EXPECT_FALSE(contains(init_c, "IRQHandler_Template"));
+    EXPECT_FALSE(contains(init_c, "DMA_InitTypeDef hdma;"));
 }
 
 // ============================================================================

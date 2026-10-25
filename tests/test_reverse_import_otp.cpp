@@ -103,3 +103,11 @@ TEST(OtpReverseMapper, RejectsNonOtpHandleType)
     block.handle_type = "I2C_HandleTypeDef";
     EXPECT_FALSE(mapOtpBlock(block).has_value());
 }
+
+TEST(OtpReverseMapper, SerializeFieldValueRoundTrip)
+{
+    using reverse_import::serializeOtpFieldValue;
+    EXPECT_EQ(serializeOtpFieldValue("read_mode", "two_stages", ""), "OPT_READ_2STAGES");
+    EXPECT_EQ(serializeOtpFieldValue("read_mode", "three_stages", ""), "OPT_READ_3STAGES");
+    EXPECT_FALSE(serializeOtpFieldValue("read_mode", "four_stages", "").has_value());
+}

@@ -22,6 +22,14 @@ namespace reverse_import
 // block.handle_type должен быть "WDT_HandleTypeDef", иначе nullopt.
 std::optional<MappedBlock> mapWdtBlock(const RawInitBlock& block);
 
+// Обратная сериализация для точечной правки (reverse_import_apply.cpp).
+// Поддерживает clock_source/reload_ms — ровно те поля, для которых mapWdtBlock
+// находит literal/enum-присваивание (editable=true).
+std::optional<std::string> serializeWdtFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text);
+
 } // namespace reverse_import
 
 #endif //MIK32_CONFIGURATOR_WDT_REVERSE_MAPPER_H

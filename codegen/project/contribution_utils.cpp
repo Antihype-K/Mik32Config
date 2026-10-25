@@ -39,6 +39,14 @@ std::string wrapInitFunctionWithUserCodeMarkers(const std::string& label, const 
     return result;
 }
 
+std::string wrapInitCallWithUserCodeMarkers(const std::string& label, const std::string& call_line,
+    const std::string& indent)
+{
+    return indent + "/* USER CODE BEGIN " + label + "_Call */\n"
+         + call_line + "\n"
+         + indent + "/* USER CODE END " + label + "_Call */\n";
+}
+
 bool copyDirectoryTreeSkipExisting(const std::string& from_dir,
                                     const std::string& to_dir,
                                     std::error_code& fs_error)

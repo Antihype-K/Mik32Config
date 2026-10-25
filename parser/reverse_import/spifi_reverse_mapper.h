@@ -22,7 +22,9 @@
 #define MIK32_CONFIGURATOR_SPIFI_REVERSE_MAPPER_H
 
 #include <optional>
+#include <string>
 
+#include "json.hpp"
 #include "mapped_block.h"
 #include "reverse_import_scanner.h"
 
@@ -32,6 +34,15 @@ namespace reverse_import
 // block.handle_type должен быть "SPIFI_MemoryModeConfig_HandleTypeDef",
 // иначе nullopt.
 std::optional<MappedBlock> mapSpifiBlock(const RawInitBlock& block);
+
+// Обратная сериализация для точечной правки — покрывает только поля,
+// которые mapSpifiBlock умеет читать (см. .cpp, mapBoolField/mapIntField/
+// mapEnumField): cache_enabled, cache_limit, cmd_interim_length, cmd_op_code,
+// cmd_field_form, cmd_frame_form.
+std::optional<std::string> serializeSpifiFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& original_raw_value_text);
 
 } // namespace reverse_import
 

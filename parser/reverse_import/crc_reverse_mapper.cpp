@@ -139,6 +139,36 @@ void mapBoolField(
 
 } // namespace
 
+std::optional<std::string> serializeCrcFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (field_name == "poly" || field_name == "init")
+    {
+        if (!new_value.is_number_integer()) return std::nullopt;
+        const long long value = new_value.get<long long>();
+        if (value < 0 || value > 4294967295LL) return std::nullopt;
+        return std::to_string(static_cast<unsigned long long>(value));
+    }
+    if (field_name == "input_reverse")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "CRC_REFIN_TRUE" : "CRC_REFIN_FALSE";
+    }
+    if (field_name == "output_reverse")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "CRC_REFOUT_TRUE" : "CRC_REFOUT_FALSE";
+    }
+    if (field_name == "output_inversion")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "CRC_OUTPUTINVERSION_ON" : "CRC_OUTPUTINVERSION_OFF";
+    }
+    return std::nullopt;
+}
+
 std::optional<MappedBlock> mapCrcBlock(const RawInitBlock& block)
 {
     if (block.handle_type != "CRC_HandleTypeDef")

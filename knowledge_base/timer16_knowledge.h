@@ -43,6 +43,12 @@ struct Timer16Knowledge
     // Trigger.ActiveEdge=SOFTWARE) HAL enum'а источника триггера.
     std::map<int, std::string> instance_default_trigger_source;
 
+    // instance (0/1/2) -> {логическое имя ("gpio_a".."gpio_d","temperature",
+    // "adc","rtc","alarm") -> имя HAL enum'а}. Используется, когда
+    // schemas/timer16.json поле "trigger_source" задано явно — иначе
+    // кодоген берёт instance_default_trigger_source (см. выше).
+    std::map<int, std::map<std::string, std::string>> trigger_source_hal_enum;
+
     // "period"/"one_shot"/"external_event_count" -> занимает ли этот режим
     // фиксированный ШИМ-вывод (true) или нет (false, только счёт).
     std::map<std::string, bool> mode_waveform_enable;

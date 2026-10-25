@@ -116,6 +116,41 @@ std::optional<bool> parseExtClb(const std::string& text)
 
 } // namespace
 
+std::optional<std::string> serializeDacFieldValue(
+    const std::string& field_name,
+    const nlohmann::json& new_value,
+    const std::string& /*original_raw_value_text*/)
+{
+    if (field_name == "instance")
+    {
+        if (!new_value.is_number_integer()) return std::nullopt;
+        switch (new_value.get<int>())
+        {
+            case 0: return "HAL_DAC0";
+            case 1: return "HAL_DAC1";
+            default: return std::nullopt;
+        }
+    }
+    if (field_name == "div")
+    {
+        if (!new_value.is_number_integer()) return std::nullopt;
+        const int value = new_value.get<int>();
+        if (value < 0 || value > 255) return std::nullopt;
+        return std::to_string(value);
+    }
+    if (field_name == "ext_ref")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "DAC_EXTREF_ON" : "DAC_EXTREF_OFF";
+    }
+    if (field_name == "ext_clb")
+    {
+        if (!new_value.is_boolean()) return std::nullopt;
+        return new_value.get<bool>() ? "DAC_EXTCLB_DACREF" : "DAC_EXTCLB_CLBREF";
+    }
+    return std::nullopt;
+}
+
 std::optional<MappedBlock> mapDacBlock(const RawInitBlock& block)
 {
     if (block.handle_type != "DAC_HandleTypeDef")

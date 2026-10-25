@@ -47,6 +47,14 @@ namespace
     // HAL_Timer16_FilterTypeDef (общий набор значений для обоих фильтров).
     const std::set<std::string> kValidFilters = {"none", "2clock", "4clock", "8clock"};
 
+    // schemas/timer16.json: "trigger_source" (добавлено 2026-10-22) —
+    // mik32_hal_timer16.h, HAL_Timer16_TriggerTypeDef, 8 логических имён
+    // (gpio_a..gpio_d — разный физический пин на разных instance, см.
+    // knowledge_base/timer16.json trigger_source_hal_enum; остальные 4 —
+    // общие периферийные источники).
+    const std::set<std::string> kValidTriggerSources = {
+        "gpio_a", "gpio_b", "gpio_c", "gpio_d", "temperature", "adc", "rtc", "alarm"};
+
     ParseResult<Timer16Config> makeError(const std::string& message)
     {
         return ParseResult<Timer16Config>{false, message, std::nullopt};
@@ -166,6 +174,16 @@ ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
         config.trigger_filter = timer16["trigger_filter"].get<std::string>();
     }
 
+    if (timer16.contains("trigger_source"))
+    {
+        if (!timer16["trigger_source"].is_string() || !kValidTriggerSources.count(timer16["trigger_source"].get<std::string>()))
+        {
+            return makeError("Поле \"trigger_source\" содержит недопустимое значение (разрешено gpio_a, gpio_b, "
+                "gpio_c, gpio_d, temperature, adc, rtc, alarm)");
+        }
+        config.trigger_source = timer16["trigger_source"].get<std::string>();
+    }
+
     if (timer16.contains("waveform_inverted"))
     {
         if (!timer16["waveform_inverted"].is_boolean())
@@ -173,6 +191,30 @@ ParseResult<Timer16Config> parseTimer16Block(const nlohmann::json& timer16)
             return makeError("Поле \"waveform_inverted\" должно быть булевым");
         }
         config.waveform_inverted = timer16["waveform_inverted"].get<bool>();
+    }
+
+    if (timer16.contains("overflow_interrupt"))
+    {
+        if (!timer16["overflow_interrupt"].is_boolean())
+        {
+            return makeError("Поле \"overflow_interrupt\" должно быть булевым");
+        }
+        config.overflow_interrupt = timer16["overflow_interrupt"].get<bool>();
+    }
+
+    if (timer16.contains("compare_interrupt"))
+    {
+        if (!timer16["compare_interrupt"].is_boolean())
+        {
+            return makeError("Поле \"compare_interrupt\" должно быть булевым");
+        }
+        config.compare_interrupt = timer16["compare_interrupt"].get<bool>();
+        // CMPM значим только когда используется cmp (HAL_Timer16_StartPWM_IT/
+        // StartOneShot_IT) — schemas/timer16.json.
+        if (config.compare_interrupt && config.mode != "period" && config.mode != "one_shot")
+        {
+            return makeError("Поле \"compare_interrupt\" допустимо только при mode=period или mode=one_shot");
+        }
     }
 
     // OVERNIGHT_FIELD_REFERENCE.md: два взаимоисключающих способа задать

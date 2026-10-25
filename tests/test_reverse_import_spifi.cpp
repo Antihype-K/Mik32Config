@@ -122,3 +122,13 @@ TEST(SpifiReverseMapper, RejectsNonSpifiHandleType)
     block.handle_type = "CRC_HandleTypeDef";
     EXPECT_FALSE(mapSpifiBlock(block).has_value());
 }
+
+TEST(SpifiReverseMapper, SerializeFieldValueRoundTrip)
+{
+    using reverse_import::serializeSpifiFieldValue;
+    EXPECT_EQ(serializeSpifiFieldValue("cache_enabled", true, ""), "SPIFI_CACHE_ENABLE");
+    EXPECT_EQ(serializeSpifiFieldValue("cache_limit", 128, ""), "128");
+    EXPECT_EQ(serializeSpifiFieldValue("cmd_field_form", "all_parallel", ""), "SPIFI_FIELDFORM_ALL_PARALLEL");
+    EXPECT_EQ(serializeSpifiFieldValue("cmd_frame_form", "addr_3", ""), "SPIFI_FRAMEFORM_3ADDR");
+    EXPECT_FALSE(serializeSpifiFieldValue("cmd_field_form", "unknown", "").has_value());
+}
