@@ -10,8 +10,7 @@ generated_projects/
 # cargo_skeleton при локальных cargo check/build — не артефакт для коммита,
 # как и build/ выше для CMake (см. docs/implementations/rust_codegen.md).
 templates/**/target/
-packaging/windows/out/
-packaging/linux/out/
+packaging/
 docs/
 CLAUDE.md
 MENTOR_MODE.md
