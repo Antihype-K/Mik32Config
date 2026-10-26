@@ -282,8 +282,14 @@ void HAL_DMA_Start(DMA_ChannelHandleTypeDef *hdma_channel, void* SRC, void* DST,
 
     /* Эррата MIK32V2 п.12.1.1: если канал ещё включён с прошлого раза,
      * прямая запись нового CFG с ENABLE=1 его просто остановит, а не
-     * перезапустит — нужно сначала явно выключить (docs/implementations/i2c.md). */
-    hdma_channel->dma->Instance->CHANNELS[ChannelIndex].CFG &= ~DMA_CH_CFG_ENABLE_M;
+     * перезапустит — нужно сначала явно выключить (docs/implementations/i2c.md).
+     * Выключаем через теневой CFGWriteBuffer, НЕ через чтение аппаратного
+     * регистра (`CFG &=` по месту) — чат поддержки Mikron 2025-07-29
+     * (Андрей): "у амура нет побитовых атомарных операций к памяти...
+     * значение CFG при считывании зависит от INITIAL_VALUE, так что
+     * CFG |= ... — записать туда неизвестно что". CFGWriteBuffer уже
+     * собран выше (строки 266-281) с ENABLE=1 — отключаем его копию. */
+    hdma_channel->dma->Instance->CHANNELS[ChannelIndex].CFG = CFGWriteBuffer[ChannelIndex] & ~DMA_CH_CFG_ENABLE_M;
 
     hdma_channel->dma->Instance->CHANNELS[ChannelIndex].CFG = CFGWriteBuffer[ChannelIndex];
 }
