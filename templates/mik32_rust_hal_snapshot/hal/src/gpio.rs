@@ -182,6 +182,9 @@ pub struct Output;
 /// Func2Mode mode (type state)
 pub struct Func2Mode;
 
+/// Func3 ("timer/serial") mode (type state) — см. convert.rs::into_timer_serial.
+pub struct TimerSerialMode;
+
 macro_rules! gpio {
     ($GPIOX:ident, $gpiox:ident, $iopxenr:ident, $port_id:expr, $PXn:ident, [
         $($PXi:ident: ($pxi:ident, $i:expr $(, $MODE:ty)?),)+

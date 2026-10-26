@@ -17,11 +17,21 @@
 //
 // v1 Rust HAL (mik32v2-hal, вендоренный и доработанный снэпшот
 // mik32-hal-main) поддерживает: GPIO mode ∈ {output, input, serial} без
-// прерываний, drive_strength (все три), UART (без flow_control/DMA), RCC.
+// прерываний, drive_strength (все три), RCC.
+// UART (с 2026-10-26, см. docs/implementations/rust/usart.md) — полный
+// паритет с C-веткой КРОМЕ DMA и "модемного" подрежима: MSB/LSB,
+// sync/async (+xck_mode/last_byte_clock), half-duplex, TX/RX-инверсии,
+// swap, аппаратный RTS/CTS (flow_control), запрет mode=synchronous на
+// instance=1 (Errata §10.1, как и в C-ветке).
+// I2C (с 2026-10-26, см. docs/implementations/rust/i2c.md) — паритет с
+// C-веткой КРОМЕ DMA и interrupt_mode: master/slave, цифровой/аналоговый
+// фильтр, general call, no-stretch, второй адрес+маска, авторесет.
 // НЕ поддерживает: GPIO IRQ, GPIO mode ∈ {timer_serial, analog}, Timer16,
-// Timer32, I2C, SPI, UART flow_control, UART DMA, FreeRTOS — ни один из них
-// не имеет рабочего кода в mik32-hal-main (см. rust_codegen.md, разделы
-// «Находки» и «Итоговый v1 объём периферии»).
+// Timer32, SPI, UART DMA, UART modem_signals/rts_mode=modem, I2C
+// DMA/interrupt_mode, FreeRTOS. Регистр
+// MODEM в PAC не даёт записать DCD/DSR/RI/DDIS), FreeRTOS — ни один из них
+// не имеет рабочего кода/бита в mik32-hal-main/PAC (см. rust_codegen.md,
+// разделы «Находки» и «Итоговый v1 объём периферии»).
 //
 #ifndef MIK32_CONFIGURATOR_RUST_FEATURE_VALIDATOR_H
 #define MIK32_CONFIGURATOR_RUST_FEATURE_VALIDATOR_H

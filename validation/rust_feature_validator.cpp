@@ -11,22 +11,38 @@ std::string findUnsupportedRustFeature(const ProjectConfig& config)
     // Типы периферии, у которых в mik32-hal-main вообще нет ни строчки
     // рабочего кода (см. rust_codegen.md) — не частичная поддержка, а
     // полное отсутствие, поэтому проверяется per-тип, а не per-поле.
-    if (!config.timer16_blocks.empty())
+    // timer16 — реализован (templates/mik32_rust_hal_snapshot/hal/src/timer16.rs,
+    // новый модуль, mik32-hal-main его не содержал вовсе — апстримный
+    // timer.rs/timer/delay.rs мёртвый код). Прерывания/trigger_source
+    // отклоняются per-блок ниже (тот же критерий, что и у I2C DMA/interrupt_mode).
+    for (const Timer16Config& block : config.timer16_blocks)
     {
-        return "Периферия \"timer16\" не поддерживается в Rust-ветке конфигуратора"
-               " (в mik32-hal-main нет рабочего кода таймеров — timer.rs/timer/delay.rs"
-               " не компилируются даже в апстриме, см. docs/implementations/rust_codegen.md)";
+        if (block.overflow_interrupt || block.compare_interrupt)
+        {
+            std::ostringstream error;
+            error << "Timer16 instance " << block.instance << ": overflow_interrupt/compare_interrupt"
+                     " не поддерживаются в Rust-ветке (нет обёртки EPIC/trap_handler в mik32v2-hal,"
+                     " тот же пробел, что уже зафиксирован для UART/I2C, см. docs/implementations/rust/timer16.md)";
+            return error.str();
+        }
+        if (!block.trigger_source.empty())
+        {
+            std::ostringstream error;
+            error << "Timer16 instance " << block.instance << ": trigger_source не поддерживается в"
+                     " Rust-ветке (Trigger.Source не реализован даже в C-ветке — timer16_contribution.cpp,"
+                     " knowledge_base/timer16.json: not_covered_by_this_codegen.trigger)";
+            return error.str();
+        }
     }
     if (!config.timer32_blocks.empty())
     {
         return "Периферия \"timer32\" не поддерживается в Rust-ветке конфигуратора"
                " (в mik32-hal-main нет рабочего кода таймеров, см. docs/implementations/rust_codegen.md)";
     }
-    if (!config.i2c_blocks.empty())
-    {
-        return "Периферия \"i2c\" не поддерживается в Rust-ветке конфигуратора"
-               " (mik32-hal-main не содержит модуля I2C, см. docs/implementations/rust_codegen.md)";
-    }
+    // i2c — реализован 2026-10-26 (templates/mik32_rust_hal_snapshot/hal/src/i2c.rs,
+    // новый модуль, mik32-hal-main его не содержал вовсе). DMA для I2C
+    // отклоняется ниже per-блок (тот же критерий, что и у UART DMA — ни
+    // PAC, ни HAL-снэпшот не содержат драйвера контроллера DMA).
     if (!config.spi_blocks.empty())
     {
         return "Периферия \"spi\" не поддерживается в Rust-ветке конфигуратора"
@@ -122,21 +138,80 @@ std::string findUnsupportedRustFeature(const ProjectConfig& config)
 
     for (const UartConfig& block : config.uart_blocks)
     {
-        if (block.flow_control)
-        {
-            std::ostringstream error;
-            error << "UART instance " << block.instance << ": flow_control=true не поддерживается"
-                     " в Rust-ветке (mik32v2-hal::serial не реализует RTS/CTS — потребовались бы"
-                     " новые PinTx/PinRx-подобные trait-имплы, которых нет в апстриме,"
-                     " см. docs/implementations/rust_codegen.md)";
-            return error.str();
-        }
+        // flow_control (аппаратный RTS/CTS) теперь реализован через
+        // CONTROL3.RTSE/CTSE (mik32v2-hal::serial, см. rust_project_codegen.cpp
+        // и templates/mik32_rust_hal_snapshot/hal/src/serial.rs) — больше не
+        // отклоняется.
         if (!block.dma.empty())
         {
             std::ostringstream error;
             error << "UART instance " << block.instance << ": DMA не поддерживается в Rust-ветке"
                      " (mik32v2-hal::serial работает только в режиме опроса — TXDATA/RXDATA напрямую,"
                      " без привязки к контроллеру DMA, см. docs/implementations/rust_codegen.md)";
+            return error.str();
+        }
+        // Errata MIK32V2 v1.0.1 §10.1 — тот же запрет, что уже проверен в
+        // C-ветке (parser/USART/usart_parser.cpp): синхронный режим на
+        // instance=1 даёт паразитный сигнал CK на PORT2_6 без обхода.
+        if (block.mode == "synchronous" && block.instance == 1)
+        {
+            std::ostringstream error;
+            error << "UART instance 1: mode=\"synchronous\" запрещён в Rust-ветке так же, как и в "
+                     "C-ветке (Errata MIK32V2 v1.0.1 §10.1 — паразитный сигнал CK на PORT2_6, "
+                     "см. docs/implementations/uart.md)";
+            return error.str();
+        }
+        // ДИАГНОСТИКА PAC: регистр MODEM (usart_0/modem.rs) физически
+        // реализует запись только для бита DTR (dtr(), bit12) — DCD/DSR/RI
+        // в этом регистре read-only (входные статусные биты, без записи),
+        // а бита DDIS (из C-структуры HAL_USART_HandleTypeDef.Modem.ddis)
+        // в этом регистре нет совсем. Угадывать несуществующий бит
+        // запрещено (корневой CLAUDE.md), поэтому полный "модем"-режим
+        // отклоняется целиком, а не наполовину.
+        if (block.has_modem_signals)
+        {
+            std::ostringstream error;
+            error << "UART instance " << block.instance << ": modem_signals не поддерживается в"
+                     " Rust-ветке (CONTROL.MODEM в PAC-снэпшоте позволяет только записать DTR;"
+                     " DCD/DSR/RI в этом регистре read-only, бита DDIS нет вовсе —"
+                     " templates/mik32_rust_hal_snapshot/pac/src/usart_0/modem.rs)";
+            return error.str();
+        }
+        if (block.rts_mode == "modem")
+        {
+            std::ostringstream error;
+            error << "UART instance " << block.instance << ": rts_mode=\"modem\" не поддерживается"
+                     " в Rust-ветке (CONTROL3.RTSE в PAC-снэпшоте — простой enable/disable"
+                     " аппаратного RTS, отдельного бита \"модемного\" режима RTS там нет —"
+                     " templates/mik32_rust_hal_snapshot/pac/src/usart_0/control3.rs)";
+            return error.str();
+        }
+    }
+
+    for (const I2cConfig& block : config.i2c_blocks)
+    {
+        // Ни mik32v2-hal, ни PAC-снэпшот (templates/mik32_rust_hal_snapshot/
+        // pac/src/dma*) не содержат драйвера контроллера DMA с обёрткой
+        // ChannelInit, которая есть в C-ветке (mik32_hal_dma.c) — тот же
+        // критерий, что уже применён к UART DMA выше.
+        if (!block.dma.empty())
+        {
+            std::ostringstream error;
+            error << "I2C instance " << block.instance << ": DMA не поддерживается в Rust-ветке"
+                     " (mik32v2-hal не содержит драйвера контроллера DMA, см."
+                     " templates/mik32_rust_hal_snapshot/hal/src/i2c.rs)";
+            return error.str();
+        }
+        // interrupt_mode (шаблон IRQHandler) в C-ветке — отдельная
+        // инфраструктура EPIC (HAL_EPIC_*, mik32_hal_irq.h), которую
+        // mik32v2-hal не оборачивает вовсе (ни для GPIO, ни для UART, ни
+        // здесь) — то же ограничение, что уже зафиксировано для GPIO IRQ.
+        if (block.interrupt_mode)
+        {
+            std::ostringstream error;
+            error << "I2C instance " << block.instance << ": interrupt_mode не поддерживается в"
+                     " Rust-ветке (mik32v2-hal не оборачивает контроллер EPIC, см."
+                     " templates/mik32_rust_hal_snapshot/hal/src/i2c.rs)";
             return error.str();
         }
     }

@@ -77,23 +77,222 @@ TEST(RustProjectCodegen, GeneratesMainRsWithRealBaudDriveStrengthAndDirection)
     EXPECT_NE(main_rs.find("use riscv as _;"), std::string::npos) << main_rs;
 }
 
-TEST(RustProjectCodegen, RejectsI2cBlockAsUnsupportedInRustBranch)
+// I2C — реализован 2026-10-26 (docs/implementations/rust/i2c.md), больше не
+// отклоняется целиком. Проверяем сгенерированный main.rs: slave-режим,
+// фильтры, general call, второй адрес+маска, HW-подтверждённый TIMINGR-пресет
+// для 100 кГц (тот же, что и C-ветка — codegen/project/i2c_contribution.cpp,
+// calcI2cTimingr: PRESC=1, SCLDEL=15, SDADEL=15, SCLH=75, SCLL=75).
+TEST(RustProjectCodegen, GeneratesSlaveI2cWithFiltersDualAddressAndConfirmedTiming)
 {
-    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_i2c.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    EXPECT_EQ(findUnsupportedRustFeature(*config_result.config), "");
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(*config_result.config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    // instance=1 -> фиксированные пины P16_1_12/P16_1_13 (GPIO_1).
+    EXPECT_NE(main_rs.find("gpio1.p16_1_12.into_serial_port()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("gpio1.p16_1_13.into_serial_port()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("i2c1_pin_a.set_pull_up()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("i2c1_pin_b.set_pull_up()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("mode: i2c::Mode::Slave"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("presc: 1, scldel: 15, sdadel: 15, sclh: 75, scll: 75"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("digital_filter: 2"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("analog_filter: true"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("own_address: 41"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("address_mode: i2c::AddressMode::Seven"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("dual_address_enabled: true"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("own_address_2: 10"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("own_address_2_mask: i2c::OwnAddress2Mask::Mask111111X"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("general_call: true"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("use mik32v2_hal::i2c::{self, I2c};"), std::string::npos) << main_rs;
+}
+
+// DMA для I2C отклоняется (ни PAC, ни mik32v2-hal не содержат драйвера
+// контроллера DMA — тот же критерий, что и у UART DMA).
+TEST(RustProjectCodegen, RejectsI2cDmaAsUnsupported)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_i2c.json");
     ASSERT_TRUE(config_result.success) << config_result.error;
     ProjectConfig config = *config_result.config;
 
-    I2cConfig i2c_block;
-    i2c_block.type = "i2c";
-    i2c_block.instance = 0;
-    config.i2c_blocks.push_back(i2c_block);
+    I2cDmaConfig dma;
+    dma.channel = 0;
+    dma.direction = "rx";
+    config.i2c_blocks[0].dma.push_back(dma);
 
     const std::string reason = findUnsupportedRustFeature(config);
     EXPECT_NE(reason, "");
-    EXPECT_NE(reason.find("i2c"), std::string::npos) << reason;
+    EXPECT_NE(reason.find("DMA"), std::string::npos) << reason;
 
     ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
     EXPECT_FALSE(firmware.success);
+}
+
+// interrupt_mode (шаблон IRQHandler) отклоняется — mik32v2-hal не оборачивает
+// контроллер EPIC (как и для GPIO IRQ).
+TEST(RustProjectCodegen, RejectsI2cInterruptModeAsUnsupported)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_i2c.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.i2c_blocks[0].interrupt_mode = true;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("interrupt_mode"), std::string::npos) << reason;
+}
+
+// Timer16 — реализован (docs/implementations/rust/timer16.md). mode=period,
+// instance=1 -> фиксированный ШИМ-пин P16_0_10 (into_timer_serial(), не
+// into_serial_port() — PADx_CFG=0b10, mik32_hal_gpio.h HAL_GPIO_MODE_TIMER_
+// SERIAL). Проверяем clock_source/prescaler/trigger_edge/фильтры/
+// waveform_inverted/arr/cmp попадают в сгенерированный main.rs.
+TEST(RustProjectCodegen, GeneratesPeriodTimer16WithClockSourceFiltersAndInvertedWaveform)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer16.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    EXPECT_EQ(findUnsupportedRustFeature(*config_result.config), "");
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(*config_result.config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("gpio0.p16_0_10.into_timer_serial()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("Timer16::new_pwm("), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("p.timer16_1"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer16::ClockSource::Hsi32m"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer16::Prescaler::P8"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer16::TriggerEdge::Rising"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer16::Filter::Clock4"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer16::Filter::Clock2"), std::string::npos) << main_rs;
+    // waveform_inverted=true, mode=period (не one_shot) -> второй аргумент
+    // true, third (one_shot) false.
+    EXPECT_NE(main_rs.find("true,\n        false,\n        999,\n        250,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("use mik32v2_hal::timer16::{self, Timer16};"), std::string::npos) << main_rs;
+}
+
+// mode=external_event_count — использует Input1, не ШИМ-пин; Waveform.Enable
+// всегда DISABLE (mode_waveform_enable в knowledge_base/timer16.json), поэтому
+// Timer16::new_counter не принимает waveform_inverted/cmp вовсе.
+TEST(RustProjectCodegen, GeneratesExternalEventCountTimer16UsingInput1Pin)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer16.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.timer16_blocks[0].mode = "external_event_count";
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    // instance=1 -> Input1 фиксирован на P16_0_8 (knowledge_base/timer16.json,
+    // instance_fixed_input1_pin).
+    EXPECT_NE(main_rs.find("gpio0.p16_0_8.into_timer_serial()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("Timer16::new_counter("), std::string::npos) << main_rs;
+    EXPECT_EQ(main_rs.find("p16_0_10"), std::string::npos) << main_rs; // ШИМ-пин не занят
+}
+
+// mode=encoder — занимает Input1+Input2, prescaler обязан быть 1 (парсер уже
+// это проверяет — см. parser/timer16/timer16_parser.cpp), здесь только
+// проверяем, что Rust-ветка генерирует new_encoder с обоими пинами.
+TEST(RustProjectCodegen, GeneratesEncoderTimer16UsingBothInputPins)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer16.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.timer16_blocks[0].mode = "encoder";
+    config.timer16_blocks[0].prescaler = 1;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("gpio0.p16_0_8.into_timer_serial()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("gpio0.p16_0_9.into_timer_serial()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("Timer16::new_encoder("), std::string::npos) << main_rs;
+}
+
+// Trigger.Source не реализован даже в C-ветке (schemas/timer16.json:
+// not_covered_by_this_codegen.trigger) — тот же пробел в Rust-ветке.
+TEST(RustProjectCodegen, RejectsTimer16TriggerSourceAsUnsupported)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer16.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.timer16_blocks[0].trigger_source = "gpio_a";
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("trigger_source"), std::string::npos) << reason;
+}
+
+// overflow_interrupt/compare_interrupt — нет обёртки EPIC/trap_handler в
+// mik32v2-hal, тот же пробел, что у UART/I2C.
+TEST(RustProjectCodegen, RejectsTimer16InterruptsAsUnsupported)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer16.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.timer16_blocks[0].compare_interrupt = true;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("interrupt"), std::string::npos) << reason;
+}
+
+// Реальная сборка Timer16-проекта cargo'м — по образцу
+// WrittenI2cProjectActuallyBuildsWithCargo: timer16.rs — новый файл
+// HAL-снэпшота, синтаксические ошибки в macro_rules! impl_instance! (3 разных
+// PAC-типа Timer16_0/1/2) не поймать ничем, кроме настоящей компиляции.
+TEST(RustProjectCodegen, WrittenTimer16ProjectActuallyBuildsWithCargo)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer16.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    const ProjectConfig& config = *config_result.config;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const fs::path output_dir = scratchDirFor("cargo_build_timer16");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    nlohmann::json project_json;
+    {
+        std::ifstream fixture_file("fixtures/project_rust_timer16.json");
+        project_json = nlohmann::json::parse(fixture_file);
+    }
+
+    CodegenWriteResult write_result = writeGeneratedRustProject(
+        *firmware.config,
+        "../templates/cargo_skeleton",
+        "../templates/mik32_rust_hal_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const fs::path absolute_output_dir = fs::absolute(output_dir);
+    const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
+    std::string cargo_output;
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr) << "не удалось запустить cargo build";
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        cargo_output += buffer;
+    }
+    const int status = pclose(pipe);
+
+    EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
+        << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
 }
 
 // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — RTC добавлен только в C-ветке.
@@ -329,16 +528,149 @@ TEST(RustProjectCodegen, RejectsGpioTimerSerialModeAsUnsupported)
     EXPECT_NE(reason.find("timer_serial"), std::string::npos) << reason;
 }
 
-TEST(RustProjectCodegen, RejectsUartFlowControlAsUnsupported)
+// С 2026-10-26 flow_control (аппаратный RTS/CTS) реализован через
+// CONTROL3.RTSE/CTSE (templates/mik32_rust_hal_snapshot/pac/src/usart_0/control3.rs) —
+// больше не отклоняется, а генерируется в main.rs.
+TEST(RustProjectCodegen, GeneratesFlowControlTrueIntoMainRs)
 {
     ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
     ASSERT_TRUE(config_result.success) << config_result.error;
     ProjectConfig config = *config_result.config;
     config.uart_blocks[0].flow_control = true;
 
+    EXPECT_EQ(findUnsupportedRustFeature(config), "");
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    EXPECT_NE(firmware.config->main_rs.find("flow_control: true"), std::string::npos) << firmware.config->main_rs;
+}
+
+// MSB/LSB first (OVERNIGHT_FIELD_REFERENCE.md / uart_contribution.cpp:75).
+TEST(RustProjectCodegen, GeneratesMsbFirstBitDirectionIntoMainRs)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.uart_blocks[0].bit_direction = "msb_first";
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    EXPECT_NE(firmware.config->main_rs.find("bit_direction: BitDirection::Msb"), std::string::npos) << firmware.config->main_rs;
+}
+
+// Half-duplex (CONTROL3.HDSEL) — channel_mode="half_duplex".
+TEST(RustProjectCodegen, GeneratesHalfDuplexChannelModeIntoMainRs)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.uart_blocks[0].channel_mode = "half_duplex";
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    EXPECT_NE(firmware.config->main_rs.find("channel_mode: ChannelMode::HalfDuplex"), std::string::npos) << firmware.config->main_rs;
+}
+
+// TX/RX-инверсии и swap (CONTROL2.TXINV/RXINV/SWAP).
+TEST(RustProjectCodegen, GeneratesTxRxInversionAndSwapIntoMainRs)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.uart_blocks[0].tx_inversion = true;
+    config.uart_blocks[0].rx_inversion = true;
+    config.uart_blocks[0].swap = true;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    EXPECT_NE(firmware.config->main_rs.find("tx_inversion: true"), std::string::npos) << firmware.config->main_rs;
+    EXPECT_NE(firmware.config->main_rs.find("rx_inversion: true"), std::string::npos) << firmware.config->main_rs;
+    EXPECT_NE(firmware.config->main_rs.find("swap: true"), std::string::npos) << firmware.config->main_rs;
+}
+
+// Синхронный режим на instance=0 — разрешён, xck_mode/last_byte_clock
+// попадают в сгенерированный Config.
+TEST(RustProjectCodegen, GeneratesSynchronousModeWithXckModeOnInstance0)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.uart_blocks[0].mode = "synchronous";
+    config.uart_blocks[0].xck_mode = "mode2";
+    config.uart_blocks[0].last_byte_clock = true;
+
+    EXPECT_EQ(findUnsupportedRustFeature(config), "");
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    EXPECT_NE(firmware.config->main_rs.find("mode: Mode::Synchronous"), std::string::npos) << firmware.config->main_rs;
+    EXPECT_NE(firmware.config->main_rs.find("xck_mode: XckMode::Mode2"), std::string::npos) << firmware.config->main_rs;
+    EXPECT_NE(firmware.config->main_rs.find("last_byte_clock: true"), std::string::npos) << firmware.config->main_rs;
+}
+
+// Errata MIK32V2 v1.0.1 §10.1 — тот же запрет, что в C-ветке
+// (parser/USART/usart_parser.cpp): mode=synchronous запрещён на instance=1.
+TEST(RustProjectCodegen, RejectsSynchronousModeOnInstance1DueToErrata)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.uart_blocks[0].instance = 1;
+    config.uart_blocks[0].mode = "synchronous";
+
     const std::string reason = findUnsupportedRustFeature(config);
     EXPECT_NE(reason, "");
-    EXPECT_NE(reason.find("flow_control"), std::string::npos) << reason;
+    EXPECT_NE(reason.find("synchronous"), std::string::npos) << reason;
+    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+}
+
+// Регистр MODEM в PAC-снэпшоте не даёт записать DCD/DSR/RI/DDIS — весь
+// "модем"-подрежим отклоняется, а не угадывается наполовину.
+TEST(RustProjectCodegen, RejectsUartModemSignalsAsUnsupported)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.uart_blocks[0].flow_control = true;
+    config.uart_blocks[0].has_modem_signals = true;
+    config.uart_blocks[0].modem_signals.dtr = true;
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("modem_signals"), std::string::npos) << reason;
+}
+
+// rts_mode="modem" — нет отдельного бита в CONTROL3 под "модемный" RTS.
+TEST(RustProjectCodegen, RejectsUartRtsModeModemAsUnsupported)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.uart_blocks[0].flow_control = true;
+    config.uart_blocks[0].rts_mode = "modem";
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("rts_mode"), std::string::npos) << reason;
+}
+
+// DMA остаётся отклонённым (без изменений) — регрессия на уже
+// существующее поведение после правок флага flow_control выше.
+TEST(RustProjectCodegen, StillRejectsUartDmaAsUnsupported)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    UartDmaConfig dma;
+    dma.channel = 0;
+    dma.direction = "tx";
+    dma.buffer_type = "linear";
+    dma.buffer_size_bytes = 16;
+    dma.element_size = "byte";
+    dma.increment = true;
+    config.uart_blocks[0].dma.push_back(dma);
+
+    const std::string reason = findUnsupportedRustFeature(config);
+    EXPECT_NE(reason, "");
+    EXPECT_NE(reason.find("DMA"), std::string::npos) << reason;
 }
 
 // Единственный обязательный тест "реальной сборки" для этой сессии
@@ -437,6 +769,58 @@ TEST(RustProjectCodegen, WrittenProjectActuallyBuildsWithCargo)
                "иначе МК не стартует на плате при чистой линковке. readelf -h:\n"
             << readelf_output;
     }
+}
+
+// Реальная сборка I2C-проекта cargo'м — по образцу
+// WrittenProjectActuallyBuildsWithCargo выше (GPIO+UART); отдельный тест
+// нужен, т.к. i2c.rs — совсем новый файл HAL-снэпшота, синтаксические ошибки
+// в нём (particularly в macro_rules! impl_instance!) не поймать ничем, кроме
+// настоящей компиляции обоих инстансов (I2c0/I2c1 — разные типы PAC, см.
+// комментарий в i2c.rs).
+TEST(RustProjectCodegen, WrittenI2cProjectActuallyBuildsWithCargo)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_i2c.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    const ProjectConfig& config = *config_result.config;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const fs::path output_dir = scratchDirFor("cargo_build_i2c");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    nlohmann::json project_json;
+    {
+        std::ifstream fixture_file("fixtures/project_rust_i2c.json");
+        project_json = nlohmann::json::parse(fixture_file);
+    }
+
+    CodegenWriteResult write_result = writeGeneratedRustProject(
+        *firmware.config,
+        "../templates/cargo_skeleton",
+        "../templates/mik32_rust_hal_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const fs::path absolute_output_dir = fs::absolute(output_dir);
+    const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
+    std::string cargo_output;
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr) << "не удалось запустить cargo build";
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        cargo_output += buffer;
+    }
+    const int status = pclose(pipe);
+
+    EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
+        << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
 }
 
 // ТЗ §3.1.7.3: пользовательская правка внутри USER CODE BEGIN/END Loop

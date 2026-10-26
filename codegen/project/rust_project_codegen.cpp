@@ -112,6 +112,191 @@ namespace
         if (parity == "odd") return "Parity::Odd";
         return "Parity::None";
     }
+
+    // Расширение паритета с C-веткой (uart_contribution.cpp:75-91) — 1:1
+    // перевод строковых значений JSON (parser/USART/usart_parser.h) в
+    // варианты HAL-перечислений serial.rs, те же имена полей/значений,
+    // что уже проверил валидатор (schema + parseUsartConfig) к этому моменту.
+    std::string bitDirectionVariant(const std::string& bit_direction)
+    {
+        return bit_direction == "msb_first" ? "BitDirection::Msb" : "BitDirection::Lsb";
+    }
+    std::string modeVariant(const std::string& mode)
+    {
+        return mode == "synchronous" ? "Mode::Synchronous" : "Mode::Asynchronous";
+    }
+    std::string xckModeVariant(const std::string& xck_mode)
+    {
+        if (xck_mode == "mode1") return "XckMode::Mode1";
+        if (xck_mode == "mode2") return "XckMode::Mode2";
+        if (xck_mode == "mode3") return "XckMode::Mode3";
+        return "XckMode::Mode0";
+    }
+    std::string channelModeVariant(const std::string& channel_mode)
+    {
+        return channel_mode == "half_duplex" ? "ChannelMode::HalfDuplex" : "ChannelMode::Duplex";
+    }
+
+    // --- I2C ----------------------------------------------------------------
+    // Те же фиксированные пины, что knowledge_base/i2c.json:instance_fixed_pins
+    // (подтверждено HAL_I2C_MspInit, mik32_hal_i2c.c:3-26) и templates/
+    // mik32_rust_hal_snapshot/hal/src/i2c.rs (impl PinI2c<...> для этих же
+    // P16_0_9/P16_0_10/P16_1_12/P16_1_13). Пара неразличима (SDA/SCL не
+    // подтверждены по отдельности) — здесь просто "первый"/"второй" пин.
+    FixedPin i2cPinA(int instance) { return instance == 0 ? FixedPin{0, 9} : FixedPin{1, 12}; }
+    FixedPin i2cPinB(int instance) { return instance == 0 ? FixedPin{0, 10} : FixedPin{1, 13}; }
+
+    const char* i2cPeripheralField(int instance) { return instance == 0 ? "i2c_0" : "i2c_1"; }
+
+    std::string i2cModeVariant(const std::string& mode)
+    {
+        return mode == "slave" ? "i2c::Mode::Slave" : "i2c::Mode::Master";
+    }
+    std::string i2cAddressModeVariant(const std::string& address_mode)
+    {
+        return address_mode == "10bit" ? "i2c::AddressMode::Ten" : "i2c::AddressMode::Seven";
+    }
+    // schemas/i2c.json enum "none".."1111111" -> i2c::OwnAddress2Mask — тот же
+    // порядок, что ownAddress2MaskConstant (i2c_contribution.cpp) и
+    // oar2.rs::Oa2msk (0..7).
+    std::string i2cOwnAddress2MaskVariant(const std::string& mask)
+    {
+        static const std::map<std::string, std::string> kMap = {
+            {"none", "i2c::OwnAddress2Mask::None"},
+            {"111111x", "i2c::OwnAddress2Mask::Mask111111X"},
+            {"11111xx", "i2c::OwnAddress2Mask::Mask11111XX"},
+            {"1111xxx", "i2c::OwnAddress2Mask::Mask1111XXX"},
+            {"111xxxx", "i2c::OwnAddress2Mask::Mask111XXXX"},
+            {"11xxxxx", "i2c::OwnAddress2Mask::Mask11XXXXX"},
+            {"1xxxxxx", "i2c::OwnAddress2Mask::Mask1XXXXXX"},
+            {"1111111", "i2c::OwnAddress2Mask::Mask1111111"}};
+        const auto it = kMap.find(mask);
+        return it != kMap.end() ? it->second : "i2c::OwnAddress2Mask::None";
+    }
+
+    struct I2cTimingRust { long presc, scldel, sdadel, sclh, scll; };
+
+    // Независимая копия calcI2cTimingr (codegen/project/i2c_contribution.cpp) —
+    // тот же принцип, что и у остальных мелких утилит в этом файле
+    // (uniqueTempDirName/insertAfterMarkerLine: маленькая функция,
+    // растиражированная, а не вынесенная в общий заголовок ради одного
+    // вызывающего места каждой из веток). Формула и HW-подтверждённый
+    // пресет для 100 кГц — идентичны, см. комментарий в оригинале.
+    I2cTimingRust calcI2cTimingRust(long sys_clk_hz, int clock_speed, int duty_factor)
+    {
+        if (clock_speed == 100000)
+        {
+            return I2cTimingRust{1, 15, 15, 75, 75};
+        }
+        constexpr long kTsyncSigmaFactor = 10;
+        long i2c_cycles = sys_clk_hz / clock_speed - kTsyncSigmaFactor;
+        const long presc_del = i2c_cycles / 256;
+        i2c_cycles = i2c_cycles / (presc_del + 1);
+
+        I2cTimingRust timing;
+        timing.presc = presc_del;
+        timing.scldel = 0;
+        timing.sdadel = 0;
+        timing.sclh = i2c_cycles / duty_factor - 1;
+        timing.scll = i2c_cycles - i2c_cycles / duty_factor - 1;
+        return timing;
+    }
+
+    // --- Timer16 --------------------------------------------------------------
+    // Те же фиксированные пины, что knowledge_base/timer16.json (instance_fixed_
+    // pwm_pin/instance_fixed_input1_pin/instance_fixed_input2_pin), подтверждено
+    // HAL_TIMER16_MspInit (mik32_hal_timer16.c) и templates/mik32_rust_hal_snapshot/
+    // hal/src/timer16.rs (impl PinTimerPwm/Input1/Input2 для этих же типов).
+    FixedPin timer16PwmPin(int instance)
+    {
+        switch (instance)
+        {
+            case 0: return FixedPin{0, 7};
+            case 1: return FixedPin{0, 10};
+            default: return FixedPin{0, 13};
+        }
+    }
+    FixedPin timer16Input1Pin(int instance)
+    {
+        switch (instance)
+        {
+            case 0: return FixedPin{0, 5};
+            case 1: return FixedPin{0, 8};
+            default: return FixedPin{0, 11};
+        }
+    }
+    FixedPin timer16Input2Pin(int instance)
+    {
+        switch (instance)
+        {
+            case 0: return FixedPin{0, 6};
+            case 1: return FixedPin{0, 9};
+            default: return FixedPin{0, 12};
+        }
+    }
+
+    const char* timer16PeripheralField(int instance)
+    {
+        switch (instance)
+        {
+            case 0: return "timer16_0";
+            case 1: return "timer16_1";
+            default: return "timer16_2";
+        }
+    }
+
+    // mik32_hal_timer16.h, HAL_Timer16_SourceTypeDef минус EXTERNAL_INPUT1 —
+    // тот же список из 6 вариантов, что kClockSourceInfo в
+    // codegen/project/timer16_contribution.cpp (C-ветка).
+    std::string timer16ClockSourceVariant(const std::string& clock_source)
+    {
+        static const std::map<std::string, std::string> kMap = {
+            {"internal_system", "timer16::ClockSource::SysClk"},
+            {"internal_ahb",    "timer16::ClockSource::Hclk"},
+            {"internal_osc32m", "timer16::ClockSource::Osc32m"},
+            {"internal_hsi32m", "timer16::ClockSource::Hsi32m"},
+            {"internal_osc32k", "timer16::ClockSource::Osc32k"},
+            {"internal_lsi32k", "timer16::ClockSource::Lsi32k"}};
+        const auto it = kMap.find(clock_source);
+        return it != kMap.end() ? it->second : "timer16::ClockSource::SysClk";
+    }
+
+    // mik32_hal_timer16.h, HAL_Timer16_PrescalerTypeDef — 8 степеней двойки,
+    // то же кодирование, что prescaler_hal_enum в knowledge_base/timer16.json.
+    std::string timer16PrescalerVariant(int prescaler)
+    {
+        switch (prescaler)
+        {
+            case 1: return "timer16::Prescaler::P1";
+            case 2: return "timer16::Prescaler::P2";
+            case 4: return "timer16::Prescaler::P4";
+            case 8: return "timer16::Prescaler::P8";
+            case 16: return "timer16::Prescaler::P16";
+            case 32: return "timer16::Prescaler::P32";
+            case 64: return "timer16::Prescaler::P64";
+            default: return "timer16::Prescaler::P128";
+        }
+    }
+
+    // mik32_hal_timer16.h, HAL_Timer16_Trigger_ActiveEdgeTypeDef — та же
+    // триада, что triggerEdgeConstant (C-ветка).
+    std::string timer16TriggerEdgeVariant(const std::string& edge)
+    {
+        if (edge == "rising") return "timer16::TriggerEdge::Rising";
+        if (edge == "falling") return "timer16::TriggerEdge::Falling";
+        if (edge == "both") return "timer16::TriggerEdge::Both";
+        return "timer16::TriggerEdge::Software";
+    }
+
+    // mik32_hal_timer16.h, HAL_Timer16_FilterTypeDef — та же четвёрка, что
+    // filterConstant (C-ветка), общая для Filter.ExternalClock/Filter.Trigger.
+    std::string timer16FilterVariant(const std::string& filter)
+    {
+        if (filter == "2clock") return "timer16::Filter::Clock2";
+        if (filter == "4clock") return "timer16::Filter::Clock4";
+        if (filter == "8clock") return "timer16::Filter::Clock8";
+        return "timer16::Filter::None";
+    }
 }
 
 ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
@@ -140,9 +325,35 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
         gpio_instances.insert(uartTxPin(block.instance).gpio_instance);
         gpio_instances.insert(uartRxPin(block.instance).gpio_instance);
     }
+    for (const I2cConfig& block : config.i2c_blocks)
+    {
+        gpio_instances.insert(i2cPinA(block.instance).gpio_instance);
+        gpio_instances.insert(i2cPinB(block.instance).gpio_instance);
+    }
+    for (const Timer16Config& block : config.timer16_blocks)
+    {
+        // mode_waveform_enable (knowledge_base/timer16.json): PWM-пин занят
+        // только period/one_shot; Input1 — external_event_count/encoder;
+        // Input2 — только encoder. Тот же набор условий, что
+        // HAL_TIMER16_MspInit (mik32_hal_timer16.c).
+        if (block.mode == "period" || block.mode == "one_shot")
+        {
+            gpio_instances.insert(timer16PwmPin(block.instance).gpio_instance);
+        }
+        if (block.mode == "external_event_count" || block.mode == "encoder")
+        {
+            gpio_instances.insert(timer16Input1Pin(block.instance).gpio_instance);
+        }
+        if (block.mode == "encoder")
+        {
+            gpio_instances.insert(timer16Input2Pin(block.instance).gpio_instance);
+        }
+    }
 
     const bool has_gpio = !gpio_instances.empty();
     const bool has_uart = !config.uart_blocks.empty();
+    const bool has_i2c = !config.i2c_blocks.empty();
+    const bool has_timer16 = !config.timer16_blocks.empty();
     const bool has_drive_strength = !config.gpio_blocks.empty(); // обязательное поле каждого блока gpio
 
     // --- код для тела main() -----------------------------------------------
@@ -201,6 +412,15 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
                    << "            parity: " << parityVariant(block.parity) << ",\n"
                    << "            transmitting: " << transmitting << ",\n"
                    << "            receiving: " << receiving << ",\n"
+                   << "            bit_direction: " << bitDirectionVariant(block.bit_direction) << ",\n"
+                   << "            mode: " << modeVariant(block.mode) << ",\n"
+                   << "            xck_mode: " << xckModeVariant(block.xck_mode) << ",\n"
+                   << "            last_byte_clock: " << (block.last_byte_clock ? "true" : "false") << ",\n"
+                   << "            channel_mode: " << channelModeVariant(block.channel_mode) << ",\n"
+                   << "            tx_inversion: " << (block.tx_inversion ? "true" : "false") << ",\n"
+                   << "            rx_inversion: " << (block.rx_inversion ? "true" : "false") << ",\n"
+                   << "            swap: " << (block.swap ? "true" : "false") << ",\n"
+                   << "            flow_control: " << (block.flow_control ? "true" : "false") << ",\n"
                    << "        },\n"
                    << "    );\n";
         // Ни tx_half, ни rx_half не мутируются — пустой while(1) ничего в них
@@ -210,6 +430,132 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
                    << serial_var << ".split();\n";
         uart_setup << "    let _ = &" << tx_half << ";\n";
         uart_setup << "    let _ = &" << rx_half << ";\n";
+    }
+
+    // ТЗ по I2C молчит (см. docs/implementations/i2c.md) — то же, что и
+    // C-ветка. sys_clk_hz=32МГц/duty_factor=2 — те же хардкоды, что
+    // knowledge_base/i2c.json (sys_clk_hz, duty_factor_default), используемые
+    // calcI2cTimingr в C-ветке; здесь не читаем JSON knowledge_base заново
+    // (RustProjectCodegen работает только с ProjectConfig) — тот же приём,
+    // что HSI_HZ=32_000_000 хардкод прямо в serial.rs/rust_project_codegen.cpp
+    // для UART.
+    std::ostringstream i2c_setup;
+    for (const I2cConfig& block : config.i2c_blocks)
+    {
+        const FixedPin pin_a = i2cPinA(block.instance);
+        const FixedPin pin_b = i2cPinB(block.instance);
+        const std::string pin_a_var = "i2c" + std::to_string(block.instance) + "_pin_a";
+        const std::string pin_b_var = "i2c" + std::to_string(block.instance) + "_pin_b";
+        const std::string i2c_var = "i2c" + std::to_string(block.instance);
+        constexpr long kSysClkHz = 32000000;
+        constexpr int kDutyFactor = 2;
+        const I2cTimingRust timing = calcI2cTimingRust(kSysClkHz, block.clock_speed, kDutyFactor);
+
+        // Открытый сток I2C требует подтяжки на обоих пинах (знание
+        // knowledge_base/i2c.json:instance_fixed_pins, подтверждено
+        // HAL_I2C_MspInit: Pull=HAL_GPIO_PULL_UP) — into_serial_port() сам
+        // подтяжку не включает (см. gpio/convert.rs), добавляем set_pull_up().
+        i2c_setup << "    let mut " << pin_a_var << " = " << gpioSplitVarName(pin_a.gpio_instance) << "."
+                  << gpioPinFieldName(pin_a.gpio_instance, pin_a.pin) << ".into_serial_port();\n";
+        i2c_setup << "    " << pin_a_var << ".set_pull_up();\n";
+        i2c_setup << "    let mut " << pin_b_var << " = " << gpioSplitVarName(pin_b.gpio_instance) << "."
+                  << gpioPinFieldName(pin_b.gpio_instance, pin_b.pin) << ".into_serial_port();\n";
+        i2c_setup << "    " << pin_b_var << ".set_pull_up();\n";
+        i2c_setup << "    let mut " << i2c_var << " = I2c::new(\n"
+                   << "        p." << i2cPeripheralField(block.instance) << ",\n"
+                   << "        (" << pin_a_var << ", " << pin_b_var << "),\n"
+                   << "        i2c::Config {\n"
+                   << "            mode: " << i2cModeVariant(block.mode) << ",\n"
+                   << "            timing: i2c::Timing { presc: " << timing.presc << ", scldel: " << timing.scldel
+                   << ", sdadel: " << timing.sdadel << ", sclh: " << timing.sclh << ", scll: " << timing.scll << " },\n"
+                   << "            digital_filter: " << block.digital_filter << ",\n"
+                   << "            analog_filter: " << (block.analog_filter ? "true" : "false") << ",\n"
+                   << "            own_address: " << block.own_address << ",\n"
+                   << "            address_mode: " << i2cAddressModeVariant(block.address_mode) << ",\n"
+                   << "            dual_address_enabled: " << (block.dual_address_enabled ? "true" : "false") << ",\n"
+                   << "            own_address_2: " << block.own_address_2 << ",\n"
+                   << "            own_address_2_mask: " << i2cOwnAddress2MaskVariant(block.own_address_2_mask) << ",\n"
+                   << "            general_call: " << (block.general_call ? "true" : "false") << ",\n"
+                   << "            no_stretch_mode: " << (block.no_stretch_mode ? "true" : "false") << ",\n"
+                   << "        },\n"
+                   << "    );\n";
+        // Ни IRQ/DMA, ни фактические транзакции кодоген не генерирует (как и
+        // в C-ветке, где кодоген ограничивается Init/Reset) — "let _ = &..."
+        // по тому же принципу, что tx_half/rx_half у UART, чтобы пустой
+        // while(1) не давал unused_variables/unused_mut warning.
+        i2c_setup << "    let _ = &" << i2c_var << ";\n";
+    }
+
+    // Timer16 — Rust-паритет с timer16_contribution.cpp (C-ветка): mode=
+    // period/one_shot/external_event_count/encoder, 6 из 7 clock_source,
+    // trigger_edge, фильтры, waveform_inverted. Trigger.Source НЕ реализован
+    // (отклоняется rust_feature_validator.cpp) — тот же пробел, что и в
+    // C-ветке (knowledge_base/timer16.json: not_covered_by_this_codegen.trigger).
+    // Таймер после запуска работает аппаратно без участия CPU — то же
+    // обоснование, что уже дано в timer16_contribution.h ("Флага emit_demo_loop
+    // нет намеренно"), поэтому переменная остаётся непотрогана дальше
+    // ("let _ = &...", как у i2c_var/tx_half/rx_half выше).
+    std::ostringstream timer16_setup;
+    for (const Timer16Config& block : config.timer16_blocks)
+    {
+        const std::string var = "timer16_" + std::to_string(block.instance);
+        const std::string config_var = var + "_config";
+        timer16_setup << "    let " << config_var << " = timer16::Config {\n"
+                      << "        prescaler: " << timer16PrescalerVariant(block.prescaler) << ",\n"
+                      << "        trigger_edge: " << timer16TriggerEdgeVariant(block.trigger_edge) << ",\n"
+                      << "        external_clock_filter: " << timer16FilterVariant(block.external_clock_filter) << ",\n"
+                      << "        trigger_filter: " << timer16FilterVariant(block.trigger_filter) << ",\n"
+                      << "    };\n";
+
+        if (block.mode == "period" || block.mode == "one_shot")
+        {
+            const FixedPin pwm_pin = timer16PwmPin(block.instance);
+            const std::string pwm_var = var + "_pwm_pin";
+            timer16_setup << "    let " << pwm_var << " = " << gpioSplitVarName(pwm_pin.gpio_instance) << "."
+                          << gpioPinFieldName(pwm_pin.gpio_instance, pwm_pin.pin) << ".into_timer_serial();\n";
+            timer16_setup << "    let mut " << var << " = Timer16::new_pwm(\n"
+                          << "        p." << timer16PeripheralField(block.instance) << ",\n"
+                          << "        " << pwm_var << ",\n"
+                          << "        " << timer16ClockSourceVariant(block.clock_source) << ",\n"
+                          << "        " << config_var << ",\n"
+                          << "        " << (block.waveform_inverted ? "true" : "false") << ",\n"
+                          << "        " << (block.mode == "one_shot" ? "true" : "false") << ",\n"
+                          << "        " << block.arr << ",\n"
+                          << "        " << block.cmp << ",\n"
+                          << "    );\n";
+        }
+        else if (block.mode == "external_event_count")
+        {
+            const FixedPin input1_pin = timer16Input1Pin(block.instance);
+            const std::string input1_var = var + "_input1_pin";
+            timer16_setup << "    let " << input1_var << " = " << gpioSplitVarName(input1_pin.gpio_instance) << "."
+                          << gpioPinFieldName(input1_pin.gpio_instance, input1_pin.pin) << ".into_timer_serial();\n";
+            timer16_setup << "    let mut " << var << " = Timer16::new_counter(\n"
+                          << "        p." << timer16PeripheralField(block.instance) << ",\n"
+                          << "        " << input1_var << ",\n"
+                          << "        " << config_var << ",\n"
+                          << "        " << block.arr << ",\n"
+                          << "    );\n";
+        }
+        else // mode == "encoder"
+        {
+            const FixedPin input1_pin = timer16Input1Pin(block.instance);
+            const FixedPin input2_pin = timer16Input2Pin(block.instance);
+            const std::string input1_var = var + "_input1_pin";
+            const std::string input2_var = var + "_input2_pin";
+            timer16_setup << "    let " << input1_var << " = " << gpioSplitVarName(input1_pin.gpio_instance) << "."
+                          << gpioPinFieldName(input1_pin.gpio_instance, input1_pin.pin) << ".into_timer_serial();\n";
+            timer16_setup << "    let " << input2_var << " = " << gpioSplitVarName(input2_pin.gpio_instance) << "."
+                          << gpioPinFieldName(input2_pin.gpio_instance, input2_pin.pin) << ".into_timer_serial();\n";
+            timer16_setup << "    let mut " << var << " = Timer16::new_encoder(\n"
+                          << "        p." << timer16PeripheralField(block.instance) << ",\n"
+                          << "        " << input1_var << ",\n"
+                          << "        " << input2_var << ",\n"
+                          << "        " << config_var << ",\n"
+                          << "        " << block.arr << ",\n"
+                          << "    );\n";
+        }
+        timer16_setup << "    let _ = &" << var << ";\n";
     }
 
     std::ostringstream main_rs;
@@ -251,7 +597,16 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
     }
     if (has_uart)
     {
-        main_rs << "use mik32v2_hal::serial::{Serial, Config as UartConfig, DataBits, StopBits, Parity};\n";
+        main_rs << "use mik32v2_hal::serial::{Serial, Config as UartConfig, DataBits, StopBits, Parity,\n"
+                   "    BitDirection, Mode, XckMode, ChannelMode};\n";
+    }
+    if (has_i2c)
+    {
+        main_rs << "use mik32v2_hal::i2c::{self, I2c};\n";
+    }
+    if (has_timer16)
+    {
+        main_rs << "use mik32v2_hal::timer16::{self, Timer16};\n";
     }
     main_rs << "\n"
                "// USER CODE BEGIN Includes\n"
@@ -275,6 +630,16 @@ ParseResult<GeneratedProjectFirmwareRust> generateProjectFirmwareRust(
     }
     main_rs << uart_setup.str();
     if (!uart_setup.str().empty())
+    {
+        main_rs << "\n";
+    }
+    main_rs << i2c_setup.str();
+    if (!i2c_setup.str().empty())
+    {
+        main_rs << "\n";
+    }
+    main_rs << timer16_setup.str();
+    if (!timer16_setup.str().empty())
     {
         main_rs << "\n";
     }

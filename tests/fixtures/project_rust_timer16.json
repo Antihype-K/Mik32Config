@@ -1,0 +1,20 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "language": "rust",
+  "peripherals": [
+    {
+      "type": "timer16",
+      "instance": 1,
+      "mode": "period",
+      "clock_source": "internal_hsi32m",
+      "prescaler": 8,
+      "arr": 999,
+      "cmp": 250,
+      "trigger_edge": "rising",
+      "external_clock_filter": "4clock",
+      "trigger_filter": "2clock",
+      "waveform_inverted": true
+    }
+  ]
+}

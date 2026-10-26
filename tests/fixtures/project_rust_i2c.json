@@ -1,0 +1,22 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "language": "rust",
+  "peripherals": [
+    {
+      "type": "i2c",
+      "instance": 1,
+      "mode": "slave",
+      "clock_speed": 100000,
+      "address_mode": "7bit",
+      "own_address": 41,
+      "digital_filter": 2,
+      "analog_filter": true,
+      "general_call": true,
+      "no_stretch_mode": false,
+      "dual_address_enabled": true,
+      "own_address_2": 10,
+      "own_address_2_mask": "111111x"
+    }
+  ]
+}

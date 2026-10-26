@@ -11,14 +11,18 @@
 //!
 //! Что вошло в снэпшот и почему — `docs/implementations/rust_codegen.md`:
 //! только `gpio`, `serial`, `rcc`, `peripheral`, `time` (рабочий код).
-//! `timer`/`timer::delay` и `usart.rs` исключены — не компилируются в
-//! апстриме (мёртвый код, скопированный из ARM Cortex-M шаблона).
+//! `timer`/`timer::delay` (апстримный) и `usart.rs` исключены — не
+//! компилируются в апстриме (мёртвый код, скопированный из ARM Cortex-M
+//! шаблона). `timer16` — НЕ апстримный модуль, написан конфигуратором с нуля
+//! по образцу `i2c.rs`, см. docs/implementations/rust/timer16.md.
 #![no_std]
 
 pub mod gpio;
+pub mod i2c;
 pub mod peripheral;
 pub mod rcc;
 pub mod serial;
 pub mod time;
+pub mod timer16;
 
 pub use mik32v2_pac as pac;

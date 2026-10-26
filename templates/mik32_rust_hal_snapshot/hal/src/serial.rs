@@ -81,8 +81,48 @@ where
             StopBits::Two => w.stop_1()._2bits(),
         });
 
+        // Расширение паритета с C-веткой (OVERNIGHT_FIELD_REFERENCE.md,
+        // codegen/project/uart_contribution.cpp:75-91): очередность бит,
+        // инверсии TX/RX, swap TX<->RX — все четыре бита физически в
+        // CONTROL2 (control2.rs: msbfirst bit19, txinv bit17, rxinv bit16,
+        // swap bit15) и требуют UE=0, как и прочие поля этого регистра.
+        usart.control2().modify(|_, w| {
+            let w = if config.bit_direction == BitDirection::Msb { w.msbfirst().msb() } else { w.msbfirst().lsb() };
+            let w = if config.tx_inversion { w.txinv().inverted() } else { w.txinv().direct() };
+            let w = if config.rx_inversion { w.rxinv().inverted() } else { w.rxinv().direct() };
+            if config.swap { w.swap().swap() } else { w.swap().normal() }
+        });
+
+        // Синхронный режим (CLKEN) + полярность/фаза тактового сигнала CK
+        // (CPOL/CPHA) + "последний такт" (LBCL) — ТОЧНО та же битовая
+        // раскладка xck_mode->CPOL/CPHA, что уже подтверждена на железе в
+        // C-ветке: templates/mik32_sdk_snapshot/hal/peripherals/Source/mik32_hal_usart.c:109-111
+        // (`if (xck_mode & 0b10) CPOL; if (xck_mode & 0b01) CPHA;`).
+        // Запрет mode=Synchronous на instance=1 (Errata §10.1) проверяется
+        // раньше, в rust_feature_validator.cpp — не здесь.
+        usart.control2().modify(|_, w| {
+            let w = if config.mode == Mode::Synchronous { w.clken().synchronous() } else { w.clken().asynchronous() };
+            let xck = config.xck_mode as u8;
+            let w = if xck & 0b10 != 0 { w.cpol()._1() } else { w.cpol()._0() };
+            let w = if xck & 0b01 != 0 { w.cpha()._1() } else { w.cpha()._0() };
+            if config.last_byte_clock { w.lbcl()._1() } else { w.lbcl()._0() }
+        });
+
+        // Полудуплекс (HDSEL) и аппаратное управление RTS/CTS (RTSE/CTSE) —
+        // CONTROL3 (control3.rs: hdsel bit3, rtse bit8, ctse bit9), тоже
+        // требует UE=0. flow_control=true включает оба бита сразу (как и
+        // C-ветка — Modem.rts/Modem.cts выставляются одним флагом
+        // flow_control, uart_contribution.cpp:67,145-146): CTS выключает
+        // передачу при неактивном входе, RTS не даёт собеседнику слать,
+        // когда приёмник не готов.
+        usart.control3().modify(|_, w| {
+            let w = if config.channel_mode == ChannelMode::HalfDuplex { w.hdsel().half_duplex() } else { w.hdsel().duplex() };
+            let w = if config.flow_control { w.rtse()._1() } else { w.rtse()._0() };
+            if config.flow_control { w.ctse().control() } else { w.ctse().ignored() }
+        });
+
         // Enable USART (сбрасывает флаги, разрешает работу с уже
-        // сконфигурированными выше CONTROL1/CONTROL2).
+        // сконфигурированными выше CONTROL1/CONTROL2/CONTROL3).
         usart.control1().modify(|_, w| w.ue().enable());
 
         // TEACK взводится только после реального включения передатчика —
@@ -126,6 +166,30 @@ pub enum StopBits { One, Two }
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Parity { None, Even, Odd }
 
+/// CONTROL2.MSBFIRST — очередность передачи/приёма бит. Датащит + control2.rs
+/// bit19; соответствует bit_direction в OVERNIGHT_FIELD_REFERENCE.md /
+/// uart_contribution.cpp:75 (msb_first/lsb_first -> MSB_First/LSB_First).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BitDirection { Msb, Lsb }
+
+/// CONTROL2.CLKEN — синхронный/асинхронный режим. control2.rs bit11.
+/// Errata MIK32V2 v1.0.1 §10.1 запрещает Synchronous на instance=1 — этот
+/// запрет проверяется в rust_feature_validator.cpp (как и в C-ветке —
+/// parser/USART/usart_parser.cpp), не в самом HAL.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Mode { Asynchronous, Synchronous }
+
+/// CONTROL2.CPOL/CPHA — комбинация полярности/фазы тактового сигнала CK,
+/// используется только при Mode::Synchronous. Биты полностью совпадают с
+/// C-веткой: templates/mik32_sdk_snapshot/hal/peripherals/Source/mik32_hal_usart.c:109-111
+/// (xck_mode — 2-битное значение, bit1->CPOL, bit0->CPHA).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum XckMode { Mode0 = 0b00, Mode1 = 0b01, Mode2 = 0b10, Mode3 = 0b11 }
+
+/// CONTROL3.HDSEL — дуплекс/полудуплекс. control3.rs bit3.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ChannelMode { Duplex, HalfDuplex }
+
 /// USART configuration — расширено конфигуратором при генерации Rust-кода
 /// относительно исходного mik32-hal-main, где `Config` был пустой struct {}
 /// и `Serial::new` жёстко писал BRR=0xd05 и TE/RE=1 безусловно, игнорируя
@@ -137,6 +201,17 @@ pub struct Config {
     pub parity: Parity,
     pub transmitting: bool,
     pub receiving: bool,
+    // Поля ниже — расширение паритета с C-веткой (uart_contribution.cpp),
+    // см. комментарии у соответствующих регистровых записей выше.
+    pub bit_direction: BitDirection,
+    pub mode: Mode,
+    pub xck_mode: XckMode,
+    pub last_byte_clock: bool,
+    pub channel_mode: ChannelMode,
+    pub tx_inversion: bool,
+    pub rx_inversion: bool,
+    pub swap: bool,
+    pub flow_control: bool,
 }
 
 /// Serial receiver
