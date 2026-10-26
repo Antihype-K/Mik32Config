@@ -21,6 +21,8 @@
 #include "rtc_knowledge.h"
 #include "dac_knowledge.h"
 #include "cross_module_validator.h"
+#include "cmake_project_codegen.h"
+#include "json.hpp"
 
 namespace
 {
@@ -173,7 +175,34 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // 4. Сборка одного проекта из вкладов всех блоков (C-ветка, пока без Rust и CMake).
+    // 4-5. Сборка и запись проекта. Поле "toolchain" конфига решает ветку —
+    // то же решение, что в gui/main_window.cpp (иначе CLI молча игнорирует
+    // выбор CMake и всегда пишет PlatformIO).
+    if (config_result.config->toolchain == ToolchainKind::CMake)
+    {
+        ParseResult<GeneratedProjectFirmwareCmake> firmware_result =
+            generateProjectFirmwareCmake(*config_result.config, knowledge);
+        if (!firmware_result.success)
+        {
+            std::cerr << "Ошибка кодогенерации: " << firmware_result.error << "\n";
+            return 1;
+        }
+        std::ifstream config_in(config_path, std::ios::binary);
+        nlohmann::json config_json_copy;
+        config_in >> config_json_copy;
+        CodegenWriteResult write_result = writeGeneratedCmakeProject(
+            *firmware_result.config, "templates/cmake_skeleton",
+            "templates/mik32_sdk_snapshot", output_dir, *config_result.config,
+            config_json_copy);
+        if (!write_result.success)
+        {
+            std::cerr << "Ошибка записи проекта: " << write_result.error << "\n";
+            return 1;
+        }
+        std::cout << "Проект сгенерирован в " << output_dir << "\n";
+        return 0;
+    }
+
     ParseResult<GeneratedProjectFirmware> firmware_result =
         generateProjectFirmware(*config_result.config, knowledge);
     if (!firmware_result.success)
