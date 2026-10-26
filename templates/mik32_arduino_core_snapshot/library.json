@@ -1,0 +1,12 @@
+{
+  "name": "mik32_arduino_core",
+  "version": "0.0.0",
+  "description": "Вендоренный Arduino-core для МИК32 (из docs/elron/elbear_arduino_bsp), вариант rex_board. Присутствие этого файла — единственный способ заставить PlatformIO LDF распознать lib/mik32_arduino_core как библиотеку и скомпилировать cores/arduino/main.cpp (без него 'Found 0 compatible libraries', main() никогда не компилируется, firmware.elf не линкуется — найдено на реальной сборке 2026-10-26).",
+  "build": {
+    "srcDir": "src",
+    "srcFilter": [
+      "+<*>",
+      "-<cores/arduino/Tone.cpp>"
+    ]
+  }
+}

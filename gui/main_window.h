@@ -69,6 +69,8 @@ struct GuiPaths
     std::string freertos_kernel_snapshot_dir; // templates/freertos_kernel_snapshot
     std::string cargo_skeleton_dir;      // templates/cargo_skeleton
     std::string rust_hal_snapshot_dir;   // templates/mik32_rust_hal_snapshot
+    std::string pio_skeleton_arduino_dir;      // templates/pio_skeleton_arduino
+    std::string arduino_core_snapshot_dir;     // templates/mik32_arduino_core_snapshot
 };
 
 class MainWindow : public QMainWindow

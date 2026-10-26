@@ -36,6 +36,7 @@ public:
     // перезаголовливает первые две под main.rs/Cargo.toml и прячет
     // оставшиеся две, вместо показа C-заголовков с чужим содержимым.
     void setContentsRust(const QString& main_rs, const QString& cargo_toml);
+    void setContentsArduino(const QString& main_cpp, const QString& platformio_ini);
 
 private:
     QTabWidget* tabs_ = nullptr;

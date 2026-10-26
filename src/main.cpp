@@ -23,6 +23,7 @@
 #include "project_codegen.h"
 #include "cmake_project_codegen.h"
 #include "rust_project_codegen.h"
+#include "arduino_project_codegen.h"
 #include "gpio_knowledge.h"
 #include "uart_knowledge.h"
 #include "timer16_knowledge.h"
@@ -182,6 +183,40 @@ int main(int argc, char** argv)
     if (reportPinConflicts(validation))
     {
         return 1;
+    }
+
+    // 4a. language=arduino — та же причина отдельной ветки, что у Rust ниже
+    // (generateProjectFirmware строит C-код, для Arduino-конфига он не нужен
+    // и не соответствовал бы объёму arduino_project_codegen.h).
+    if (config_result.config->language == OutputLanguage::Arduino)
+    {
+        ParseResult<GeneratedProjectFirmwareArduino> arduino_firmware_result =
+            generateProjectFirmwareArduino(*config_result.config);
+        if (!arduino_firmware_result.success)
+        {
+            std::cerr << "Ошибка кодогенерации (Arduino): " << arduino_firmware_result.error << "\n";
+            return 1;
+        }
+
+        std::ifstream config_file(config_path);
+        std::stringstream config_stream;
+        config_stream << config_file.rdbuf();
+        const nlohmann::json project_json_copy = nlohmann::json::parse(config_stream.str(), nullptr, false);
+
+        CodegenWriteResult write_result = writeGeneratedArduinoProject(
+            *arduino_firmware_result.config,
+            "templates/pio_skeleton_arduino",
+            "templates/mik32_arduino_core_snapshot",
+            output_dir,
+            project_json_copy);
+        if (!write_result.success)
+        {
+            std::cerr << "Ошибка записи проекта (Arduino): " << write_result.error << "\n";
+            return 1;
+        }
+
+        std::cout << "Проект сгенерирован в " << output_dir << "\n";
+        return 0;
     }
 
     // 4. language=rust уходит по отдельной ветке ДО C-специфичного шага 5

@@ -95,6 +95,10 @@ set(CORE_SOURCES
         codegen/project/rust_project_codegen.cpp
         codegen/user_code_markers_rust.cpp
 
+        # Arduino-ветка кодогенерации — третий выходной язык
+        # (docs/implementations/arduino_codegen.md)
+        codegen/project/arduino_project_codegen.cpp
+
         # Reverse-import: вычленение периферии из произвольной, НЕ сгенерированной
         # этим конфигуратором прошивки (docs/implementations/reverse_import.md) —
         # сканер + четыре типовых маппера + точечный патчер исходников + два
@@ -326,6 +330,7 @@ if(BUILD_TESTING)
             tests/test_reverse_import_spifi.cpp
             tests/test_freertos.cpp
             tests/test_rust_project_codegen.cpp
+            tests/test_arduino_project_codegen.cpp
     )
 
     target_link_libraries(MIK32-Parser-Tests

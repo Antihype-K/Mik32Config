@@ -64,3 +64,16 @@ void CodePreviewScreen::setContentsRust(const QString& main_rs, const QString& c
     init_h_view_->clear();
     ini_view_->clear();
 }
+
+void CodePreviewScreen::setContentsArduino(const QString& main_cpp, const QString& platformio_ini)
+{
+    tabs_->setTabText(0, QString::fromUtf8("main.cpp"));
+    tabs_->setTabText(1, QString::fromUtf8("platformio.ini"));
+    tabs_->setTabVisible(2, false);
+    tabs_->setTabVisible(3, false);
+
+    main_c_view_->setPlainText(main_cpp);
+    init_c_view_->setPlainText(platformio_ini);
+    init_h_view_->clear();
+    ini_view_->clear();
+}

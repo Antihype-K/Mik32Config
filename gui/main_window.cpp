@@ -47,6 +47,7 @@
 #include "pdf_report_writer.h"
 #include "cmake_project_codegen.h"
 #include "rust_project_codegen.h"
+#include "arduino_project_codegen.h"
 #include "reverse_import_apply.h"
 #include "reverse_block_insert.h"
 #include "home_screen.h"
@@ -979,6 +980,44 @@ void MainWindow::onGenerate()
             QString::fromUtf8("FreeRTOS пока не поддержан для тулчейна CMake (только PlatformIO). "
                               "Выберите тулчейн PlatformIO во вкладке «Настройки генерации» или "
                               "отключите FreeRTOS."));
+        return;
+    }
+
+    // language=arduino — та же причина отдельной ветки, что у Rust ниже.
+    if (parsed.config->language == OutputLanguage::Arduino)
+    {
+        ParseResult<GeneratedProjectFirmwareArduino> arduino_firmware = generateProjectFirmwareArduino(
+            *parsed.config);
+        if (!arduino_firmware.success)
+        {
+            QMessageBox::critical(this, QString::fromUtf8("Ошибка кодогенерации"),
+                                  QString::fromStdString(arduino_firmware.error));
+            return;
+        }
+
+        CodegenWriteResult arduino_written = writeGeneratedArduinoProject(
+            *arduino_firmware.config, paths_.pio_skeleton_arduino_dir, paths_.arduino_core_snapshot_dir,
+            output_dir.toStdString(), document_.document());
+        if (!arduino_written.success)
+        {
+            QMessageBox::critical(this, QString::fromUtf8("Ошибка записи проекта"),
+                                  QString::fromStdString(arduino_written.error));
+            return;
+        }
+
+        {
+            std::string colocated_error;
+            document_.saveColocatedConfig(output_dir.toStdString(), colocated_error);
+        }
+        showProjectGeneratedDialog(output_dir, QString::fromUtf8("src/main.cpp"));
+        statusBar()->showMessage(QString::fromUtf8("Сгенерировано: %1").arg(output_dir), 5000);
+
+        code_preview_screen_->setContentsArduino(
+            readFileUtf8(output_dir + "/src/main.cpp"),
+            readFileUtf8(output_dir + "/platformio.ini"));
+        navigator_.setGeneratedOnce(true);
+        navigator_.goTo(Screen::CodePreview);
+        applyViewModel();
         return;
     }
 

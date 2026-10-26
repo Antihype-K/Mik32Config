@@ -87,7 +87,7 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
     {
         if (!root["language"].is_string())
         {
-            return makeError("Поле \"language\" должно быть строкой (\"c\" или \"rust\")");
+            return makeError("Поле \"language\" должно быть строкой (\"c\", \"rust\" или \"arduino\")");
         }
         const std::string language = root["language"].get<std::string>();
         if (language == "c")
@@ -98,10 +98,14 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
         {
             project.language = OutputLanguage::Rust;
         }
+        else if (language == "arduino")
+        {
+            project.language = OutputLanguage::Arduino;
+        }
         else
         {
             return makeError("Поле \"language\" содержит недопустимое значение \"" + language
-                + "\" (разрешено c, rust)");
+                + "\" (разрешено c, rust, arduino)");
         }
     }
 
@@ -144,6 +148,12 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
             return makeError("Поле \"toolchain\" установлено в \"cargo\", но \"language\" не \"rust\""
                 " (toolchain=cargo допустим только при language=rust)");
         }
+        if (project.language == OutputLanguage::Arduino && project.toolchain != ToolchainKind::PlatformIO)
+        {
+            return makeError("Поле \"toolchain\" содержит \"" + toolchain
+                + "\", но \"language\" установлен в \"arduino\" — единственный допустимый toolchain для Arduino это"
+                  " platformio (можно просто не указывать поле \"toolchain\" явно)");
+        }
     }
     else if (project.language == OutputLanguage::Rust)
     {
@@ -153,6 +163,9 @@ ParseResult<ProjectConfig> parseProjectDocument(const nlohmann::json& root)
         // (docs/implementations/rust_codegen.md, «Язык → автовыбор toolchain»).
         project.toolchain = ToolchainKind::Cargo;
     }
+    // language=Arduino: toolchain уже = PlatformIO по умолчанию (project_config.h),
+    // переопределять не нужно — в отличие от Rust/Cargo, PlatformIO это и так
+    // дефолтный toolchain для всего проекта.
 
     if (root.contains("rust_hal_source_mode"))
     {

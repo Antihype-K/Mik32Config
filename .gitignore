@@ -2,6 +2,7 @@
 build/
 build-win64/
 build_test/
+build_cli/
 Testing/
 *.o
 generated_projects/

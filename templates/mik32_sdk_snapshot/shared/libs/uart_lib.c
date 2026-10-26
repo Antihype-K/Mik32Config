@@ -1,6 +1,16 @@
 
 #include "uart_lib.h"
 
+// TC может не взвестись (например, если RX-овэрран блокирует состояние UART,
+// когда приём включён, а обработчик прерывания ещё не запущен — найдено на
+// реальной сборке Arduino-демо 2026-10-26: передача зависала намертво именно
+// с включённым RE/RXNEIE и пропадала при RE=0). HAL_Micros() (mik32_hal.c) —
+// weak-заглушка, всегда возвращает 0, ничто её не переопределяет ни в одной
+// ветке проекта — таймаут на её основе (как в xputc()/HAL_USART_Transmit())
+// никогда не срабатывает. Используем счётчик итераций вместо реального
+// времени — не зависит от рабочего таймера.
+#define UART_LIB_TC_TIMEOUT_ITERATIONS 1000000UL
+
 __attribute__((weak)) void HAL_UART_MspInit(UART_TypeDef* uart)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0}; 
@@ -44,8 +54,15 @@ bool UART_Init(UART_TypeDef* uart,
     
     uart->CONTROL2 = control2;
     uart->CONTROL3 = control3;
-    uart->CONTROL1 = control1 | UART_CONTROL1_UE_M;
-    
+    // UE включается ОТДЕЛЬНОЙ записью, а RE/TE/прочие биты — следующей
+    // (не одной записью control1|UE), ровно как в проверенном рабочем
+    // HAL_USART_Init() (mik32_hal_usart.c: __HAL_USART_Enable() отдельно,
+    // потом CONTROL1 |= TE_M/RE_M) — найдено на реальной сборке
+    // Arduino-демо 2026-10-26: совмещённая запись UE+RE+TE в один регистр
+    // не давала взвестись REACK/TEACK.
+    uart->CONTROL1 = UART_CONTROL1_UE_M;
+    uart->CONTROL1 |= control1;
+
     do
     {
         flags = uart->FLAGS;
@@ -79,7 +96,8 @@ bool UART_IsTransmissionFinished(UART_TypeDef* uart)
 
 void UART_WaitTransmission(UART_TypeDef* uart)
 {
-    while (!UART_IsTransmissionFinished(uart)) ;
+    volatile uint32_t guard = UART_LIB_TC_TIMEOUT_ITERATIONS;
+    while (!UART_IsTransmissionFinished(uart) && guard--) ;
 }
 
 bool UART_IsTxBufferFreed(UART_TypeDef* uart)

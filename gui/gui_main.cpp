@@ -138,6 +138,8 @@ int main(int argc, char** argv)
     paths.freertos_kernel_snapshot_dir = (root + "/templates/freertos_kernel_snapshot").toStdString();
     paths.cargo_skeleton_dir = (root + "/templates/cargo_skeleton").toStdString();
     paths.rust_hal_snapshot_dir = (root + "/templates/mik32_rust_hal_snapshot").toStdString();
+    paths.pio_skeleton_arduino_dir = (root + "/templates/pio_skeleton_arduino").toStdString();
+    paths.arduino_core_snapshot_dir = (root + "/templates/mik32_arduino_core_snapshot").toStdString();
 
     MainWindow window(knowledge, package, paths);
     window.show();

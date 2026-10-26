@@ -60,10 +60,14 @@ enum class ToolchainKind { PlatformIO, CMake, Cargo };
 // Выходной язык генерируемой прошивки. C — единственный язык, на котором
 // проект живёт с самого начала (все golden-фикстуры, HW-валидация); Rust —
 // второй язык, добавленный поверх mik32-hal-main/mik32-rt/mik32v2-pac
-// (см. docs/implementations/rust_codegen.md). Поле независимо от toolchain
-// исторически (PlatformIO/CMake — оба варианта упаковки C-прошивки), но
-// однозначно определяет его: language=Rust => toolchain=Cargo всегда.
-enum class OutputLanguage { C, Rust };
+// (см. docs/implementations/rust_codegen.md). Arduino — третий, v1-объём
+// GPIO+UART+I2C+setup/loop поверх вендоренного docs/elron/elbear_arduino_bsp
+// (см. docs/implementations/arduino_codegen.md), решено в /grill-me сессии
+// 2026-10-26. Поле независимо от toolchain исторически (PlatformIO/CMake —
+// оба варианта упаковки C-прошивки), но однозначно определяет его:
+// language=Rust => toolchain=Cargo всегда, language=Arduino =>
+// toolchain=PlatformIO всегда (CMake для Arduino-ветки не реализован).
+enum class OutputLanguage { C, Rust, Arduino };
 
 // Откуда брать исходники HAL SDK при сборке CMake-варианта. Bundled и
 // LocalPath — offline-режимы (снэпшот в templates/mik32_sdk_snapshot/ или
@@ -115,6 +119,19 @@ struct ClockConfig
     bool force_osc_sys = false;    // PCC_ForceOscSysTypeDef: false=UNFIXED (старое поведение), true=FIXED
     std::string force_32k_clk = "osc32k"; // "auto"/"lsi32k"/"osc32k" -> PCC_FreqMonitorSourceTypeDef, дефолт = старый хардкод
 };
+
+// Реальная частота AHB (ядра) из Clock-блока — единственное место формулы,
+// чтобы C/Rust/Arduino-ветки кодогена не считали её по отдельности (риск
+// рассинхронизации, как уже было с мапперами, см. feedback в памяти
+// ассистента). Формула — mik32_hal_pcc.c: HAL_PCC_DividerAHB(), комментарий
+// "Частота шины AHB определяется по формуле: F_sys_clk / (DividerAHB + 1)".
+// F_sys_clk — номинал осциллятора (32 МГц для HSI32M и для внешнего кварца
+// OSC32M, установленного на плате, см. ClockConfig::oscillator_system выше).
+inline long long computeAhbFrequencyHz(const ClockConfig& clock)
+{
+    constexpr long long kNominalOscillatorHz = 32000000LL;  // HSI32M и OSC32M оба номинально 32 МГц
+    return kNominalOscillatorHz / (clock.ahb_divider + 1);
+}
 
 struct ProjectConfig
 {
