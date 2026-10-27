@@ -71,6 +71,7 @@ ProjectManagerScreen::ProjectManagerScreen(QWidget* parent)
     toolchain_combo_->addItem(QString::fromUtf8("PlatformIO"), QString::fromUtf8("platformio"));
     toolchain_combo_->addItem(QString::fromUtf8("CMake"), QString::fromUtf8("cmake"));
     toolchain_combo_->addItem(QString::fromUtf8("Rust (Cargo)"), QString::fromUtf8("rust"));
+    toolchain_combo_->addItem(QString::fromUtf8("Arduino (PlatformIO)"), QString::fromUtf8("arduino"));
     settings_form->addRow(QString::fromUtf8("Тулчейн / IDE"), toolchain_combo_);
 
     // 2. HAL source — видна только при Toolchain == CMake.
@@ -245,6 +246,11 @@ ProjectManagerScreen::ProjectManagerScreen(QWidget* parent)
         {
             document_->setProjectSetting("language", std::string("rust"));
             document_->setProjectSetting("toolchain", std::string("cargo"));
+        }
+        else if (selection == "arduino")
+        {
+            document_->setProjectSetting("language", std::string("arduino"));
+            document_->setProjectSetting("toolchain", std::string("platformio"));
         }
         else
         {

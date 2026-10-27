@@ -401,6 +401,60 @@ TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForTimer16Pwm)
     EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_timer16.h>\n}"), std::string::npos) << main_cpp;
 }
 
+TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForCrc)
+{
+    // crc32q preset, то же, что HW-подтверждённый тест C-ветки
+    // (docs/implementations/crc.md, generated_projects/HW_TEST_CRC).
+    ProjectConfig config;
+    CrcConfig block;
+    block.poly = 0x814141AB;
+    block.init = 0xFFFFFFFF;
+    block.input_reverse = false;
+    block.output_reverse = false;
+    block.output_inversion = false;
+    block.requested_preset = "crc32q";
+    config.crc_block = block;
+
+    ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_cpp = firmware.config->main_cpp;
+    EXPECT_NE(main_cpp.find("CRC_HandleTypeDef hcrc;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hcrc.Instance = CRC;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hcrc.Poly = 0x814141ab;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hcrc.Init = 0xffffffff;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_CRC_Init(&hcrc);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_crc32.h>\n#include <mik32_hal_pcc.h>\n}"),
+              std::string::npos) << main_cpp;
+}
+
+TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForTsens)
+{
+    ProjectConfig config;
+    TsensConfig block;
+    block.clock_source = "hsi32m";
+    block.frequency_hz = 32000;
+    block.has_low_threshold = true;
+    block.low_threshold_celsius = -10;
+    block.has_high_threshold = true;
+    block.high_threshold_celsius = 85;
+    config.tsens_block = block;
+
+    ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_cpp = firmware.config->main_cpp;
+    EXPECT_NE(main_cpp.find("TSENS_HandleTypeDef htsens;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("htsens.Instance = ANALOG_REG;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("htsens.Clock = HAL_TSENS_HSI32M;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("htsens.Frequency = 32000;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_TSENS_Init(&htsens);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_TSENS_SetLowThreshold(&htsens, -10);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_TSENS_SetHiThreshold(&htsens, 85);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_tsens.h>\n#include <mik32_hal_pcc.h>\n}"),
+              std::string::npos) << main_cpp;
+}
+
 TEST(ArduinoProjectCodegen, RejectsTimer16OneShotModeAsUnsupported)
 {
     ProjectConfig config;

@@ -45,9 +45,19 @@ NewProjectScreen::NewProjectScreen(QWidget* parent)
     mcu_combo->setCurrentIndex(0);
     form->addRow(QString::fromUtf8("Версия МК"), mcu_combo);
 
-    QLabel* toolchain_label = new QLabel(QString::fromUtf8("PlatformIO — framework-mik32v2-sdk"));
-    toolchain_label->setStyleSheet("color: gray;");
-    form->addRow(QString::fromUtf8("Тулчейн"), toolchain_label);
+    // Язык генерации + тулчейн в одном комбобоксе — тот же синтетический
+    // словарь ("arduino"/"rust"/"platformio"/"cmake"), что и у
+    // toolchain_combo_ в project_manager_screen.cpp (там это переключатель
+    // уже созданного проекта, здесь — выбор при создании). Порядок пунктов
+    // по приоритету языка (Arduino/Rust/HAL), затем HAL с выбором тулчейна —
+    // Rust и Arduino однозначно привязаны к своему единственному тулчейну
+    // (Cargo/PlatformIO), project_config.cpp это же и проверяет при парсинге.
+    toolchain_combo_ = new QComboBox();
+    toolchain_combo_->addItem(QString::fromUtf8("Arduino (PlatformIO)"), QString::fromUtf8("arduino"));
+    toolchain_combo_->addItem(QString::fromUtf8("Rust (Cargo)"), QString::fromUtf8("rust"));
+    toolchain_combo_->addItem(QString::fromUtf8("HAL (C) — PlatformIO"), QString::fromUtf8("platformio"));
+    toolchain_combo_->addItem(QString::fromUtf8("HAL (C) — CMake"), QString::fromUtf8("cmake"));
+    form->addRow(QString::fromUtf8("Язык / тулчейн"), toolchain_combo_);
 
     QLabel* board_label = new QLabel(QString::fromUtf8("development-board (МИК32 Амур, QFN64)"));
     board_label->setStyleSheet("color: gray;");
@@ -74,6 +84,7 @@ void NewProjectScreen::resetForm()
 {
     name_edit_->setText(QString::fromUtf8("мой_проект"));
     location_edit_->setText(QDir::homePath());
+    toolchain_combo_->setCurrentIndex(toolchain_combo_->findData(QString::fromUtf8("platformio")));
 }
 
 void NewProjectScreen::onBrowseClicked()
@@ -97,5 +108,6 @@ void NewProjectScreen::onContinueClicked()
     NewProjectParams params;
     params.name = name_edit_->text().trimmed();
     params.directory = location_edit_->text().trimmed();
+    params.toolchain = toolchain_combo_->currentData().toString();
     emit createRequested(params);
 }

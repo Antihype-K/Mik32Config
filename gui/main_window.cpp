@@ -1380,6 +1380,7 @@ void MainWindow::refreshEverything()
     // кидает исключение на отсутствующий ключ, см. её комментарий.
     const nlohmann::json language_setting = document_.projectSetting("language");
     const bool is_rust = language_setting.is_string() && language_setting.get<std::string>() == "rust";
+    const bool is_arduino = language_setting.is_string() && language_setting.get<std::string>() == "arduino";
 
     // "rust" — синтетическое значение пункта комбобокса (ProjectManagerScreen),
     // не значение самого поля JSON "toolchain" (там для Rust лежит "cargo"
@@ -1399,6 +1400,8 @@ void MainWindow::refreshEverything()
     project_manager_screen_->setGenerationSettings(
         is_rust
             ? QString::fromUtf8("rust")
+            : is_arduino
+            ? QString::fromUtf8("arduino")
             : (toolchain_setting.is_string()
                 ? QString::fromStdString(toolchain_setting.get<std::string>())
                 : QString::fromUtf8("platformio")),
@@ -1802,6 +1805,26 @@ void MainWindow::onNewProjectCreateRequested(const NewProjectParams& params)
     const QString target_path = dir.filePath(params.name + ".json");
 
     ProjectDocument fresh;
+    // Та же расшифровка синтетического значения комбобокса, что и в
+    // toolchain_combo_ (project_manager_screen.cpp) — здесь применяется один
+    // раз к свежему документу перед первым сохранением, а не на изменение
+    // существующего, поэтому веток меньше (Rust/Arduino всегда приходят со
+    // своим единственным допустимым тулчейном уже из params.toolchain).
+    if (params.toolchain == QString::fromUtf8("rust"))
+    {
+        fresh.setProjectSetting("language", std::string("rust"));
+        fresh.setProjectSetting("toolchain", std::string("cargo"));
+    }
+    else if (params.toolchain == QString::fromUtf8("arduino"))
+    {
+        fresh.setProjectSetting("language", std::string("arduino"));
+        fresh.setProjectSetting("toolchain", std::string("platformio"));
+    }
+    else
+    {
+        fresh.setProjectSetting("language", std::string("c"));
+        fresh.setProjectSetting("toolchain", params.toolchain.toStdString());
+    }
     std::string error;
     if (!fresh.save(target_path.toStdString(), error))
     {

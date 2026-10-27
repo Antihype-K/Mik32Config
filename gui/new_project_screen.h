@@ -17,11 +17,17 @@
 
 class QLineEdit;
 class QPushButton;
+class QComboBox;
 
 struct NewProjectParams
 {
     QString name;
     QString directory;
+    // Синтетическое значение combobox'а language+toolchain — тот же
+    // словарь ("platformio"/"cmake"/"rust"/"arduino"), что и у
+    // toolchain_combo_ в project_manager_screen.cpp, расшифровывается в
+    // onNewProjectCreateRequested (gui/main_window.cpp) той же логикой.
+    QString toolchain = QString::fromUtf8("platformio");
 };
 
 class NewProjectScreen : public QWidget
@@ -47,6 +53,7 @@ private slots:
 private:
     QLineEdit* name_edit_ = nullptr;
     QLineEdit* location_edit_ = nullptr;
+    QComboBox* toolchain_combo_ = nullptr;
     QPushButton* continue_button_ = nullptr;
 };
 

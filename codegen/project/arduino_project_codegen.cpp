@@ -21,6 +21,17 @@ namespace
         return ParseResult<GeneratedProjectFirmwareArduino>{false, message, std::nullopt};
     }
 
+    // Та же таблица, что tsens_contribution.cpp::clockSourceMacro (C-ветка).
+    std::string tsensClockSourceMacro(const std::string& value)
+    {
+        if (value == "sys_clk") return "HAL_TSENS_SYS_CLK";
+        if (value == "hclk") return "HAL_TSENS_HCLK";
+        if (value == "osc32m") return "HAL_TSENS_OSC32M";
+        if (value == "hsi32m") return "HAL_TSENS_HSI32M";
+        if (value == "osc32k") return "HAL_TSENS_OSC32K";
+        return "HAL_TSENS_LSI32K";
+    }
+
     // v1 scope (docs/open_tasks.md, /grill-me 2026-10-26): GPIO+UART+I2C
     // only, никакой другой периферии в Arduino-ветке ещё нет. 9-bit UART
     // не поддержан Arduino-core (HardwareSerial.h: SERIAL_* макросы — только
@@ -74,14 +85,12 @@ namespace
             }
         }
         if (config.rtc_block) return "Arduino-кодоген v1 не поддерживает RTC";
-        if (config.crc_block) return "Arduino-кодоген v1 не поддерживает CRC";
         if (config.eeprom_block) return "Arduino-кодоген v1 не поддерживает EEPROM";
         if (config.wdt_block) return "Arduino-кодоген v1 не поддерживает WDT";
         if (!config.dac_blocks.empty()) return "Arduino-кодоген v1 не поддерживает DAC";
         if (config.adc_block) return "Arduino-кодоген v1 не поддерживает ADC";
         if (config.crypto_block) return "Arduino-кодоген v1 не поддерживает CRYPTO";
         if (config.otp_block) return "Arduino-кодоген v1 не поддерживает OTP";
-        if (config.tsens_block) return "Arduino-кодоген v1 не поддерживает TSENS";
         if (config.pvd_block) return "Arduino-кодоген v1 не поддерживает PVD";
         if (config.bus_watchdog_block) return "Arduino-кодоген v1 не поддерживает Bus Watchdog";
         if (!config.dma_blocks.empty()) return "Arduino-кодоген v1 не поддерживает DMA";
@@ -499,7 +508,72 @@ ParseResult<GeneratedProjectFirmwareArduino> generateProjectFirmwareArduino(
               << "  HAL_Timer16_StartPWM(&" << handle_name << ", " << block.arr << ", " << block.cmp << ");\n";
     }
 
+    // CRC — гибридный прямой HAL-вызов (категория 1: периферия, которую
+    // Arduino-ядро вообще не трогает — ни один файл cores/arduino/ не
+    // объявляет и не использует CRC, конфликтов регистров с Arduino-классами
+    // быть не может). Та же логика расчёта полей, что в C-ветке
+    // (codegen/project/crc_contribution.cpp) — hcrc объявляется глобально по
+    // тому же образцу, что htimer16_<instance> выше.
+    std::ostringstream crc_globals;
+    if (config.crc_block)
+    {
+        const CrcConfig& block = *config.crc_block;
+        crc_globals << "CRC_HandleTypeDef hcrc;\n";
+        setup << "  // ГИБРИДНЫЙ вызов (не Arduino API — CRC не используется никаким\n"
+              << "  // классом Arduino-ядра, конфликтов регистров нет): прямая\n"
+              << "  // инициализация CRC через HAL, как в C-ветке.\n"
+              << "  hcrc.Instance = CRC;\n"
+              << "  hcrc.Poly = 0x" << std::hex << block.poly << ";\n"
+              << "  hcrc.Init = 0x" << block.init << std::dec << ";\n"
+              << "  hcrc.InputReverse = " << (block.input_reverse ? "CRC_REFIN_TRUE" : "CRC_REFIN_FALSE") << ";\n"
+              << "  hcrc.OutputReverse = " << (block.output_reverse ? "CRC_REFOUT_TRUE" : "CRC_REFOUT_FALSE") << ";\n"
+              << "  hcrc.OutputInversion = "
+              << (block.output_inversion ? "CRC_OUTPUTINVERSION_ON" : "CRC_OUTPUTINVERSION_OFF") << ";\n"
+              << "  HAL_CRC_Init(&hcrc);\n";
+    }
+
+    // TSENS — гибридный прямой HAL-вызов (категория 1, тот же критерий, что у
+    // CRC выше: cores/arduino/ не объявляет и не использует TSENS — конфликтов
+    // регистров нет). Та же логика полей, что в C-ветке
+    // (codegen/project/tsens_contribution.cpp): только конфигурация,
+    // HAL_TSENS_SingleStart/ContinuousStart остаются за пользователем.
+    std::ostringstream tsens_globals;
+    if (config.tsens_block)
+    {
+        const TsensConfig& block = *config.tsens_block;
+        tsens_globals << "TSENS_HandleTypeDef htsens;\n";
+        setup << "  // ГИБРИДНЫЙ вызов (не Arduino API — TSENS не используется\n"
+              << "  // никаким классом Arduino-ядра, конфликтов регистров нет):\n"
+              << "  // прямая инициализация TSENS через HAL, как в C-ветке.\n"
+              << "  htsens.Instance = ANALOG_REG;\n"
+              << "  htsens.Clock = " << tsensClockSourceMacro(block.clock_source) << ";\n"
+              << "  htsens.Frequency = " << block.frequency_hz << ";\n"
+              << "  HAL_TSENS_Init(&htsens);\n";
+        if (block.has_low_threshold)
+        {
+            setup << "  HAL_TSENS_SetLowThreshold(&htsens, " << block.low_threshold_celsius << ");\n";
+        }
+        if (block.has_high_threshold)
+        {
+            setup << "  HAL_TSENS_SetHiThreshold(&htsens, " << block.high_threshold_celsius << ");\n";
+        }
+    }
+
     std::ostringstream includes;
+    if (config.tsens_block)
+    {
+        // extern "C": тот же мотив, что у CRC/Timer16 — mik32_hal_tsens.h не
+        // оборачивает объявления в #ifdef __cplusplus.
+        includes << "extern \"C\" {\n#include <mik32_hal_tsens.h>\n#include <mik32_hal_pcc.h>\n}\n";
+    }
+    if (config.crc_block)
+    {
+        // extern "C": тот же мотив, что у mik32_hal_timer16.h чуть ниже —
+        // mik32_hal_crc32.h не оборачивает объявления в #ifdef __cplusplus,
+        // без extern "C" компилятор C++ мангл(ир)ует имена HAL_CRC_*, и
+        // линковка падает "undefined reference" на реальной сборке.
+        includes << "extern \"C\" {\n#include <mik32_hal_crc32.h>\n#include <mik32_hal_pcc.h>\n}\n";
+    }
     if (!config.uart_blocks.empty())
     {
         includes << "// Serial0/Serial1 уже объявлены в Arduino.h\n";
@@ -536,6 +610,8 @@ ParseResult<GeneratedProjectFirmwareArduino> generateProjectFirmwareArduino(
                 "// USER CODE END Includes\n"
                 "\n"
              << timer16_globals.str()
+             << crc_globals.str()
+             << tsens_globals.str()
              << "\n"
                 "void setup()\n"
                 "{\n"
