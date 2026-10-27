@@ -133,6 +133,23 @@ inline long long computeAhbFrequencyHz(const ClockConfig& clock)
     return kNominalOscillatorHz / (clock.ahb_divider + 1);
 }
 
+// Частота, от которой реально считает BRR периферия UART — НЕ частота AHB
+// выше. Баг найден HW-валидацией 2026-10-27 (1T Rex Board, мусор 0x1c 0xfc
+// на UART вместо ожидаемых 0x41 при ahb_divider=2, apbp_divider=2): HAL
+// (mik32_hal_usart.c: "DIVIDER = Freq_APB_P / Baudrate") считает
+// DIVIDER = SysClk / (DIV_AHB+1) / (DIV_APB_P+1) — делитель APB_P
+// применяется ПОСЛЕ AHB, а не вместо него. computeAhbFrequencyHz() выше
+// учитывал только AHB-делитель, поэтому F_CPU-патч Arduino-ветки
+// (writeGeneratedArduinoProject) задавал F_CPU в apbp_divider+1 раз выше
+// реальной частоты UART. При apbp_divider=0 делитель на 1 не меняет
+// результат, поэтому старые тесты/HW-прогоны этот баг не поймали — он
+// проявляется только при одновременно нестандартных ahb_divider и
+// apbp_divider.
+inline long long computeUartPeripheralFrequencyHz(const ClockConfig& clock)
+{
+    return computeAhbFrequencyHz(clock) / (clock.apbp_divider + 1);
+}
+
 struct ProjectConfig
 {
     std::string mcu;

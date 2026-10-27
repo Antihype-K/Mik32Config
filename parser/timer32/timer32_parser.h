@@ -12,12 +12,12 @@
 
 struct Timer32ChannelConfig
 {
-    int index;              // 0-3
+    int index = 0;          // 0-3
     std::string mode;       // "pwm" | "capture" | "compare"
-    uint32_t ocr;            // используется для pwm/compare, игнорируется для capture
-    bool pwm_invert;         // только mode=pwm
+    uint32_t ocr = 0;         // используется для pwm/compare, игнорируется для capture
+    bool pwm_invert = false; // только mode=pwm
     std::string capture_edge; // только mode=capture: "rising" | "falling"
-    bool noise_filter;        // HAL_TIMER32_CHANNEL_NoiseTypeDef — общее поле для всех режимов канала
+    bool noise_filter = false; // HAL_TIMER32_CHANNEL_NoiseTypeDef — общее поле для всех режимов канала
 
     // OVERNIGHT_FIELD_REFERENCE.md: альтернатива ocr для mode=pwm — вместо
     // прямого регистрового значения задаётся duty_percent, пересчёт в ocr

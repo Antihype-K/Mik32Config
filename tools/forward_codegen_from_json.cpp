@@ -22,6 +22,7 @@
 #include "dac_knowledge.h"
 #include "cross_module_validator.h"
 #include "cmake_project_codegen.h"
+#include "arduino_project_codegen.h"
 #include "json.hpp"
 
 namespace
@@ -194,6 +195,33 @@ int main(int argc, char** argv)
             *firmware_result.config, "templates/cmake_skeleton",
             "templates/mik32_sdk_snapshot", output_dir, *config_result.config,
             config_json_copy);
+        if (!write_result.success)
+        {
+            std::cerr << "Ошибка записи проекта: " << write_result.error << "\n";
+            return 1;
+        }
+        std::cout << "Проект сгенерирован в " << output_dir << "\n";
+        return 0;
+    }
+
+    // language=arduino — тот же паттерн, что toolchain=CMake выше (иначе CLI
+    // молча пишет C/HAL-проект вместо Arduino-ветки). Rust здесь не
+    // диспетчеризуется — этому инструменту он пока не понадобился.
+    if (config_result.config->language == OutputLanguage::Arduino)
+    {
+        ParseResult<GeneratedProjectFirmwareArduino> arduino_result =
+            generateProjectFirmwareArduino(*config_result.config);
+        if (!arduino_result.success)
+        {
+            std::cerr << "Ошибка кодогенерации: " << arduino_result.error << "\n";
+            return 1;
+        }
+        std::ifstream config_in(config_path, std::ios::binary);
+        nlohmann::json config_json_copy;
+        config_in >> config_json_copy;
+        CodegenWriteResult write_result = writeGeneratedArduinoProject(
+            *arduino_result.config, "templates/pio_skeleton_arduino",
+            "templates/mik32_arduino_core_snapshot", output_dir, config_json_copy);
         if (!write_result.success)
         {
             std::cerr << "Ошибка записи проекта: " << write_result.error << "\n";

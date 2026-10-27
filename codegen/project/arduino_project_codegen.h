@@ -42,16 +42,18 @@ struct GeneratedProjectFirmwareArduino
     // меняется, см. project_config.cpp комментарий у разбора "clock".
     std::string system_init_pcc_block;
 
-    // Реальная частота AHB (ядра) из Clock-блока, project_config.h::
-    // computeAhbFrequencyHz() — та же формула, что определяет итоговую
-    // частоту для PCC_OscInit выше. HardwareSerial.cpp/Tone.cpp/SPI.cpp
-    // вендоренного Arduino-ядра считают тайминги (BRR и т.п.) от макроса
-    // F_CPU, захардкоженного в platformio.ini (-D F_CPU=32000000UL) — если
-    // Clock-блок задаёт нестандартные делители/осциллятор, F_CPU расходится
-    // с реальной частотой ядра и все эти расчёты (включая скорость UART)
-    // врут. writeGeneratedArduinoProject патчит platformio.ini этим
-    // значением, только если оно отличается от дефолтных 32000000 (т.е.
-    // Clock-блок реально нестандартный) — иначе platformio.ini не трогается.
+    // НЕ частота AHB, несмотря на имя поля (сохранено ради минимального
+    // диффа) — это частота, от которой HAL реально считает BRR UART:
+    // project_config.h::computeUartPeripheralFrequencyHz() (SysClk/(AHB+1)/
+    // (APB_P+1), баг с одним делителем AHB найден HW-валидацией 2026-10-27).
+    // HardwareSerial.cpp/Tone.cpp/SPI.cpp вендоренного Arduino-ядра считают
+    // тайминги (BRR и т.п.) от макроса F_CPU, захардкоженного в
+    // platformio.ini (-D F_CPU=32000000UL) — если Clock-блок задаёт
+    // нестандартные делители/осциллятор, F_CPU расходится с реальной
+    // частотой UART и все эти расчёты врут. writeGeneratedArduinoProject
+    // патчит platformio.ini этим значением, только если оно отличается от
+    // дефолтных 32000000 (т.е. Clock-блок реально нестандартный) — иначе
+    // platformio.ini не трогается.
     long long ahb_frequency_hz = 32000000LL;
 };
 

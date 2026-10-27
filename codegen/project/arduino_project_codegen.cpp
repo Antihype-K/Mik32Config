@@ -629,7 +629,7 @@ ParseResult<GeneratedProjectFirmwareArduino> generateProjectFirmwareArduino(
     GeneratedProjectFirmwareArduino result;
     result.main_cpp = main_cpp.str();
     result.system_init_pcc_block = renderArduinoSystemInitPccBlock(config.clock);
-    result.ahb_frequency_hz = computeAhbFrequencyHz(config.clock);
+    result.ahb_frequency_hz = computeUartPeripheralFrequencyHz(config.clock);
     return ParseResult<GeneratedProjectFirmwareArduino>{true, "", result};
 }
 

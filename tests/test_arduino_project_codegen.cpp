@@ -752,3 +752,21 @@ TEST(ArduinoProjectCodegen, NonDefaultClockPatchesFCpuInPlatformioIni)
     EXPECT_NE(pio_ini.find("-D F_CPU=16000000UL"), std::string::npos) << pio_ini;
     EXPECT_EQ(pio_ini.find("-D F_CPU=32000000UL"), std::string::npos) << pio_ini;
 }
+
+TEST(ArduinoProjectCodegen, FCpuAccountsForApbpDividerNotJustAhb)
+{
+    // Регрессия на баг, найденный HW-валидацией 2026-10-27 (1T Rex Board):
+    // при одновременно нестандартных ahb_divider=2 и apbp_divider=2 UART
+    // отдавал устойчивый мусор (0x1c 0xfc вместо 0x41) — F_CPU считался
+    // только от AHB-делителя, хотя HAL берёт BRR от SysClk/(AHB+1)/(APB_P+1)
+    // (mik32_hal_usart.c, "DIVIDER = Freq_APB_P / Baudrate"). Правильное
+    // значение: 32 000 000 / 3 / 3 = 3 555 555 (целочисленное деление).
+    ProjectConfig config;
+    config.gpio_blocks.push_back(makeGpioOutput(0, {3}));
+    config.clock.ahb_divider = 2;
+    config.clock.apbp_divider = 2;
+
+    ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    EXPECT_EQ(firmware.config->ahb_frequency_hz, 3555555LL);
+}
