@@ -1,0 +1,31 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "language": "rust",
+  "peripherals": [
+    {
+      "type": "timer32",
+      "instance": 1,
+      "count_mode": "forward",
+      "clock_source": "tim1_hclk",
+      "prescaler": 0,
+      "top": 999,
+      "overflow_interrupt": true,
+      "channels": [
+        {
+          "index": 0,
+          "mode": "pwm",
+          "ocr": 250,
+          "pwm_invert": false,
+          "noise_filter": true
+        },
+        {
+          "index": 1,
+          "mode": "capture",
+          "capture_edge": "falling",
+          "noise_filter": false
+        }
+      ]
+    }
+  ]
+}

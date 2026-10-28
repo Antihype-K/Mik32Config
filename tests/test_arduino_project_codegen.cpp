@@ -226,16 +226,82 @@ TEST(ArduinoProjectCodegen, WarnsAboutSsInPinAsManualCsInGeneratedComment)
     EXPECT_NE(main_cpp.find("SS_IN"), std::string::npos) << main_cpp;
 }
 
-TEST(ArduinoProjectCodegen, RejectsRtcAsUnsupported)
+TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForRtcTimeAndDate)
 {
     ProjectConfig config;
     RtcConfig rtc_block;
     rtc_block.type = "rtc";
+    rtc_block.dow = 3;
+    rtc_block.hours = 12;
+    rtc_block.minutes = 34;
+    rtc_block.seconds = 56;
+    rtc_block.century = 20;
+    rtc_block.day = 27;
+    rtc_block.month = 10;
+    rtc_block.year = 26;
     config.rtc_block = rtc_block;
 
     ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
-    EXPECT_FALSE(firmware.success);
-    EXPECT_NE(firmware.error.find("RTC"), std::string::npos) << firmware.error;
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_cpp = firmware.config->main_cpp;
+    EXPECT_NE(main_cpp.find("RTC_HandleTypeDef hrtc;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("__HAL_PCC_RTC_CLK_ENABLE();"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("sTime.Dow = RTC_WEEKDAY_WEDNESDAY;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("sTime.Hours = 12;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("sDate.Month = RTC_MONTH_OCTOBER;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_RTC_SetTime(&hrtc, &sTime);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_RTC_SetDate(&hrtc, &sDate);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_RTC_Enable(&hrtc);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_rtc.h>\n#include <mik32_hal_pcc.h>\n}"),
+              std::string::npos) << main_cpp;
+    // Без alarm-блока в конфиге — ни будильник, ни IRQ-шаблон не генерируются.
+    EXPECT_EQ(main_cpp.find("HAL_RTC_SetAlarm("), std::string::npos) << main_cpp;
+    EXPECT_EQ(main_cpp.find("RTC_IRQHandler_Template"), std::string::npos) << main_cpp;
+}
+
+TEST(ArduinoProjectCodegen, GeneratesRtcAlarmWithCompareFieldsAndIrqTemplate)
+{
+    ProjectConfig config;
+    RtcConfig rtc_block;
+    rtc_block.type = "rtc";
+    rtc_block.dow = 1;
+    rtc_block.hours = 0;
+    rtc_block.minutes = 0;
+    rtc_block.seconds = 0;
+    rtc_block.century = 20;
+    rtc_block.day = 1;
+    rtc_block.month = 1;
+    rtc_block.year = 26;
+    rtc_block.has_alarm = true;
+    rtc_block.alarm_dow = 2;
+    rtc_block.alarm_hours = 7;
+    rtc_block.alarm_minutes = 30;
+    rtc_block.alarm_seconds = 0;
+    rtc_block.alarm_century = 20;
+    rtc_block.alarm_day = 1;
+    rtc_block.alarm_month = 1;
+    rtc_block.alarm_year = 26;
+    rtc_block.alarm_compare_fields = {"hours", "minutes", "seconds"};
+    rtc_block.alarm_interrupt_enabled = true;
+    config.rtc_block = rtc_block;
+
+    ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_cpp = firmware.config->main_cpp;
+    EXPECT_NE(main_cpp.find("sAlarm.AlarmTime.Hours = 7;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find(
+        "sAlarm.MaskAlarmTime = RTC_TALRM_CH_M | RTC_TALRM_CM_M | RTC_TALRM_CS_M;"),
+        std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("sAlarm.MaskAlarmDate = 0;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_RTC_SetAlarm(&hrtc, &sAlarm);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hrtc.Interrupts.Alarm = RTC_ALARM_IRQ_ENABLE;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_RTC_InterruptInit(&hrtc);"), std::string::npos) << main_cpp;
+    // Ключевое ограничение (docs/implementations/rtc.md): готовый шаблон
+    // обработчика с HAL_RTC_ClearAlrmFlag, но без авто-подключения к EPIC.
+    EXPECT_NE(main_cpp.find("void RTC_IRQHandler_Template(void)"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_RTC_ClearAlrmFlag(&hrtc);"), std::string::npos) << main_cpp;
 }
 
 TEST(ArduinoProjectCodegen, GeneratesMainCppWithGpioPinMode)
@@ -453,6 +519,108 @@ TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForTsens)
     EXPECT_NE(main_cpp.find("HAL_TSENS_SetHiThreshold(&htsens, 85);"), std::string::npos) << main_cpp;
     EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_tsens.h>\n#include <mik32_hal_pcc.h>\n}"),
               std::string::npos) << main_cpp;
+}
+
+TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForWdtWithoutStartOrRefresh)
+{
+    ProjectConfig config;
+    WdtConfig block;
+    block.clock_source = "osc32k";
+    block.reload_ms = 500;
+    config.wdt_block = block;
+
+    ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_cpp = firmware.config->main_cpp;
+    EXPECT_NE(main_cpp.find("WDT_HandleTypeDef hwdt;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hwdt.Instance = WDT;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hwdt.Init.Clock = HAL_WDT_OSC32K;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hwdt.Init.ReloadMs = 500;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_WDT_Init(&hwdt, WDT_TIMEOUT_DEFAULT);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_wdt.h>\n#include <mik32_hal_pcc.h>\n}"),
+              std::string::npos) << main_cpp;
+    // Ключевое ограничение (docs/implementations/wdt.md): никакого автозапуска.
+    // Поиск по "(" — в пояснительном комментарии рядом упоминаются сами имена
+    // функций без вызова, а не только вызовы.
+    EXPECT_EQ(main_cpp.find("HAL_WDT_Start("), std::string::npos) << main_cpp;
+    EXPECT_EQ(main_cpp.find("HAL_WDT_Refresh("), std::string::npos) << main_cpp;
+}
+
+TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForOtpReadOnly)
+{
+    ProjectConfig config;
+    OtpConfig block;
+    block.read_mode = "three_stages";
+    config.otp_block = block;
+
+    ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_cpp = firmware.config->main_cpp;
+    EXPECT_NE(main_cpp.find("OTP_HandleTypeDef hotp;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hotp.Instance = OTP;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hotp.ReadMode = OPT_READ_3STAGES;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_OTP_Init(&hotp);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_otp.h>\n#include <mik32_hal_pcc.h>\n}"),
+              std::string::npos) << main_cpp;
+    // Ключевое ограничение (docs/implementations/otp.md): запись никогда не генерируется.
+    // Поиск по "(" — иначе ловит упоминание HAL_OTP_Write* в пояснительном комментарии.
+    EXPECT_EQ(main_cpp.find("HAL_OTP_Write("), std::string::npos) << main_cpp;
+}
+
+TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForEepromWithoutEraseOrWrite)
+{
+    ProjectConfig config;
+    EepromConfig block;
+    block.mode = "three_stage";
+    block.ecc_enabled = true;
+    block.single_error_interrupt_enabled = false;
+    config.eeprom_block = block;
+
+    ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_cpp = firmware.config->main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_EEPROM_HandleTypeDef heeprom;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("heeprom.Instance = EEPROM_REGS;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("heeprom.Mode = HAL_EEPROM_MODE_THREE_STAGE;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("heeprom.ErrorCorrection = HAL_EEPROM_ECC_ENABLE;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_EEPROM_Init(&heeprom);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_EEPROM_CalculateTimings(&heeprom, 32000000);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_eeprom.h>\n#include <mik32_hal_pcc.h>\n}"),
+              std::string::npos) << main_cpp;
+    // Ключевое ограничение (docs/implementations/eeprom.md, CLAUDE.md): никакой
+    // Erase/Write/Read не генерируется автоматически — адреса/данные пользователя
+    // не угадываются, а на реальной плате EEPROM трогать нельзя вовсе.
+    EXPECT_EQ(main_cpp.find("HAL_EEPROM_Erase("), std::string::npos) << main_cpp;
+    EXPECT_EQ(main_cpp.find("HAL_EEPROM_Write("), std::string::npos) << main_cpp;
+}
+
+TEST(ArduinoProjectCodegen, GeneratesHybridHalCallForAdc)
+{
+    ProjectConfig config;
+    AdcConfig block;
+    block.channel = 3;
+    block.ext_ref = true;
+    block.ext_clb = true;
+    config.adc_block = block;
+
+    ParseResult<GeneratedProjectFirmwareArduino> firmware = generateProjectFirmwareArduino(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_cpp = firmware.config->main_cpp;
+    EXPECT_NE(main_cpp.find("ADC_HandleTypeDef hadc;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hadc.Instance = ANALOG_REG;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hadc.Init.Sel = ADC_CHANNEL3;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hadc.Init.EXTRef = ADC_EXTREF_ON;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("hadc.Init.EXTClb = ADC_EXTCLB_ADCREF;"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("HAL_ADC_Init(&hadc);"), std::string::npos) << main_cpp;
+    EXPECT_NE(main_cpp.find("extern \"C\" {\n#include <mik32_hal_adc.h>\n#include <mik32_hal_pcc.h>\n}"),
+              std::string::npos) << main_cpp;
+    // Ключевое предупреждение (docs/implementations/arduino_codegen.md): analogRead()
+    // переинициализирует hadc сам при каждом вызове.
+    EXPECT_NE(main_cpp.find("analogRead()"), std::string::npos) << main_cpp;
 }
 
 TEST(ArduinoProjectCodegen, RejectsTimer16OneShotModeAsUnsupported)

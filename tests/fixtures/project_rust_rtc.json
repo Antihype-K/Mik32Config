@@ -1,0 +1,18 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "language": "rust",
+  "peripherals": [
+    {
+      "type": "rtc",
+      "time": { "dow": 3, "hours": 12, "minutes": 34, "seconds": 56 },
+      "date": { "century": 20, "day": 27, "month": 10, "year": 26 },
+      "alarm": {
+        "time": { "dow": 1, "hours": 7, "minutes": 0, "seconds": 0 },
+        "date": { "century": 20, "day": 1, "month": 1, "year": 27 },
+        "compare_fields": ["hours", "minutes", "seconds"],
+        "interrupt_enabled": true
+      }
+    }
+  ]
+}

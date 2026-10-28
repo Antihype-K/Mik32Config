@@ -1,0 +1,28 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "language": "rust",
+  "clock": {
+    "oscillator_system": "hsi32m",
+    "ahb_divider": 1,
+    "apbm_divider": 3,
+    "apbp_divider": 7,
+    "hsi32m_calibration": 200,
+    "lsi32k_calibration": 12,
+    "rtc_clock_source": "lsi32k",
+    "rtc_clock_cpu_source": "lsi32k",
+    "oscillator_enable": ["hsi32m", "lsi32k"],
+    "force_osc_sys": true,
+    "force_32k_clk": "lsi32k"
+  },
+  "peripherals": [
+    {
+      "type": "gpio",
+      "instance": 2,
+      "mode": "output",
+      "pull": "none",
+      "drive_strength": "2mA",
+      "pins": [6]
+    }
+  ]
+}

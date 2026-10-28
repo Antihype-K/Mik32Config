@@ -106,7 +106,7 @@ impl Config {
 
         pm.div_ahb().modify(|_, w| unsafe { w.bits(config.ahb_div as u32) });
         pm.div_apb_m().modify(|_, w| unsafe { w.bits(config.apb_m_div as u32) });
-        pm.div_apb_m().modify(|_, w| unsafe { w.bits(config.apb_m_div as u32) });
+        pm.div_apb_p().modify(|_, w| unsafe { w.bits(config.apb_p_div as u32) });
 
         wu.clocks_bu().modify(|_, w| match config.rtcclk {
             RtcClkMux::Automatic => w.rtc_clk_mux().automatic(),
@@ -117,7 +117,7 @@ impl Config {
 
         pm.cpu_rtc_clk_mux().modify(|_, w| match config.rtccpuclk{
             CpuRtcClkMux::Osc32k => w.cpu_rtc_clk_mux().osc32k(),
-            CpuRtcClkMux::Lsi32k => w.cpu_rtc_clk_mux().osc32k(),
+            CpuRtcClkMux::Lsi32k => w.cpu_rtc_clk_mux().lsi32k(),
         });
 
         if !config.osc32m {

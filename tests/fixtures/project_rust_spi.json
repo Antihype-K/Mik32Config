@@ -1,0 +1,20 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "language": "rust",
+  "peripherals": [
+    {
+      "type": "spi",
+      "instance": 0,
+      "mode": "master",
+      "clk_phase": "on",
+      "clk_polarity": "high",
+      "threshold_tx": 4,
+      "baud_rate_div": 64,
+      "manual_cs": false,
+      "decoder": false,
+      "chip_select": "cs0",
+      "interrupts": []
+    }
+  ]
+}

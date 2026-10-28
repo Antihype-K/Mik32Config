@@ -1,0 +1,23 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "language": "rust",
+  "peripherals": [
+    {
+      "type": "gpio",
+      "instance": 2,
+      "mode": "output",
+      "pull": "none",
+      "drive_strength": "2mA",
+      "pins": [6]
+    },
+    {
+      "type": "tsens",
+      "clock_source": "osc32k",
+      "frequency_hz": 100,
+      "low_threshold_celsius": -10,
+      "high_threshold_celsius": 85,
+      "interrupts": ["eoc"]
+    }
+  ]
+}

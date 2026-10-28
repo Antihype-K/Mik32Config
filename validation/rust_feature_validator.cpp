@@ -34,30 +34,25 @@ std::string findUnsupportedRustFeature(const ProjectConfig& config)
             return error.str();
         }
     }
-    if (!config.timer32_blocks.empty())
-    {
-        return "Периферия \"timer32\" не поддерживается в Rust-ветке конфигуратора"
-               " (в mik32-hal-main нет рабочего кода таймеров, см. docs/implementations/rust_codegen.md)";
-    }
+    // timer32 — реализован (templates/mik32_rust_hal_snapshot/hal/src/timer32.rs,
+    // новый модуль). Полный паритет с C-веткой (timer32_contribution.cpp) —
+    // ни одно поле схемы не требует отказа, см. docs/implementations/rust/timer32.md.
     // i2c — реализован 2026-10-26 (templates/mik32_rust_hal_snapshot/hal/src/i2c.rs,
     // новый модуль, mik32-hal-main его не содержал вовсе). DMA для I2C
     // отклоняется ниже per-блок (тот же критерий, что и у UART DMA — ни
     // PAC, ни HAL-снэпшот не содержат драйвера контроллера DMA).
-    if (!config.spi_blocks.empty())
-    {
-        return "Периферия \"spi\" не поддерживается в Rust-ветке конфигуратора"
-               " (mik32-hal-main не содержит модуля SPI, см. docs/implementations/rust_codegen.md)";
-    }
-    if (config.rtc_block.has_value())
-    {
-        return "Периферия \"rtc\" не поддерживается в Rust-ветке конфигуратора"
-               " (mik32-hal-main не содержит модуля RTC, AUDIT_TZ_PERIPHERY_GAPS.md — RTC добавлен только в C-ветке)";
-    }
-    if (config.crc_block.has_value())
-    {
-        return "Периферия \"crc\" не поддерживается в Rust-ветке конфигуратора"
-               " (mik32-hal-main не содержит модуля CRC, AUDIT_TZ_PERIPHERY_GAPS.md — CRC добавлен только в C-ветке)";
-    }
+    // spi — реализован (templates/mik32_rust_hal_snapshot/hal/src/spi.rs,
+    // новый модуль). interrupts отклоняется per-блок ниже (тот же критерий,
+    // что у I2C interrupt_mode/GPIO IRQ — mik32v2-hal не оборачивает EPIC).
+    // rtc — реализован (templates/mik32_rust_hal_snapshot/hal/src/rtc.rs,
+    // новый модуль). Полный паритет с C-веткой (rtc_contribution.cpp),
+    // включая будильник+interrupt_enabled — EPIC-подключение остаётся на
+    // стороне пользователя даже в C-ветке, см. docs/implementations/rust/rtc.md.
+    // crc — реализован (templates/mik32_rust_hal_snapshot/hal/src/crc.rs,
+    // новый модуль). Полный паритет с C-веткой (crc_contribution.cpp) —
+    // только конфигурация алгоритма, write_data/read_crc на собственных
+    // данных пользователя кодоген не угадывает (как и в C), см.
+    // docs/implementations/rust/crc.md.
     if (config.eeprom_block.has_value())
     {
         return "Периферия \"eeprom\" не поддерживается в Rust-ветке конфигуратора"
@@ -87,11 +82,6 @@ std::string findUnsupportedRustFeature(const ProjectConfig& config)
     {
         return "Периферия \"otp\" не поддерживается в Rust-ветке конфигуратора"
                " (mik32-hal-main не содержит модуля OTP, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
-    }
-    if (config.tsens_block.has_value())
-    {
-        return "Периферия \"tsens\" не поддерживается в Rust-ветке конфигуратора"
-               " (mik32-hal-main не содержит модуля TSENS, AUDIT_TZ_PERIPHERY_GAPS.md — добавлен только в C-ветке)";
     }
     if (config.pvd_block.has_value())
     {
@@ -212,6 +202,22 @@ std::string findUnsupportedRustFeature(const ProjectConfig& config)
             error << "I2C instance " << block.instance << ": interrupt_mode не поддерживается в"
                      " Rust-ветке (mik32v2-hal не оборачивает контроллер EPIC, см."
                      " templates/mik32_rust_hal_snapshot/hal/src/i2c.rs)";
+            return error.str();
+        }
+    }
+
+    for (const SpiConfig& block : config.spi_blocks)
+    {
+        // HAL_SPI_IRQHandler (шаблон, генерируемый C-веткой, spi_contribution.cpp)
+        // рассчитан на подключение к EPIC/raw_trap_handler — mik32v2-hal не
+        // оборачивает контроллер EPIC ни для одной периферии (тот же
+        // критерий, что у I2C interrupt_mode и GPIO IRQ выше).
+        if (!block.interrupts.empty())
+        {
+            std::ostringstream error;
+            error << "SPI instance " << block.instance << ": interrupts не поддерживаются в"
+                     " Rust-ветке (mik32v2-hal не оборачивает контроллер EPIC, см."
+                     " templates/mik32_rust_hal_snapshot/hal/src/spi.rs)";
             return error.str();
         }
     }

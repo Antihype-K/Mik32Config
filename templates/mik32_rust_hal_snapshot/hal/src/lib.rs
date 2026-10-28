@@ -17,12 +17,17 @@
 //! по образцу `i2c.rs`, см. docs/implementations/rust/timer16.md.
 #![no_std]
 
+pub mod crc;
 pub mod gpio;
 pub mod i2c;
 pub mod peripheral;
 pub mod rcc;
+pub mod rtc;
 pub mod serial;
+pub mod spi;
 pub mod time;
 pub mod timer16;
+pub mod timer32;
+pub mod tsens;
 
 pub use mik32v2_pac as pac;

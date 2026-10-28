@@ -295,8 +295,106 @@ TEST(RustProjectCodegen, WrittenTimer16ProjectActuallyBuildsWithCargo)
         << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
 }
 
+// Timer32 — реализован (docs/implementations/rust/timer32.md). instance=1,
+// clock_source=tim1_hclk, 2 канала (pwm ch0 + capture ch1, падающий фронт).
+// Timer32_1 канал N фиксирован на GPIO_0/PIN_N (mik32_hal_timer32.c,
+// HAL_TIMER32_Channel_MspInit) — проверяем, что оба пина, Timer32::new и
+// configure_channel с правильными полями попадают в main.rs.
+TEST(RustProjectCodegen, GeneratesTimer32WithPwmAndCaptureChannels)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer32.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    EXPECT_EQ(findUnsupportedRustFeature(*config_result.config), "");
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(*config_result.config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("p.timer32_1"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer32::ClockSource::Tim1Hclk"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer32::CountMode::Forward"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("gpio0.p16_0_0.into_timer_serial()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("gpio0.p16_0_1.into_timer_serial()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer32::ChannelMode::Pwm"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer32::ChannelMode::Capture"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("timer32::CaptureEdge::Falling"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find(".start(true, false)"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("use mik32v2_hal::timer32;"), std::string::npos) << main_rs;
+}
+
+// Timer32_0 — только счётчик, каналов нет (ТЗ §3.1.5 п.2); проверяем, что
+// без блока channels кодоген не пытается занять никакой GPIO-пин.
+TEST(RustProjectCodegen, GeneratesTimer32Instance0AsCounterOnlyWithoutChannels)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer32.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.timer32_blocks[0].instance = 0;
+    config.timer32_blocks[0].channels.clear();
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("p.timer32_0"), std::string::npos) << main_rs;
+    EXPECT_EQ(main_rs.find("into_timer_serial"), std::string::npos) << main_rs;
+    EXPECT_EQ(main_rs.find(".configure_channel"), std::string::npos) << main_rs;
+}
+
+// Реальная сборка Timer32-проекта cargo'м — по образцу
+// WrittenTimer16ProjectActuallyBuildsWithCargo: timer32.rs — новый файл
+// HAL-снэпшота, с ручными сырыми битовыми операциями (расхождение PAC/HAL
+// для NOISE/PWM_INV/CONTROL.SOURSE) — только настоящая компиляция поймает
+// опечатку в битовой арифметике.
+TEST(RustProjectCodegen, WrittenTimer32ProjectActuallyBuildsWithCargo)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_timer32.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    const ProjectConfig& config = *config_result.config;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const fs::path output_dir = scratchDirFor("cargo_build_timer32");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    nlohmann::json project_json;
+    {
+        std::ifstream fixture_file("fixtures/project_rust_timer32.json");
+        project_json = nlohmann::json::parse(fixture_file);
+    }
+
+    CodegenWriteResult write_result = writeGeneratedRustProject(
+        *firmware.config,
+        "../templates/cargo_skeleton",
+        "../templates/mik32_rust_hal_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const fs::path absolute_output_dir = fs::absolute(output_dir);
+    const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
+    std::string cargo_output;
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr) << "не удалось запустить cargo build";
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        cargo_output += buffer;
+    }
+    const int status = pclose(pipe);
+
+    EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
+        << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
+}
+
 // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — RTC добавлен только в C-ветке.
-TEST(RustProjectCodegen, RejectsRtcBlockAsUnsupportedInRustBranch)
+TEST(RustProjectCodegen, GeneratesRtcTimeAndDateIntoMainRs)
 {
     ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
     ASSERT_TRUE(config_result.success) << config_result.error;
@@ -304,26 +402,59 @@ TEST(RustProjectCodegen, RejectsRtcBlockAsUnsupportedInRustBranch)
 
     RtcConfig rtc_block;
     rtc_block.type = "rtc";
-    rtc_block.dow = 1;
-    rtc_block.hours = 0;
-    rtc_block.minutes = 0;
-    rtc_block.seconds = 0;
+    rtc_block.dow = 3;
+    rtc_block.hours = 12;
+    rtc_block.minutes = 34;
+    rtc_block.seconds = 56;
     rtc_block.century = 20;
-    rtc_block.day = 1;
-    rtc_block.month = 1;
-    rtc_block.year = 22;
+    rtc_block.day = 27;
+    rtc_block.month = 10;
+    rtc_block.year = 26;
     config.rtc_block = rtc_block;
 
-    const std::string reason = findUnsupportedRustFeature(config);
-    EXPECT_NE(reason, "");
-    EXPECT_NE(reason.find("rtc"), std::string::npos) << reason;
+    EXPECT_EQ(findUnsupportedRustFeature(config), "");
 
     ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
-    EXPECT_FALSE(firmware.success);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("rtc::Rtc::new"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("hours: 12"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("day: 27"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("alarm: None,"), std::string::npos) << main_rs;
 }
 
-// AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — CRC добавлен только в C-ветке.
-TEST(RustProjectCodegen, RejectsCrcBlockAsUnsupportedInRustBranch)
+TEST(RustProjectCodegen, GeneratesRtcAlarmWithCompareFieldsAndInterruptIntoMainRs)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+
+    RtcConfig rtc_block;
+    rtc_block.type = "rtc";
+    rtc_block.dow = 3; rtc_block.hours = 12; rtc_block.minutes = 34; rtc_block.seconds = 56;
+    rtc_block.century = 20; rtc_block.day = 27; rtc_block.month = 10; rtc_block.year = 26;
+    rtc_block.has_alarm = true;
+    rtc_block.alarm_dow = 1; rtc_block.alarm_hours = 7; rtc_block.alarm_minutes = 0; rtc_block.alarm_seconds = 0;
+    rtc_block.alarm_century = 20; rtc_block.alarm_day = 1; rtc_block.alarm_month = 1; rtc_block.alarm_year = 27;
+    rtc_block.alarm_compare_fields = {"hours", "minutes", "seconds"};
+    rtc_block.alarm_interrupt_enabled = true;
+    config.rtc_block = rtc_block;
+
+    EXPECT_EQ(findUnsupportedRustFeature(config), "");
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("seconds: true"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("day: false"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("interrupt_enabled: true"), std::string::npos) << main_rs;
+}
+
+// Tier 2, второй модуль Rust-ветки (после RTC) — полный паритет с C
+// (crc_contribution.cpp): crc32 — известный контрольный вектор "123456789"
+// -> 0xCBF43926 (CRC-32/ISO-HDLC, тот же пресет что проверен на железе в
+// C-ветке, docs/implementations/crc.md).
+TEST(RustProjectCodegen, GeneratesCrcConfigIntoMainRs)
 {
     ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
     ASSERT_TRUE(config_result.success) << config_result.error;
@@ -338,12 +469,15 @@ TEST(RustProjectCodegen, RejectsCrcBlockAsUnsupportedInRustBranch)
     crc_block.output_inversion = true;
     config.crc_block = crc_block;
 
-    const std::string reason = findUnsupportedRustFeature(config);
-    EXPECT_NE(reason, "");
-    EXPECT_NE(reason.find("crc"), std::string::npos) << reason;
+    EXPECT_EQ(findUnsupportedRustFeature(config), "");
 
     ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
-    EXPECT_FALSE(firmware.success);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("crc::Crc::new"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("poly: 0x4c11db7"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("init: 0xffffffff"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("input_reverse: true"), std::string::npos) << main_rs;
 }
 
 // AUDIT_TZ_PERIPHERY_GAPS.md, Тир 2 — EEPROM добавлен только в C-ветке.
@@ -453,18 +587,41 @@ TEST(RustProjectCodegen, RejectsOtpBlockAsUnsupportedInRustBranch)
     EXPECT_FALSE(generateProjectFirmwareRust(config).success);
 }
 
-TEST(RustProjectCodegen, RejectsTsensBlockAsUnsupportedInRustBranch)
+// Tier 2, третий модуль Rust-ветки (после RTC/CRC) — паритет с C
+// (tsens_contribution.cpp): только тактирование/пороги/прерывания,
+// SingleStart/ContinuousStart остаются за пользователем. div/raw-пороги
+// считаются кодогеном (tsensComputeDivider/tsensCelsiusToRaw,
+// rust_project_codegen.cpp) по формулам установленного HAL
+// (mik32_hal_tsens.c/analog_reg.h), не угаданы.
+TEST(RustProjectCodegen, GeneratesTsensConfigIntoMainRs)
 {
     ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
     ASSERT_TRUE(config_result.success) << config_result.error;
     ProjectConfig config = *config_result.config;
-    TsensConfig block; block.type = "tsens"; block.clock_source = "sys_clk"; block.frequency_hz = 40000;
+
+    TsensConfig block;
+    block.type = "tsens";
+    block.clock_source = "osc32k";
+    block.frequency_hz = 100;
+    block.has_low_threshold = true;
+    block.low_threshold_celsius = -10;
+    block.has_high_threshold = true;
+    block.high_threshold_celsius = 85;
+    block.interrupts = {"eoc"};
     config.tsens_block = block;
 
-    const std::string reason = findUnsupportedRustFeature(config);
-    EXPECT_NE(reason, "");
-    EXPECT_NE(reason.find("tsens"), std::string::npos) << reason;
-    EXPECT_FALSE(generateProjectFirmwareRust(config).success);
+    EXPECT_EQ(findUnsupportedRustFeature(config), "");
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("tsens::Tsens::new"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("clk_mux: tsens::ClkMux::Osc32k"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("enable_eoc_irq: true"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("enable_low_irq: false"), std::string::npos) << main_rs;
+    // -10C -> TSENS_CELSIUS_TO_VALUE(-10) (analog_reg.h:60), вручную по той же
+    // целочисленной арифметике: denom_inner=26315, denom=15045, value=272.
+    EXPECT_NE(main_rs.find("low_threshold_raw: Some(272)"), std::string::npos) << main_rs;
 }
 
 TEST(RustProjectCodegen, RejectsPvdBlockAsUnsupportedInRustBranch)
@@ -866,4 +1023,361 @@ TEST(RustProjectCodegen, PreservesUserCodeInMainRsAcrossRegeneration)
 
     const std::string regenerated = readFileToString(main_rs_path.string());
     EXPECT_NE(regenerated.find("// ручная правка пользователя"), std::string::npos) << regenerated;
+}
+
+// SPI — реализован (docs/implementations/rust/spi.md). instance=0,
+// mode=master, chip_select=cs0 -> GPIO_0/PIN_4 (knowledge_base/spi.json:
+// instance_chip_select_pin). Проверяем, что SCK/MOSI/MISO/SS_IN/CS и
+// Spi::new_master с нужными полями попадают в main.rs.
+TEST(RustProjectCodegen, GeneratesSpiMasterWithChipSelectPin)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_spi.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    EXPECT_EQ(findUnsupportedRustFeature(*config_result.config), "");
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(*config_result.config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("p.spi_0"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("gpio0.p16_0_0.into_serial_port()"), std::string::npos) << main_rs; // sck
+    EXPECT_NE(main_rs.find("gpio0.p16_0_1.into_serial_port()"), std::string::npos) << main_rs; // mosi
+    EXPECT_NE(main_rs.find("gpio0.p16_0_2.into_serial_port()"), std::string::npos) << main_rs; // miso
+    EXPECT_NE(main_rs.find("gpio0.p16_0_3.into_serial_port()"), std::string::npos) << main_rs; // ss_in
+    EXPECT_NE(main_rs.find("gpio0.p16_0_4.into_serial_port()"), std::string::npos) << main_rs; // cs0
+    EXPECT_NE(main_rs.find("Spi::new_master"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("spi::Mode::Master"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("spi::ClkPhase::On"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("spi::ClkPolarity::High"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("spi::BaudRateDiv::Div64"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("spi::ChipSelect::Cs0"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("use mik32v2_hal::spi::{self, Spi};"), std::string::npos) << main_rs;
+}
+
+// Slave — без CS-пина: Spi::new_slave, ни один из 4 chip_select-пинов не
+// заявляется (mik32_hal_spi.c: Init.ChipSelect не читается для slave).
+TEST(RustProjectCodegen, GeneratesSpiSlaveWithoutChipSelectPin)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_spi.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.spi_blocks[0].mode = "slave";
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("Spi::new_slave"), std::string::npos) << main_rs;
+    EXPECT_EQ(main_rs.find("gpio0.p16_0_4"), std::string::npos) << main_rs; // cs0 — не заявлен
+}
+
+// interrupts не поддерживаются в Rust-ветке (см. комментарий в
+// rust_feature_validator.cpp и spi.rs) — тот же критерий, что у I2C
+// interrupt_mode/GPIO IRQ (EPIC не обёрнут).
+TEST(RustFeatureValidator, RejectsSpiInterrupts)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_spi.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    ProjectConfig config = *config_result.config;
+    config.spi_blocks[0].interrupts = {"rx_fifo_not_empty"};
+
+    EXPECT_NE(findUnsupportedRustFeature(config), "");
+}
+
+// Реальная сборка SPI-проекта cargo'м — по образцу
+// WrittenTimer32ProjectActuallyBuildsWithCargo: spi.rs содержит raw-битовые
+// операции (CS raw-биты из-за расхождения PAC-enum/mik32_hal_spi.h,
+// Decoder — совсем без named-поля) — только настоящая компиляция поймает
+// опечатку в этой арифметике.
+TEST(RustProjectCodegen, WrittenSpiProjectActuallyBuildsWithCargo)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_spi.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    const ProjectConfig& config = *config_result.config;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const fs::path output_dir = scratchDirFor("cargo_build_spi");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    nlohmann::json project_json;
+    {
+        std::ifstream fixture_file("fixtures/project_rust_spi.json");
+        project_json = nlohmann::json::parse(fixture_file);
+    }
+
+    CodegenWriteResult write_result = writeGeneratedRustProject(
+        *firmware.config,
+        "../templates/cargo_skeleton",
+        "../templates/mik32_rust_hal_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const fs::path absolute_output_dir = fs::absolute(output_dir);
+    const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
+    std::string cargo_output;
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr);
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        cargo_output += buffer;
+    }
+    const int status = pclose(pipe);
+
+    EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
+        << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
+}
+
+TEST(RustProjectCodegen, WrittenRtcProjectActuallyBuildsWithCargo)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_rtc.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    const ProjectConfig& config = *config_result.config;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const fs::path output_dir = scratchDirFor("cargo_build_rtc");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    nlohmann::json project_json;
+    {
+        std::ifstream fixture_file("fixtures/project_rust_rtc.json");
+        project_json = nlohmann::json::parse(fixture_file);
+    }
+
+    CodegenWriteResult write_result = writeGeneratedRustProject(
+        *firmware.config,
+        "../templates/cargo_skeleton",
+        "../templates/mik32_rust_hal_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const fs::path absolute_output_dir = fs::absolute(output_dir);
+    const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
+    std::string cargo_output;
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr);
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        cargo_output += buffer;
+    }
+    const int status = pclose(pipe);
+
+    EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
+        << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
+}
+
+// Clock/PCC — последний модуль Tier 1 (docs/implementations/rust/clock.md).
+// Нестандартный clock-блок (fixtures/project_rust_clock.json) должен попасть
+// в явный rcc::Config литерал вместо rcc::Config::default() — проверяем
+// каждое поле отдельно, чтобы поймать перепутанные присвоения (как уже было
+// в самом rcc.rs: apb_p_div писался в div_apb_m(), rtccpuclk::Lsi32k писал
+// .osc32k() — оба бага найдены и исправлены при портировании).
+TEST(RustProjectCodegen, GeneratesExplicitClockConfigForNonDefaultClockBlock)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_clock.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(*config_result.config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_EQ(main_rs.find("rcc::Config::default()"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("hsi32m: true,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("osc32m: false,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("lsi32k: true,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("osc32k: false,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("AhbClkMux::Hsi32m,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("ForceMux::Fixed,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("Force32kClk::Lsi32k,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("ahb_div: 1,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("apb_m_div: 3,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("apb_p_div: 7,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("hsi32m_calibration_value: 200,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("lsi32k_calibration_value: 12,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("RtcClkMux::Lsi32k,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("CpuRtcClkMux::Lsi32k,"), std::string::npos) << main_rs;
+}
+
+// Дефолтный clock-блок (fixtures/project_rust_gpio_uart.json не содержит
+// "clock" вовсе) не должен менять поведение — кодоген всегда строит явный
+// литерал из ProjectConfig.clock, у которого дефолты побайтово совпадают с
+// rcc::Config::default() — проверяем именно это соответствие.
+TEST(RustProjectCodegen, DefaultClockBlockMatchesRccConfigDefaults)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_gpio_uart.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(*config_result.config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const std::string& main_rs = firmware.config->main_rs;
+    EXPECT_NE(main_rs.find("hsi32m: true,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("osc32m: true,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("lsi32k: true,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("osc32k: true,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("AhbClkMux::Osc32m,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("ForceMux::Unfixed,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("Force32kClk::Osc32k,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("ahb_div: 0,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("hsi32m_calibration_value: 128,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("lsi32k_calibration_value: 8,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("RtcClkMux::Automatic,"), std::string::npos) << main_rs;
+    EXPECT_NE(main_rs.find("CpuRtcClkMux::Osc32k,"), std::string::npos) << main_rs;
+}
+
+// Реальная сборка с нестандартным Clock-блоком — именно здесь всплыли бы
+// опечатки в enum-путях (mik32v2_pac::pm::ahb_mux::... и т.п.), которые
+// host-side строковый тест выше не ловит.
+TEST(RustProjectCodegen, WrittenCustomClockProjectActuallyBuildsWithCargo)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_clock.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    const ProjectConfig& config = *config_result.config;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const fs::path output_dir = scratchDirFor("cargo_build_clock");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    nlohmann::json project_json;
+    {
+        std::ifstream fixture_file("fixtures/project_rust_clock.json");
+        project_json = nlohmann::json::parse(fixture_file);
+    }
+
+    CodegenWriteResult write_result = writeGeneratedRustProject(
+        *firmware.config,
+        "../templates/cargo_skeleton",
+        "../templates/mik32_rust_hal_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const fs::path absolute_output_dir = fs::absolute(output_dir);
+    const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
+    std::string cargo_output;
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr) << "не удалось запустить cargo build";
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        cargo_output += buffer;
+    }
+    const int status = pclose(pipe);
+
+    EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
+        << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
+}
+
+TEST(RustProjectCodegen, WrittenCrcProjectActuallyBuildsWithCargo)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_crc.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    const ProjectConfig& config = *config_result.config;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const fs::path output_dir = scratchDirFor("cargo_build_crc");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    nlohmann::json project_json;
+    {
+        std::ifstream fixture_file("fixtures/project_rust_crc.json");
+        project_json = nlohmann::json::parse(fixture_file);
+    }
+
+    CodegenWriteResult write_result = writeGeneratedRustProject(
+        *firmware.config,
+        "../templates/cargo_skeleton",
+        "../templates/mik32_rust_hal_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const fs::path absolute_output_dir = fs::absolute(output_dir);
+    const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
+    std::string cargo_output;
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr) << "не удалось запустить cargo build";
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        cargo_output += buffer;
+    }
+    const int status = pclose(pipe);
+
+    EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
+        << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
+}
+
+TEST(RustProjectCodegen, WrittenTsensProjectActuallyBuildsWithCargo)
+{
+    ParseResult<ProjectConfig> config_result = parseProjectConfig("fixtures/project_rust_tsens.json");
+    ASSERT_TRUE(config_result.success) << config_result.error;
+    const ProjectConfig& config = *config_result.config;
+
+    ParseResult<GeneratedProjectFirmwareRust> firmware = generateProjectFirmwareRust(config);
+    ASSERT_TRUE(firmware.success) << firmware.error;
+
+    const fs::path output_dir = scratchDirFor("cargo_build_tsens");
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    nlohmann::json project_json;
+    {
+        std::ifstream fixture_file("fixtures/project_rust_tsens.json");
+        project_json = nlohmann::json::parse(fixture_file);
+    }
+
+    CodegenWriteResult write_result = writeGeneratedRustProject(
+        *firmware.config,
+        "../templates/cargo_skeleton",
+        "../templates/mik32_rust_hal_snapshot",
+        output_dir.string(),
+        config,
+        project_json);
+    ASSERT_TRUE(write_result.success) << write_result.error;
+
+    const fs::path absolute_output_dir = fs::absolute(output_dir);
+    const std::string command = "cd \"" + absolute_output_dir.string() + "\" && cargo build --release 2>&1";
+    std::string cargo_output;
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr) << "не удалось запустить cargo build";
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        cargo_output += buffer;
+    }
+    const int status = pclose(pipe);
+
+    EXPECT_EQ(status, 0) << "cargo build завершился с ошибкой, вывод:\n" << cargo_output;
+    const fs::path elf_path = output_dir / "target" / "riscv32imc-unknown-none-elf" / "release" / "mik32-firmware";
+    EXPECT_TRUE(fs::exists(elf_path))
+        << "cargo build 'успешен' (код 0), но ELF-файл не появился — вывод:\n" << cargo_output;
 }

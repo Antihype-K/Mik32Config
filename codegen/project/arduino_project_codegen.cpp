@@ -21,6 +21,15 @@ namespace
         return ParseResult<GeneratedProjectFirmwareArduino>{false, message, std::nullopt};
     }
 
+    // Та же таблица, что wdt_contribution.cpp::clockSourceMacro (C-ветка).
+    std::string wdtClockSourceMacro(const std::string& value)
+    {
+        if (value == "osc32m") return "HAL_WDT_OSC32M";
+        if (value == "hsi32m") return "HAL_WDT_HSI32M";
+        if (value == "osc32k") return "HAL_WDT_OSC32K";
+        return "HAL_WDT_LSI32K";
+    }
+
     // Та же таблица, что tsens_contribution.cpp::clockSourceMacro (C-ветка).
     std::string tsensClockSourceMacro(const std::string& value)
     {
@@ -30,6 +39,41 @@ namespace
         if (value == "hsi32m") return "HAL_TSENS_HSI32M";
         if (value == "osc32k") return "HAL_TSENS_OSC32K";
         return "HAL_TSENS_LSI32K";
+    }
+
+    // Те же таблицы, что knowledge_base/rtc.json (weekday_hal_enum/month_hal_enum) —
+    // дублируются инлайн, как wdtClockSourceMacro/tsensClockSourceMacro выше,
+    // чтобы не тащить RtcKnowledge-загрузчик в Arduino-ветку.
+    std::string rtcWeekdayEnum(int dow)
+    {
+        static const char* names[] = {"", "RTC_WEEKDAY_MONDAY", "RTC_WEEKDAY_TUESDAY",
+            "RTC_WEEKDAY_WEDNESDAY", "RTC_WEEKDAY_THURSDAY", "RTC_WEEKDAY_FRIDAY",
+            "RTC_WEEKDAY_SATURDAY", "RTC_WEEKDAY_SUNDAY"};
+        return names[dow];
+    }
+    std::string rtcMonthEnum(int month)
+    {
+        static const char* names[] = {"", "RTC_MONTH_JANUARY", "RTC_MONTH_FEBRUARY",
+            "RTC_MONTH_MARCH", "RTC_MONTH_APRIL", "RTC_MONTH_MAY", "RTC_MONTH_JUNE",
+            "RTC_MONTH_JULY", "RTC_MONTH_AUGUST", "RTC_MONTH_SEPTEMBER",
+            "RTC_MONTH_OCTOBER", "RTC_MONTH_NOVEMBER", "RTC_MONTH_DECEMBER"};
+        return names[month];
+    }
+    std::string rtcAlarmTimeMaskBit(const std::string& field)
+    {
+        if (field == "dow") return "RTC_TALRM_CDOW_M";
+        if (field == "hours") return "RTC_TALRM_CH_M";
+        if (field == "minutes") return "RTC_TALRM_CM_M";
+        if (field == "seconds") return "RTC_TALRM_CS_M";
+        return "";
+    }
+    std::string rtcAlarmDateMaskBit(const std::string& field)
+    {
+        if (field == "century") return "RTC_DALRM_CC_M";
+        if (field == "day") return "RTC_DALRM_CD_M";
+        if (field == "month") return "RTC_DALRM_CM_M";
+        if (field == "year") return "RTC_DALRM_CY_M";
+        return "";
     }
 
     // v1 scope (docs/open_tasks.md, /grill-me 2026-10-26): GPIO+UART+I2C
@@ -84,13 +128,8 @@ namespace
                 return "Arduino-кодоген v1 не поддерживает прерывания Timer16 (overflow_interrupt/compare_interrupt) — EPIC-слоты TIMER16_0/1/2 зарезервированы вендоренным trap_handler.c под IRremote/tone/servo";
             }
         }
-        if (config.rtc_block) return "Arduino-кодоген v1 не поддерживает RTC";
-        if (config.eeprom_block) return "Arduino-кодоген v1 не поддерживает EEPROM";
-        if (config.wdt_block) return "Arduino-кодоген v1 не поддерживает WDT";
         if (!config.dac_blocks.empty()) return "Arduino-кодоген v1 не поддерживает DAC";
-        if (config.adc_block) return "Arduino-кодоген v1 не поддерживает ADC";
         if (config.crypto_block) return "Arduino-кодоген v1 не поддерживает CRYPTO";
-        if (config.otp_block) return "Arduino-кодоген v1 не поддерживает OTP";
         if (config.pvd_block) return "Arduino-кодоген v1 не поддерживает PVD";
         if (config.bus_watchdog_block) return "Arduino-кодоген v1 не поддерживает Bus Watchdog";
         if (!config.dma_blocks.empty()) return "Arduino-кодоген v1 не поддерживает DMA";
@@ -537,6 +576,77 @@ ParseResult<GeneratedProjectFirmwareArduino> generateProjectFirmwareArduino(
     // регистров нет). Та же логика полей, что в C-ветке
     // (codegen/project/tsens_contribution.cpp): только конфигурация,
     // HAL_TSENS_SingleStart/ContinuousStart остаются за пользователем.
+    // WDT — гибридный прямой HAL-вызов (категория 1, тот же критерий, что у
+    // CRC/TSENS: cores/arduino/ не объявляет и не использует WDT). Та же
+    // логика, что в C-ветке (codegen/project/wdt_contribution.cpp): генерирует
+    // ТОЛЬКО HAL_WDT_Init — HAL_WDT_Start/HAL_WDT_Refresh сознательно не
+    // вызываются, безусловный автозапуск без гарантии пользовательского
+    // HAL_WDT_Refresh в loop() привёл бы к циклическому сбросу платы.
+    std::ostringstream wdt_globals;
+    if (config.wdt_block)
+    {
+        const WdtConfig& block = *config.wdt_block;
+        wdt_globals << "WDT_HandleTypeDef hwdt;\n";
+        setup << "  // ГИБРИДНЫЙ вызов (не Arduino API — WDT не используется никаким\n"
+              << "  // классом Arduino-ядра, конфликтов регистров нет): прямая\n"
+              << "  // инициализация WDT через HAL, как в C-ветке. HAL_WDT_Start/\n"
+              << "  // HAL_WDT_Refresh сознательно не вызываются — см. docs/implementations/wdt.md.\n"
+              << "  hwdt.Instance = WDT;\n"
+              << "  hwdt.Init.Clock = " << wdtClockSourceMacro(block.clock_source) << ";\n"
+              << "  hwdt.Init.ReloadMs = " << block.reload_ms << ";\n"
+              << "  HAL_WDT_Init(&hwdt, WDT_TIMEOUT_DEFAULT);\n";
+    }
+
+    // OTP — гибридный прямой HAL-вызов (категория 1, тот же критерий, что у
+    // CRC/TSENS/WDT: cores/arduino/ не объявляет и не использует OTP). Та же
+    // логика, что в C-ветке (codegen/project/otp_contribution.cpp): генерирует
+    // ТОЛЬКО HAL_OTP_Init (режим чтения) — HAL_OTP_Write/WriteTestColumn/
+    // WriteTestRow/WriteTestBit НИКОГДА не вызываются автоматически, OTP
+    // физически необратима (прожигает биты), см. docs/implementations/otp.md.
+    std::ostringstream otp_globals;
+    if (config.otp_block)
+    {
+        const OtpConfig& block = *config.otp_block;
+        const bool is_three_stages = (block.read_mode == "three_stages");
+        otp_globals << "OTP_HandleTypeDef hotp;\n";
+        setup << "  // ГИБРИДНЫЙ вызов (не Arduino API — OTP не используется никаким\n"
+              << "  // классом Arduino-ядра, конфликтов регистров нет): прямая\n"
+              << "  // инициализация OTP через HAL (только чтение), как в C-ветке.\n"
+              << "  // HAL_OTP_Write* сознательно не вызываются — запись в OTP\n"
+              << "  // необратима, см. docs/implementations/otp.md.\n"
+              << "  hotp.Instance = OTP;\n"
+              << "  hotp.ReadMode = " << (is_three_stages ? "OPT_READ_3STAGES" : "OPT_READ_2STAGES") << ";\n"
+              << "  HAL_OTP_Init(&hotp);\n";
+    }
+
+    // EEPROM — гибридный прямой HAL-вызов (категория 1, тот же критерий, что
+    // у CRC/TSENS/WDT/OTP: cores/arduino/ не объявляет и не использует
+    // EEPROM). Та же логика, что в C-ветке (codegen/project/eeprom_contribution.cpp):
+    // ТОЛЬКО HAL_EEPROM_Init + HAL_EEPROM_CalculateTimings — HAL_EEPROM_Erase/
+    // Write/Read на конкретных адресах остаются за пользователем (кодоген не
+    // может угадать их наперёд), см. docs/implementations/eeprom.md.
+    // EEPROM НЕЛЬЗЯ ТРОГАТЬ НА РЕАЛЬНОЙ ПЛАТЕ (CLAUDE.md) — bootloader хранится
+    // там же, запись/стирание рискует затереть его.
+    std::ostringstream eeprom_globals;
+    if (config.eeprom_block)
+    {
+        const EepromConfig& block = *config.eeprom_block;
+        const bool is_three_stage = (block.mode == "three_stage");
+        eeprom_globals << "HAL_EEPROM_HandleTypeDef heeprom;\n";
+        setup << "  // ГИБРИДНЫЙ вызов (не Arduino API — EEPROM не используется\n"
+              << "  // никаким классом Arduino-ядра, конфликтов регистров нет):\n"
+              << "  // прямая инициализация EEPROM через HAL, как в C-ветке.\n"
+              << "  // HAL_EEPROM_Erase/Write/Read сознательно не вызываются —\n"
+              << "  // кодоген не может угадать адреса/данные пользователя, см.\n"
+              << "  // docs/implementations/eeprom.md.\n"
+              << "  heeprom.Instance = EEPROM_REGS;\n"
+              << "  heeprom.Mode = " << (is_three_stage ? "HAL_EEPROM_MODE_THREE_STAGE" : "HAL_EEPROM_MODE_TWO_STAGE") << ";\n"
+              << "  heeprom.ErrorCorrection = " << (block.ecc_enabled ? "HAL_EEPROM_ECC_ENABLE" : "HAL_EEPROM_ECC_DISABLE") << ";\n"
+              << "  heeprom.EnableInterrupt = " << (block.single_error_interrupt_enabled ? "HAL_EEPROM_SERR_ENABLE" : "HAL_EEPROM_SERR_DISABLE") << ";\n"
+              << "  HAL_EEPROM_Init(&heeprom);\n"
+              << "  HAL_EEPROM_CalculateTimings(&heeprom, 32000000);\n";
+    }
+
     std::ostringstream tsens_globals;
     if (config.tsens_block)
     {
@@ -559,7 +669,144 @@ ParseResult<GeneratedProjectFirmwareArduino> generateProjectFirmwareArduino(
         }
     }
 
+    // RTC — гибридный прямой HAL-вызов (категория 1+alarm, тот же критерий,
+    // что у CRC/TSENS/WDT/OTP: cores/arduino/ не объявляет и не использует
+    // RTC — конфликтов регистров нет). Та же логика, что в C-ветке
+    // (codegen/project/rtc_contribution.cpp): время+дата всегда,
+    // будильник — если задан в конфиге. EPIC-маскирование и подключение
+    // IRQ-обработчика к raw_trap_handler остаются на стороне пользователя —
+    // тот же паттерн, что и в C-ветке (там это тоже не автогенерируется).
+    std::ostringstream rtc_globals;
+    std::ostringstream rtc_helpers;
+    if (config.rtc_block)
+    {
+        const RtcConfig& block = *config.rtc_block;
+        rtc_globals << "RTC_HandleTypeDef hrtc;\n";
+        setup << "  // ГИБРИДНЫЙ вызов (не Arduino API — RTC не используется никаким\n"
+              << "  // классом Arduino-ядра, конфликтов регистров нет): прямая\n"
+              << "  // инициализация RTC через HAL, как в C-ветке. Найдено на реальной\n"
+              << "  // плате (C-ветка, docs/implementations/rtc.md): HAL_RTC_MspInit\n"
+              << "  // никогда не вызывается автоматически — без него RTC не тактируется.\n"
+              << "  __HAL_PCC_RTC_CLK_ENABLE();\n"
+              << "  hrtc.Instance = RTC;\n"
+              << "  HAL_RTC_Disable(&hrtc);\n"
+              << "  RTC_TimeTypeDef sTime = {0};\n"
+              << "  sTime.Dow = " << rtcWeekdayEnum(block.dow) << ";\n"
+              << "  sTime.Hours = " << block.hours << ";\n"
+              << "  sTime.Minutes = " << block.minutes << ";\n"
+              << "  sTime.Seconds = " << block.seconds << ";\n"
+              << "  HAL_RTC_SetTime(&hrtc, &sTime);\n"
+              << "  RTC_DateTypeDef sDate = {0};\n"
+              << "  sDate.Century = " << block.century << ";\n"
+              << "  sDate.Day = " << block.day << ";\n"
+              << "  sDate.Month = " << rtcMonthEnum(block.month) << ";\n"
+              << "  sDate.Year = " << block.year << ";\n"
+              << "  HAL_RTC_SetDate(&hrtc, &sDate);\n";
+
+        if (block.has_alarm)
+        {
+            std::ostringstream time_mask;
+            std::ostringstream date_mask;
+            bool first_time = true;
+            bool first_date = true;
+            for (const std::string& field : block.alarm_compare_fields)
+            {
+                std::string time_bit = rtcAlarmTimeMaskBit(field);
+                std::string date_bit = rtcAlarmDateMaskBit(field);
+                if (!time_bit.empty())
+                {
+                    if (!first_time) time_mask << " | ";
+                    time_mask << time_bit;
+                    first_time = false;
+                }
+                else if (!date_bit.empty())
+                {
+                    if (!first_date) date_mask << " | ";
+                    date_mask << date_bit;
+                    first_date = false;
+                }
+            }
+            if (first_time) time_mask << "0";
+            if (first_date) date_mask << "0";
+
+            setup << "  RTC_AlarmTypeDef sAlarm = {0};\n"
+                  << "  sAlarm.AlarmTime.Dow = " << rtcWeekdayEnum(block.alarm_dow) << ";\n"
+                  << "  sAlarm.AlarmTime.Hours = " << block.alarm_hours << ";\n"
+                  << "  sAlarm.AlarmTime.Minutes = " << block.alarm_minutes << ";\n"
+                  << "  sAlarm.AlarmTime.Seconds = " << block.alarm_seconds << ";\n"
+                  << "  sAlarm.AlarmDate.Century = " << block.alarm_century << ";\n"
+                  << "  sAlarm.AlarmDate.Day = " << block.alarm_day << ";\n"
+                  << "  sAlarm.AlarmDate.Month = " << rtcMonthEnum(block.alarm_month) << ";\n"
+                  << "  sAlarm.AlarmDate.Year = " << block.alarm_year << ";\n"
+                  << "  sAlarm.MaskAlarmTime = " << time_mask.str() << ";\n"
+                  << "  sAlarm.MaskAlarmDate = " << date_mask.str() << ";\n"
+                  << "  HAL_RTC_SetAlarm(&hrtc, &sAlarm);\n";
+
+            if (block.alarm_interrupt_enabled)
+            {
+                setup << "  hrtc.Interrupts.Alarm = RTC_ALARM_IRQ_ENABLE;\n"
+                      << "  HAL_RTC_InterruptInit(&hrtc);\n";
+
+                // Найдено на реальной плате (C-ветка, docs/implementations/rtc.md):
+                // RTC_CTRL.ALRM — уровневый флаг, не снимается одним только
+                // HAL_EPIC_Clear. Без HAL_RTC_ClearAlrmFlag в обработчике —
+                // бесконечный повторный вход сразу в момент срабатывания.
+                rtc_helpers << "/*\n"
+                               " * Шаблон обработчика прерывания RTC. Вызовите из своего\n"
+                               " * trap_handler.c внутри if (EPIC_CHECK_RTC()) { ... }. ВАЖНО:\n"
+                               " * RTC_CTRL.ALRM — уровневый флаг, не снимается одним только\n"
+                               " * HAL_EPIC_Clear — без HAL_RTC_ClearAlrmFlag ниже прошивка\n"
+                               " * зависнет в бесконечном повторном входе в прерывание сразу в\n"
+                               " * момент срабатывания будильника (найдено на реальной плате при\n"
+                               " * HW-валидации C-ветки этого модуля, docs/implementations/rtc.md).\n"
+                               " */\n"
+                               "extern \"C\" void RTC_IRQHandler_Template(void)\n"
+                               "{\n"
+                               "  HAL_RTC_AlarmDisable(&hrtc);\n"
+                               "  HAL_RTC_ClearAlrmFlag(&hrtc);\n"
+                               "\n"
+                               "  /* USER TODO: обработать срабатывание будильника. */\n"
+                               "}\n"
+                               "\n";
+            }
+        }
+
+        setup << "  HAL_RTC_Enable(&hrtc);\n";
+    }
+
+    // ADC — гибридный прямой HAL-вызов (категория 1, тот же критерий, что у
+    // CRC/TSENS/WDT/OTP). ВАЖНО: cores/arduino/wiring_analog.c объявляет
+    // СВОЙ собственный static ADC_HandleTypeDef hadc и переинициализирует
+    // его (Sel/EXTRef=OFF/EXTClb=ADCREF заданы жёстко) при КАЖДОМ вызове
+    // analogRead() — если проект использует и analogRead(), и этот
+    // JSON-блок ADC, значения ext_ref/ext_clb/channel из конфига будут
+    // перезатёрты первым же analogRead(). Этот блок осмыслен только для
+    // проектов, не использующих analogRead() и работающих с ADC напрямую
+    // через HAL (см. docs/implementations/arduino_codegen.md, раздел ADC).
+    std::ostringstream adc_globals;
+    if (config.adc_block)
+    {
+        const AdcConfig& block = *config.adc_block;
+        adc_globals << "ADC_HandleTypeDef hadc;\n";
+        setup << "  // ГИБРИДНЫЙ вызов (прямая инициализация ADC через HAL, как в\n"
+              << "  // C-ветке). ВНИМАНИЕ: если в этом же проекте используется\n"
+              << "  // analogRead() из Arduino-ядра, он переинициализирует ADC своим\n"
+              << "  // собственным hadc при каждом вызове и перезатрёт channel/\n"
+              << "  // ext_ref/ext_clb, заданные здесь — см. docs/implementations/arduino_codegen.md.\n"
+              << "  hadc.Instance = ANALOG_REG;\n"
+              << "  hadc.Init.Sel = ADC_CHANNEL" << block.channel << ";\n"
+              << "  hadc.Init.EXTRef = " << (block.ext_ref ? "ADC_EXTREF_ON" : "ADC_EXTREF_OFF") << ";\n"
+              << "  hadc.Init.EXTClb = " << (block.ext_clb ? "ADC_EXTCLB_ADCREF" : "ADC_EXTCLB_CLBREF") << ";\n"
+              << "  HAL_ADC_Init(&hadc);\n";
+    }
+
     std::ostringstream includes;
+    if (config.adc_block)
+    {
+        // extern "C": тот же мотив, что у остальных HAL-заголовков выше —
+        // mik32_hal_adc.h не оборачивает объявления в #ifdef __cplusplus.
+        includes << "extern \"C\" {\n#include <mik32_hal_adc.h>\n#include <mik32_hal_pcc.h>\n}\n";
+    }
     if (config.tsens_block)
     {
         // extern "C": тот же мотив, что у CRC/Timer16 — mik32_hal_tsens.h не
@@ -573,6 +820,30 @@ ParseResult<GeneratedProjectFirmwareArduino> generateProjectFirmwareArduino(
         // без extern "C" компилятор C++ мангл(ир)ует имена HAL_CRC_*, и
         // линковка падает "undefined reference" на реальной сборке.
         includes << "extern \"C\" {\n#include <mik32_hal_crc32.h>\n#include <mik32_hal_pcc.h>\n}\n";
+    }
+    if (config.wdt_block)
+    {
+        // extern "C": тот же мотив, что у mik32_hal_crc32.h выше —
+        // mik32_hal_wdt.h не оборачивает объявления в #ifdef __cplusplus.
+        includes << "extern \"C\" {\n#include <mik32_hal_wdt.h>\n#include <mik32_hal_pcc.h>\n}\n";
+    }
+    if (config.otp_block)
+    {
+        // extern "C": тот же мотив, что у mik32_hal_wdt.h выше —
+        // mik32_hal_otp.h не оборачивает объявления в #ifdef __cplusplus.
+        includes << "extern \"C\" {\n#include <mik32_hal_otp.h>\n#include <mik32_hal_pcc.h>\n}\n";
+    }
+    if (config.rtc_block)
+    {
+        // extern "C": тот же мотив, что у mik32_hal_otp.h выше —
+        // mik32_hal_rtc.h не оборачивает объявления в #ifdef __cplusplus.
+        includes << "extern \"C\" {\n#include <mik32_hal_rtc.h>\n#include <mik32_hal_pcc.h>\n}\n";
+    }
+    if (config.eeprom_block)
+    {
+        // extern "C": тот же мотив, что у mik32_hal_rtc.h выше —
+        // mik32_hal_eeprom.h не оборачивает объявления в #ifdef __cplusplus.
+        includes << "extern \"C\" {\n#include <mik32_hal_eeprom.h>\n#include <mik32_hal_pcc.h>\n}\n";
     }
     if (!config.uart_blocks.empty())
     {
@@ -611,9 +882,15 @@ ParseResult<GeneratedProjectFirmwareArduino> generateProjectFirmwareArduino(
                 "\n"
              << timer16_globals.str()
              << crc_globals.str()
+             << wdt_globals.str()
+             << otp_globals.str()
+             << adc_globals.str()
              << tsens_globals.str()
+             << rtc_globals.str()
+             << eeprom_globals.str()
              << "\n"
-                "void setup()\n"
+             << rtc_helpers.str()
+             << "void setup()\n"
                 "{\n"
              << setup.str()
              << "  // USER CODE BEGIN Init\n"

@@ -1,0 +1,19 @@
+{
+  "mcu": "MIK32V2",
+  "version": "1.0",
+  "language": "rust",
+  "peripherals": [
+    {
+      "type": "gpio",
+      "instance": 2,
+      "mode": "output",
+      "pull": "none",
+      "drive_strength": "2mA",
+      "pins": [6]
+    },
+    {
+      "type": "crc",
+      "preset": "crc32"
+    }
+  ]
+}
